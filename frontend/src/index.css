@@ -205,7 +205,18 @@ html.dark .panel {
 @layer base {
   *, ::after, ::before { border-color: var(--border); }
   * { box-sizing: border-box; }
-  html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+  /* WebKit in the packaged macOS window can resolve chained 100% heights from
+     the initial document content.  Give the app shell a viewport-sized root so
+     the workspace cannot collapse to the height of its first row. */
+  html, body, #root {
+    height: 100vh;
+    min-height: 100vh;
+    margin: 0;
+    overflow: hidden;
+  }
+  @supports (height: 100dvh) {
+    html, body, #root { height: 100dvh; min-height: 100dvh; }
+  }
   body {
     background: var(--background);
     color: var(--foreground);
@@ -241,9 +252,9 @@ html.dark .panel {
 }
 
 /* App grid (used by App.tsx for header + workspace) */
-.app { display: grid; grid-template-rows: 58px 1fr; height: 100%; min-height: 0; overflow: hidden; }
+.app { display: grid; grid-template-rows: 58px minmax(0, 1fr); height: 100%; min-height: 0; overflow: hidden; }
 .app > * { min-height: 0; min-width: 0; }
-.workspace { display: grid; grid-template-columns: 360px 6px 1fr; min-height: 0; height: 100%; }
+.workspace { display: grid; grid-template-columns: 360px 6px 1fr; min-height: 0; height: 100%; overflow: hidden; }
 .sidebar-resizer { width: 6px; margin-left: -3px; cursor: col-resize; z-index: 5; background: transparent; position: relative; touch-action: none; }
 .sidebar-resizer::after { content: ''; position: absolute; inset: 0 2px; border-radius: 2px; background: transparent; transition: background 0.15s; }
 .sidebar-resizer:hover::after, body.resizing-sidebar .sidebar-resizer::after { background: var(--primary); }
