@@ -597,7 +597,7 @@ class ReviewQueueTests(unittest.TestCase):
 
         self.assertEqual(fitted, [{"duration": 70.0}, {"duration": 70.0}])
 
-    def test_translation_fallback_uses_natural_review_length_without_padding(self):
+    def test_translation_fallback_honors_selected_review_length(self):
         from pipeline.review import script as sc
 
         rows = [
@@ -618,20 +618,46 @@ class ReviewQueueTests(unittest.TestCase):
         finally:
             sc._translate_beats = original
         segments = result["segments"]
-        self.assertEqual(len(segments), 5)
-        self.assertLess(result["naturalDurationSec"], 300)
+        self.assertEqual(len(segments), 17)
+        self.assertEqual(result["naturalDurationSec"], 300)
         self.assertGreaterEqual(sum(len(str(item["text"]).split()) for item in segments), 150)
 
-    def test_review_duration_preset_is_a_ceiling_not_padding_requirement(self):
-        from pipeline.review.script import _natural_script_duration
+    def test_review_duration_preset_uses_requested_target_when_source_is_long_enough(self):
+        from pipeline.review.script import _natural_script_duration, _word_budget
 
         natural = _natural_script_duration(
             300,
             [{"start": 0, "end": 630}],
             [{"start": 0, "end": 630, "text": "Nội dung phim"}],
         )
-        self.assertGreaterEqual(natural, 75)
-        self.assertLess(natural, 300)
+        self.assertEqual(natural, 300)
+        self.assertGreaterEqual(_word_budget(300, "vi", 17), 900)
+
+    def test_short_llm_recap_falls_back_to_full_timed_source_for_selected_length(self):
+        from pipeline.review import script as sc
+
+        transcript = [
+            {"start": float(index), "end": float(index + 1), "text": f"Diễn biến quan trọng số {index} của câu chuyện."}
+            for index in range(340)
+        ]
+        original_generate, original_translate = sc.generate_json, sc._translate_beats
+        sc.generate_json = lambda *_args, **_kwargs: {"script": [
+            "Mở đầu, nhân vật phát hiện một biến cố khiến mọi thứ thay đổi.",
+            "Từ đó, xung đột buộc họ phải đưa ra lựa chọn quan trọng.",
+        ]}
+        sc._translate_beats = lambda texts, _language, project_id=None: list(texts)
+        try:
+            result = sc.write_script(
+                {"story_graph": {}}, duration_sec=300, style="normal", language="vi", spoiler="none",
+                source_transcript=transcript,
+                visuals=[{"scene_id": 1, "start": 0, "end": 340}],
+                use_llm=True,
+            )
+        finally:
+            sc.generate_json, sc._translate_beats = original_generate, original_translate
+
+        self.assertEqual(result["naturalDurationSec"], 300)
+        self.assertEqual(len(result["segments"]), 17)
 
     def test_short_grounded_llm_script_is_preferred_over_transcript_padding(self):
         from pipeline.review import script as sc
@@ -1047,7 +1073,12 @@ class ReviewQueueTests(unittest.TestCase):
 
     def test_caption_export_settings(self):
         from pipeline.review.adapter import _fallback_review_bbox, caption_export_settings
-        cover = caption_export_settings({"language": "vi", "subtitle": True})
+
+        default = caption_export_settings({"language": "vi", "subtitle": True})
+        self.assertEqual(default["targetLang"], "none")
+        self.assertFalse(default["coverHardsubs"])
+        self.assertFalse(default["burnSubs"])
+        cover = caption_export_settings({"language": "vi", "subtitle": True, "captionMode": "cover"})
         self.assertEqual(cover["targetLang"], "vi")
         self.assertTrue(cover["coverHardsubs"])
         self.assertTrue(cover["burnSubs"])
@@ -1067,6 +1098,47 @@ class ReviewQueueTests(unittest.TestCase):
             _fallback_review_bbox(1920, 1080),
             {"x": 0, "y": 983, "w": 1920, "h": 70},
         )
+
+    def test_empty_scene_index_uses_only_the_current_review_window(self):
+        from pipeline.review.run import _visuals_for_match
+
+        fallback = _visuals_for_match([], 120.0, 180.0)
+
+        self.assertEqual(len(fallback), 1)
+        self.assertEqual(fallback[0]["scene_id"], -1)
+        self.assertEqual((fallback[0]["start"], fallback[0]["end"]), (120.0, 180.0))
+        self.assertEqual(fallback[0]["duration"], 60.0)
+        plan = match_voice(
+            [{"id": "voice", "text": "Lời kể vẫn phải được dựng.", "duration": 4.0}],
+            fallback,
+            style="normal",
+            spoiler="none",
+            mode="accumulate",
+        )
+        self.assertTrue(plan["segments"][0]["clips"])
+
+    def test_compose_recovers_from_an_empty_cached_plan(self):
+        from pipeline.review import compose
+
+        commands: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"source")
+            dest = root / "out.mp4"
+            with patch.object(compose, "ffprobe_duration", return_value=180.0), patch.object(
+                compose, "h264_encoder_args", return_value=["-c:v", "libx264"]
+            ), patch.object(compose, "run_cmd", side_effect=lambda _job, command: commands.append(command)):
+                compose.compose_video(
+                    source, {"segments": []}, dest,
+                    ratio="16:9", width=1920, height=1080,
+                    job_id="test",
+                    fallback_start=120.0, fallback_end=180.0,
+                )
+
+        self.assertTrue(commands)
+        self.assertIn("120.000", commands[0])
+        self.assertIn("60.000", commands[0])
 
     def test_filter_complex_args_inline(self):
         from pipeline.core.media import filter_complex_args

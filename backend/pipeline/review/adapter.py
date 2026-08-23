@@ -13,9 +13,11 @@ def caption_export_settings(settings: dict[str, Any]) -> dict[str, Any]:
     """Map Review captionMode onto Clone export flags, including no captions."""
     lang = str(settings.get("language") or "vi")
     on = bool(settings.get("subtitle", True))
-    mode = str(settings.get("captionMode") or "cover")
+    # Captions are opt-in for Review. The legacy `subtitle` switch stays
+    # supported, but cannot silently turn missing captionMode into cover mode.
+    mode = str(settings.get("captionMode") or "off")
     if mode not in {"off", "cover", "below", "above"}:
-        mode = "cover"
+        mode = "off"
     if not on or mode == "off":
         return {
             "targetLang": "none",

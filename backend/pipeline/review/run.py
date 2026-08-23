@@ -37,10 +37,10 @@ from pipeline.review.vision import analyze_scenes
 from pipeline.tts import tts_segment
 
 
-REVIEW_PLAN_VERSION = 25
+REVIEW_PLAN_VERSION = 26
 REVIEW_STORY_VERSION = 8
 REVIEW_FINALIZE_VERSION = 8
-REVIEW_MATCH_VERSION = 4
+REVIEW_MATCH_VERSION = 5
 WINDOW_SOURCE_VERSION = 1
 
 # Stable protocol consumed and localized by the client. Never display it raw.
@@ -127,7 +127,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
     lang = str(settings.get("language") or "vi")
     voice = str(settings.get("voice") or "system")
     _note(job_id, f"Nguồn: {src}", stage="metadata", progress=0.04)
-    _note(job_id, f"Cài đặt: nhận dạng={recognition_engine} gốc={source_lang} thoại={lang} mode={mode} voice={voice} caption={settings.get('captionMode') or 'cover'}")
+    _note(job_id, f"Cài đặt: nhận dạng={recognition_engine} gốc={source_lang} thoại={lang} mode={mode} voice={voice} caption={settings.get('captionMode') or 'off'}")
     check_cancel(job_id)
     with _progress_heartbeat(job_id, "metadata"):
         meta = inspect_media(src)
@@ -477,10 +477,16 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
             # Keep the generated voice at its natural pace. A selected duration
             # guides the script; it must never slow a short narration.
             voiced = _cap_voiced_duration(voiced, natural_duration)
+            match_visuals = _visuals_for_match(vis, w0, w1)
+            if not vis:
+                _note(
+                    job_id,
+                    f"Phần {pi + 1}: không có cảnh nhận diện — dùng toàn bộ phạm vi nguồn làm cảnh dự phòng",
+                )
             with _progress_heartbeat(job_id, "matching"):
                 plan = match_voice(
                     voiced,
-                    vis,
+                    match_visuals,
                     style=str(settings.get("style") or "normal"),
                     spoiler=str(settings.get("spoiler") or "none"),
                     mode=mode,
@@ -491,7 +497,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
             clip_count = sum(len(seg.get("clips") or []) for seg in plan.get("segments") or [])
             _note(
                 job_id,
-                f"Ghép hình phần {pi + 1}: {clip_count} clip từ {len(vis)} cảnh",
+                f"Ghép hình phần {pi + 1}: {clip_count} clip từ {len(match_visuals)} cảnh",
             )
             with _progress_heartbeat(job_id, "compose"), _timed(f"compose_p{pi}") as _t_comp:
                 compose_video(
@@ -504,6 +510,8 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
                     job_id=job_id,
                     original_pct=100.0 if orig_pct > 0.5 else 0.0,
                     clip_workers=compose_workers,
+                    fallback_start=w0,
+                    fallback_end=w1,
                 )
             _note(job_id, f"FFmpeg compose phần {pi + 1}: {clip_count} clip · {_t_comp.elapsed:.0f}s")
             check_cancel(job_id)
@@ -1065,6 +1073,32 @@ def _slice_visuals(visuals: list[dict[str, Any]], start: float, end: float) -> l
         item["duration"] = round(item["end"] - item["start"], 3)
         out.append(item)
     return out
+
+
+def _visuals_for_match(
+    visuals: list[dict[str, Any]], start: float, end: float,
+) -> list[dict[str, Any]]:
+    """Guarantee one source-timeline clip when scene indexing produced nothing.
+
+    The fallback is intentionally restricted to the current Review window, so
+    cumulative parts never compose footage from a different part of the film.
+    """
+    if visuals:
+        return visuals
+    source_start = max(0.0, float(start or 0.0))
+    source_end = max(source_start + 0.12, float(end or source_start + 0.12))
+    return [{
+        "scene_id": -1,
+        "start": round(source_start, 3),
+        "end": round(source_end, 3),
+        "duration": round(source_end - source_start, 3),
+        "description": "",
+        "transcript": "",
+        "plot_score": 0.0,
+        "visual_score": 0.0,
+        "emotion_score": 0.0,
+        "spoiler_score": 0.0,
+    }]
 
 
 def _append_part_plan(combined: list[dict[str, Any]], plan: dict[str, Any], offset: float) -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.core.jobs import check_cancel, run_cmd
-from pipeline.core.media import _ff_bin, atempo_chain, h264_encoder_args
+from pipeline.core.media import _ff_bin, atempo_chain, ffprobe_duration, h264_encoder_args
 
 
 def crop_filter(ratio: str, width: int, height: int) -> str:
@@ -35,6 +35,8 @@ def compose_video(
     job_id: str | None = None,
     original_pct: float = 0,
     clip_workers: int | None = None,
+    fallback_start: float = 0.0,
+    fallback_end: float | None = None,
 ) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     clips: list[dict[str, Any]] = []
@@ -42,7 +44,21 @@ def compose_video(
         for clip in seg.get("clips") or []:
             clips.append(clip)
     if not clips:
-        raise RuntimeError("RENDER_ERROR: EditPlan không có clip")
+        # A missing scene index or an incomplete cached plan must not discard a
+        # completed Review. Reuse only the caller's current source window.
+        start = max(0.0, float(fallback_start or 0.0))
+        source_duration = max(0.0, float(ffprobe_duration(source) or 0.0))
+        if source_duration > 0.12:
+            start = min(start, source_duration - 0.12)
+        requested_end = float(fallback_end) if fallback_end is not None else source_duration
+        end = max(start + 0.12, requested_end)
+        if source_duration > 0.12:
+            end = min(end, source_duration)
+        clips.append({
+            "scene_id": "fallback",
+            "source_start": round(start, 3),
+            "source_end": round(max(start + 0.12, end), 3),
+        })
     vf0 = crop_filter(ratio, width, height)
     # Each Review window can compose concurrently; keep its transient clips isolated.
     cache = dest.parent / "compose_parts" / dest.stem

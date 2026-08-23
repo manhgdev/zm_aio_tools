@@ -20,6 +20,7 @@ STYLES = {
 
 NARRATION = {"default": 1.0, "mild": 1.2, "more": 1.37}
 _SEC_PER_LINE = 18.0
+_WORDS_PER_SECOND = {"vi": 3.0, "en": 2.5}
 _PAD_VI = (
     "Câu chuyện tiếp tục với những tình tiết mới. Nhân vật chính phải đối mặt thử thách, "
     "đưa ra lựa chọn, và xung đột ngày càng rõ ràng hơn trước mắt khán giả."
@@ -102,7 +103,7 @@ def write_script(
     n = _segment_count(natural_duration, factor)
     min_segments = 1 if n == 1 else 2
     name = _lang_name(language)
-    word_budget = max(n * 22, round(natural_duration * 1.8))
+    word_budget = _word_budget(natural_duration, language, n)
     evidence, event_ids, scene_ids = _part_evidence(story, visuals)
     part_position = _part_position(visuals)
     if not use_llm:
@@ -134,7 +135,7 @@ def write_script(
         f'7. Output only JSON: {{"script": ["Opening hook narration sentence...", "Next story sentence...", ...]}}.\n'
         f"Writer direction:{extra or ' None.'}\n\nStory Events:\n{evidence}"
     )
-    min_words = max(30, round(word_budget * 0.75))
+    min_words = max(30, round(word_budget * 0.80))
 
     def _log(msg: str) -> None:
         target_id = job_id or project_id
@@ -168,10 +169,17 @@ def write_script(
 
     clean = _clean_segments(items, language, event_ids, scene_ids)
     if len(clean) >= min_segments:
-        # A concise, grounded script is a better Review than mechanically
-        # stretching transcript fragments just to hit a minute preset.
         if not _script_is_usable(items, min_words, event_ids, scene_ids, min_segments=min_segments):
-            _log("LLM trả kịch bản ngắn hơn mục tiêu — ưu tiên mạch review tự nhiên, không kéo dài bằng transcript.")
+            _log("LLM trả kịch bản ngắn hơn thời lượng đã chọn — dùng timeline thoại để giữ đủ nội dung.")
+            if source_transcript:
+                result = _translation_script(
+                    story, n, language,
+                    duration_sec=natural_duration,
+                    source_transcript=source_transcript,
+                    visuals=visuals,
+                )
+                result["naturalDurationSec"] = round(natural_duration, 3)
+                return result
         return {"segments": clean[:n], "language": language, "style": style, "spoiler": spoiler, "naturalDurationSec": round(natural_duration, 3)}
     if len(clean) < min_segments:
         _log("Sử dụng kịch bản dòng sự kiện để tiếp tục…")
@@ -193,12 +201,23 @@ def _segment_count(duration_sec: float, narration_factor: float = 1.0) -> int:
     return max(1, int(math.ceil(seconds * factor / _SEC_PER_LINE)))
 
 
+def _word_budget(duration_sec: float, language: str, segments: int) -> int:
+    """Natural speech budget for the requested Review duration.
+
+    Vietnamese is tokenized syllable-by-syllable, so its word count must be
+    higher than English for the same spoken length. The floor keeps short
+    requests from producing one-line beats.
+    """
+    rate = _WORDS_PER_SECOND.get(str(language or "").lower(), 2.7)
+    return max(max(1, int(segments)) * 32, round(max(1.0, float(duration_sec)) * rate))
+
+
 def _natural_script_duration(
     requested_duration: float,
     visuals: list[dict[str, Any]] | None,
     transcript: list[dict[str, Any]] | None,
 ) -> float:
-    """Treat the minute preset as a ceiling, not a reason to pad a Review."""
+    """Honor the selected minute target when the source contains that span."""
     requested = max(1.0, float(requested_duration or 0))
     ranges = [
         (float(row.get("start") or 0), float(row.get("end") or row.get("start") or 0))
@@ -208,9 +227,10 @@ def _natural_script_duration(
     if not ranges or requested <= 90:
         return requested
     source_span = max(end for _start, end in ranges) - min(start for start, _end in ranges)
-    # A good recap normally condenses a source section to roughly one quarter,
-    # with a four-minute per-part ceiling to keep a single prompt focused.
-    return min(requested, max(75.0, min(240.0, source_span * 0.26)))
+    # The preset is a real narration target. Do not invent enough material to
+    # outlast a very short source section, but remove the former 4-minute cap
+    # that made 10/15/20-minute selections impossible.
+    return min(requested, max(75.0, source_span))
 
 
 def _part_position(visuals: list[dict[str, Any]] | None) -> str:
@@ -352,7 +372,10 @@ def _translation_script(
         # must carry enough source speech to cover the selected Review length.
         # The former 120-character ceiling yielded ~25 seconds of audio for a
         # 300-second part and silently made the rendered video unusably short.
-        words_per_bucket = max(12, int(math.ceil(max(1.0, duration_sec) * 1.8 / n_buckets)))
+        words_per_bucket = max(
+            12,
+            int(math.ceil(_word_budget(duration_sec, language, n) / n_buckets)),
+        )
         bucket_texts: list[str] = []
         bucket_scenes: list[list[int]] = []
         for b in buckets:

@@ -44,7 +44,7 @@ export const DEFAULT_REVIEW_SETTINGS: ReviewSettings = {
   language: 'vi',
   sourceLang: 'auto',
   recognitionEngine: 'whisper',
-  captionMode: 'cover',
+  captionMode: 'off',
   buildMode: 'accumulate',
   chunkMinutes: 15,
   keepSec: 4,
