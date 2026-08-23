@@ -7,6 +7,26 @@ from pipeline.export.fonts import _font_for_preset
 from pipeline.export.mux_audio import _tts_clip_plan
 
 
+def test_prefer_video_never_injects_legacy_070_speed():
+    assert media.initial_rate_from_match_duration("preferVideo") == 1.0
+    assert media.meta_baked_speed({"bakedPreferVideo": True}) == 1.0
+
+
+def test_prefer_video_keeps_export_video_at_one_x(tmp_path):
+    tts = tmp_path / "tts"
+    tts.mkdir()
+    (tts / "a.wav").touch()
+
+    _clips, factor = _tts_clip_plan(
+        [{"id": "a", "start": 0, "end": 1, "audioDuration": 2.0}],
+        tmp_path,
+        allow_video_slowdown=True,
+        match="preferVideo",
+    )
+
+    assert factor == 1.0
+
+
 def test_system_caption_font_is_bundled_and_vietnamese_ready():
     from PIL import ImageFont
 

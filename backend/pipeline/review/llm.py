@@ -13,6 +13,15 @@ from pipeline.core.jobs import check_cancel, current_job_id
 from pipeline.mt.cloud import _gemini_generate, _openai_compatible_chat
 
 
+def _cloud_failure_code(provider: str, exc: Exception) -> str:
+    """Stable, secret-free Cloud Review error for the queue/UI."""
+    safe_provider = re.sub(r"[^a-z0-9_-]", "", str(provider or "cloud").lower()) or "cloud"
+    message = str(exc or "")
+    match = re.search(r"(?:GEMINI_HTTP_|HTTP\s*)(\d{3})", message)
+    suffix = f"_HTTP_{match.group(1)}" if match else "_UNAVAILABLE"
+    return f"REVIEW_CLOUD_{safe_provider.upper()}{suffix}"
+
+
 def list_ollama_models() -> list[str]:
     try:
         with httpx.Client(timeout=8.0, trust_env=False) as client:
@@ -77,12 +86,13 @@ def generate_json(
                     system_msg="Return valid JSON only. Do not use markdown fences.",
                 )
         except Exception as exc:
+            failure = _cloud_failure_code(provider, exc)
             try:
                 from pipeline.core.app_log import append_log
-                append_log(f"[llm] Cloud {provider} lỗi ({exc}), tự động chuyển sang local Ollama…")
+                append_log(f"[llm] Cloud {provider} failed ({failure}); no local fallback for a Cloud Review.")
             except Exception:
                 pass
-            chosen = pick_llm()
+            raise RuntimeError(failure) from None
 
     check_cancel(active_job_id)
     if not text and chosen and not chosen.startswith("cloud:"):

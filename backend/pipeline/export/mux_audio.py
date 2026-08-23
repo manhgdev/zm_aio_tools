@@ -31,11 +31,6 @@ from pipeline.core.jobs import run_cmd, check_cancel
 from pipeline.core.media import ffprobe_duration
 from pipeline.core.project import ensure_layout, load_meta, set_status
 
-# preferVideo: chậm cố định 0.80× (setpts 1/0.8)
-PREFER_VIDEO_SPEED = 0.70
-PREFER_VIDEO_FACTOR = 1.0 / PREFER_VIDEO_SPEED
-
-
 def _bg_duck_expr(
     segments: list[dict[str, Any]],
     keep: float = 0.35,
@@ -147,7 +142,7 @@ def _tts_clip_plan(
     bake_speed: tốc độ đã bake vào video (0.5–2). Wav TTS luôn 1× →
     atempo *= bake_speed để giọng nhanh/chậm cùng nhịp timeline đã scale.
 
-    preferVideo đã bake 0.80×: **cascade** — không atrim giữa câu.
+    preferVideo giữ video 1×: **cascade** — không atrim giữa câu.
     start_i = max(seg.start, prev_end + gap); speed nhẹ ≤1.25; full audio.
     """
     bake = max(0.5, min(2.0, float(bake_speed or 1.0)))
@@ -158,13 +153,12 @@ def _tts_clip_plan(
     gap = 0.03
     # Timeline đã giãn bằng retime_video_segments (videoSpeed) khi TTS dài.
     # Ở đây: full TTS, speed ≈ 1; chỉ atempo nhẹ nếu vẫn tràn.
-    baked_prefer = match == "preferVideo" and not allow_video_slowdown
     if match == "preferVideo":
-        max_video_factor = PREFER_VIDEO_FACTOR
+        # This mode keeps the original video clock; manual file bakes remain
+        # handled by bake_speed.
+        max_video_factor = 1.0
         soft_tts_speed = 1.06
-        fixed_factor = 1.0 if baked_prefer else (
-            PREFER_VIDEO_FACTOR if allow_video_slowdown else 1.0
-        )
+        fixed_factor = 1.0
     elif match == "none":
         max_video_factor = 1.45
         soft_tts_speed = 1.08

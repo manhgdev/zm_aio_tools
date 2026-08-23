@@ -947,6 +947,13 @@ body.tts-dash-resizing iframe {
   text-align: center;
   margin-bottom: 8px;
   flex: 1;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.tts-drop.is-dragging {
+  border-color: var(--tts-purple);
+  background: #ede9fe;
+  box-shadow: 0 0 0 3px rgb(124 58 237 / 18%);
 }
 
 .tts-drop .ico {

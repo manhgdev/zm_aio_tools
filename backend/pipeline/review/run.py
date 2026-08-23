@@ -37,8 +37,8 @@ from pipeline.review.vision import analyze_scenes
 from pipeline.tts import tts_segment
 
 
-REVIEW_PLAN_VERSION = 22
-REVIEW_STORY_VERSION = 7
+REVIEW_PLAN_VERSION = 25
+REVIEW_STORY_VERSION = 8
 REVIEW_FINALIZE_VERSION = 8
 REVIEW_MATCH_VERSION = 4
 WINDOW_SOURCE_VERSION = 1
@@ -163,7 +163,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
     _note(
         job_id,
         (
-            f"Review script: AI recap theo block cảnh · model {review_model}"
+            f"Review script: AI dựng mạch từ timeline thoại · model {review_model}"
             if review_model
             else "Review script: dịch tuần tự transcript, không dùng LLM"
         ),
@@ -199,16 +199,13 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
     with _timed("visual_analysis") as _t_vis:
         visuals = _cached_or(
             root / "visual_analysis" / f"scenes_grounded_v2_{review_mode}_{source_lang}{capcut_target_cache}.json",
-            lambda: analyze_scenes(
-                src, scenes, transcript, root, job_id=job_id,
-                use_vision=review_mode == "llm",
-            ),
+            lambda: analyze_scenes(src, scenes, transcript, root, job_id=job_id, use_vision=False),
             job_id,
             "vision",
             0.42,
-            "Phân tích hình",
+            "Lập chỉ mục cảnh",
         )
-    _note(job_id, f"Vision: {len(visuals) if isinstance(visuals, list) else 0} cảnh · {_t_vis.elapsed:.0f}s")
+    _note(job_id, f"Chỉ mục cảnh: {len(visuals) if isinstance(visuals, list) else 0} cảnh · {_t_vis.elapsed:.0f}s")
 
     run_id = str(job.get("runId") or uuid.uuid4().hex[:8])
     rd = run_dir(root, run_id)
@@ -216,7 +213,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
     mutate(job_id, {"runId": run_id})
 
     def story_progress(stage: str, done: int, total: int, workers: int) -> None:
-        label = "Tóm tắt cảnh" if stage == "blocks" else "Tóm tắt chương"
+        label = "Tóm tắt mốc thoại" if stage == "blocks" else "Tóm tắt chương"
         stage_progress = 0.42 + 0.10 * (done / max(1, total))
         task_percent = round(done * 100 / max(1, total))
         overall_percent = round(stage_progress * 100)
@@ -229,7 +226,8 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
 
     if review_mode != "translate":
         story_builder = lambda: build_story(
-            visuals, language=lang, model=review_model, on_progress=story_progress, title=src.name, job_id=job_id,
+            visuals, transcript=transcript, language=lang, model=review_model,
+            on_progress=story_progress, title=src.name, job_id=job_id,
         )
     else:
         story_builder = lambda: _faithful_story(visuals)
@@ -455,7 +453,8 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
             script["windowSourceVersion"] = WINDOW_SOURCE_VERSION
             save_json(rd / f"script_{pi:02d}.json", script)
             segs = script.get("segments") or []
-            _note(job_id, f"Kịch bản phần {pi + 1}: {len(segs)} đoạn · {script_dur:.0f}s · {_t_sc.elapsed:.0f}s" + (" · cache" if reuse_script else ""))
+            natural_duration = float(script.get("naturalDurationSec") or script_dur)
+            _note(job_id, f"Kịch bản phần {pi + 1}: {len(segs)} đoạn · mục tiêu tự nhiên {natural_duration:.0f}s · {_t_sc.elapsed:.0f}s" + (" · cache" if reuse_script else ""))
             if segs:
                 _note(job_id, f"Đoạn 1: {_clip(segs[0].get('text') or '', 120)}")
             if reuse_tts:
@@ -475,15 +474,9 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
                     )
                 tts_sum = sum(float(v.get("duration") or 0) for v in voiced)
                 _note(job_id, f"TTS xong phần {pi + 1}: {len(voiced)} file · {tts_sum:.1f}s audio · {_t_tts.elapsed:.0f}s real")
-            # The selected 10/15/20-minute value is the total final duration,
-            # not merely a source-window size. First trim an overlong voice
-            # track, then gently slow a short one to keep the concatenated
-            # Review close to the requested total.
-            voiced = _floor_voiced_duration(
-                _cap_voiced_duration(voiced, script_dur),
-                script_dur,
-            )
-            _require_review_voice_coverage(voiced, script_dur)
+            # Keep the generated voice at its natural pace. A selected duration
+            # guides the script; it must never slow a short narration.
+            voiced = _cap_voiced_duration(voiced, natural_duration)
             with _progress_heartbeat(job_id, "matching"):
                 plan = match_voice(
                     voiced,
@@ -738,6 +731,11 @@ def _part_export_segments(
         end = float(seg.get("voice_end") or start)
         audio = Path(str(seg.get("audio") or ""))
         text = str(seg.get("text") or "")
+        # Duration-filler footage has no synthetic narration or caption. Do
+        # not pass an empty path to mux_dub (the project TTS folder itself can
+        # otherwise be mistaken for an audio file).
+        if not str(seg.get("audio") or "").strip() and not text.strip():
+            continue
         out.append({
             "id": str(seg.get("voice_id") or f"voice_{index:03d}"),
             "start": start,
@@ -808,41 +806,6 @@ def _cap_voiced_duration(
         item["ttsSpeed"] = round(speed, 4)
         fitted.append(item)
     return fitted
-
-
-def _floor_voiced_duration(
-    voiced: list[dict[str, Any]], target_duration: float
-) -> list[dict[str, Any]]:
-    """Slow slightly short narration so each Review part reaches its target."""
-    total = sum(max(0.0, float(row.get("duration") or 0)) for row in voiced)
-    target = max(1.0, float(target_duration or 0))
-    if total >= target * 0.97 or total <= 0:
-        return voiced
-    scale = target / total
-    # Voice quality degrades below 0.70×; the script prompt supplies the rest.
-    speed = max(0.70, min(1.0, 1.0 / scale))
-    effective_scale = 1.0 / speed
-    fitted: list[dict[str, Any]] = []
-    for row in voiced:
-        item = dict(row)
-        original = max(0.05, float(item.get("duration") or 0.05))
-        item["audio_duration"] = original
-        item["duration"] = round(original * effective_scale, 3)
-        item["ttsSpeed"] = round(speed, 4)
-        fitted.append(item)
-    return fitted
-
-
-def _require_review_voice_coverage(
-    voiced: list[dict[str, Any]], target_duration: float,
-) -> None:
-    """Never mark a Review done when its narration cannot cover the request."""
-    spoken = sum(max(0.0, float(row.get("duration") or 0)) for row in voiced)
-    target = max(1.0, float(target_duration or 0))
-    # `_floor_voiced_duration` can only slow speech to 0.70×.  Anything below
-    # this threshold is missing script content, not a pacing adjustment.
-    if spoken < target * 0.45:
-        raise RuntimeError(f"REVIEW_NARRATION_TOO_SHORT:{spoken:.1f}/{target:.1f}")
 
 
 def _apply_fixed_review_bboxes(

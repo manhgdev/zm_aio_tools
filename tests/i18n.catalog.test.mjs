@@ -151,6 +151,26 @@ test('Review CapCut recognition UI is bilingual', () => {
   for (const [vietnamese, english] of Object.entries(expected)) assert.equal(catalog[vietnamese], english, vietnamese)
 })
 
+test('Review quality-first duration and scene-indexing copy are bilingual', async () => {
+  const [panel, i18n, batch, film] = await Promise.all([
+    readFile(new URL('../frontend/src/features/studio/ReviewSettingsPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/app/i18n.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FilmPage.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(panel, /Thời lượng review mong muốn/)
+  assert.match(panel, /Preferred review length/)
+  assert.match(panel, /không kéo dài bằng lời hoặc cảnh đệm/)
+  assert.match(panel, /Review · AI Cloud/)
+  assert.match(panel, /Review · Cloud AI/)
+  assert.match(panel, /không gửi khung hình/)
+  assert.match(batch, /reviewProvider: reviewSettings\.reviewProvider/)
+  assert.match(i18n, /Indexing scenes and attaching transcript/)
+  assert.match(i18n, /Summarizing speech beats/)
+  assert.match(i18n, /Gemini rejected this request/)
+  assert.match(film, /REVIEW_CLOUD_GEMINI_HTTP_403/)
+})
+
 test('CapCut pipeline progress logs are localized to English', async () => {
   const source = await readFile(new URL('../frontend/src/app/i18n.tsx', import.meta.url), 'utf8')
   assert.match(source, /recognizing and translating · \$1%/)

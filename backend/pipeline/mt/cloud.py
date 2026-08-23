@@ -205,7 +205,10 @@ def _openai_compatible_chat(
                 failed_keys += 1
                 continue
             break
-        r.raise_for_status()
+        if r.status_code >= 400:
+            # Never propagate httpx's URL here: Gemini auth is carried in the
+            # query string and its repr can expose an API key in job logs.
+            raise RuntimeError(f"GEMINI_HTTP_{r.status_code}")
         data = r.json()
         return (
             (((data.get("choices") or [{}])[0].get("message") or {}).get("content"))
@@ -252,6 +255,7 @@ def _gemini_generate(
     with httpx.Client(timeout=timeout, trust_env=False) as client:
         rate_attempt = 0
         transient_attempt = 0
+        transport_attempt = 0
         key_index = 0
         failed_keys = 0
         first_429: int | None = None
@@ -260,15 +264,24 @@ def _gemini_generate(
             # not stall the others. Single-key keeps the previous wait behavior.
             if not multi:
                 _wait_for_gemini_request()
-            r = client.post(
-                url,
-                params={"key": keys[key_index]},
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0, "maxOutputTokens": 2048},
-                },
-            )
+            try:
+                r = client.post(
+                    url,
+                    params={"key": keys[key_index]},
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"temperature": 0, "maxOutputTokens": 2048},
+                    },
+                )
+            except httpx.TransportError:
+                # DNS/connect/reset errors have no HTTP status, so they used
+                # to skip the retry policy and fail the whole Review at once.
+                if transport_attempt >= 2:
+                    raise RuntimeError("GEMINI_TRANSPORT_UNAVAILABLE") from None
+                time.sleep(2 ** transport_attempt)
+                transport_attempt += 1
+                continue
             if r.status_code == 429:
                 if first_429 is None:
                     first_429 = key_index
@@ -299,7 +312,10 @@ def _gemini_generate(
                 transient_attempt += 1
                 continue
             break
-        r.raise_for_status()
+        if r.status_code >= 400:
+            # Keep the Review error safe to show in queue logs: an httpx
+            # exception includes Gemini's query-string API key.
+            raise RuntimeError(f"GEMINI_HTTP_{r.status_code}")
         data = r.json()
         cands = data.get("candidates") or []
         if not cands:

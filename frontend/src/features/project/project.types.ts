@@ -407,7 +407,7 @@ export type JobStatus = {
   /** Clip lần dịch gần nhất (giây); 0 = full video */
   workClipSec?: number
   duration?: number
-  /** preferVideo đã bake chậm 0.80× vào workVideo — preview rate = 1 */
+  /** File work đã được người dùng bake tốc độ — preview rate = 1 */
   bakedPreferVideo?: boolean
   /** Tốc độ đã bake vào file preview (1 = chưa bake) */
   bakedSpeed?: number

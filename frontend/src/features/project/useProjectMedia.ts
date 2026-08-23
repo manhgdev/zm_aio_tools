@@ -83,7 +83,7 @@ export function useProjectMedia({
     setWorkClipSec(wc)
     if (wc > 0) setDuration(wc)
     else if (res.duration > 0) setDuration(res.duration)
-    const bs = res.bakedSpeed > 0 ? res.bakedSpeed : res.bakedPreferVideo ? 0.8 : 1
+    const bs = res.bakedSpeed > 0 ? res.bakedSpeed : 1
     bakedPreferVideoRef.current = Boolean(res.bakedPreferVideo) && Math.abs(bs - 1) > 0.02
     setBakedPreferVideo(bakedPreferVideoRef.current)
     setBakedSpeed(bs)
@@ -111,7 +111,7 @@ export function useProjectMedia({
     workClipSecRef.current = wc
     setWorkClipSec(wc)
     if (res.duration > 0) setDuration(res.duration)
-    const bs = res.bakedSpeed > 0 ? res.bakedSpeed : res.bakedPreferVideo ? 0.8 : 1
+    const bs = res.bakedSpeed > 0 ? res.bakedSpeed : 1
     bakedPreferVideoRef.current = Boolean(res.bakedPreferVideo) && Math.abs(bs - 1) > 0.02
     setBakedPreferVideo(bakedPreferVideoRef.current)
     setBakedSpeed(bs)

@@ -1,9 +1,4 @@
-"""Xuất phải dùng file ĐÚNG tốc độ đang hiển thị ở preview.
-
-Bug thật: «ưu tiên chậm 0.8» → phân tích → nâng timeline về 1× → preview 1×
-nhưng xuất vẫn ra 0.8, vì export_source_video có fallback cứng
-`preview_{N}_s080.mp4` chạy cả khi bakedSpeed = 1.0.
-"""
+"""Xuất phải dùng đúng file tương ứng với tốc độ đang hiển thị ở preview."""
 import json
 import shutil
 

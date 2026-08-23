@@ -25,7 +25,7 @@ def _timeline_is_final(meta: dict[str, Any], video: Path) -> bool:
     try:
         if work.is_file() and Path(video).resolve() == work.resolve():
             bake = meta_baked_speed(meta)
-            if abs(float(bake) - 1.0) > 0.02 or bool(meta.get("bakedPreferVideo")):
+            if abs(float(bake) - 1.0) > 0.02:
                 return True
     except OSError:
         pass

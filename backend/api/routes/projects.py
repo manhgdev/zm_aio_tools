@@ -400,7 +400,7 @@ def api_rebake_speed(project_id: str, body: RebakeSpeedIn):
                 "speedRevision": saved_rev,
                 "bakedSpeed": meta_baked_speed(meta),
                 "bakedPreferVideo": bool(meta.get("bakedPreferVideo")),
-                "hasBakedSpeed": bool(meta.get("bakedSpeed") is not None or meta.get("bakedPreferVideo")),
+                "hasBakedSpeed": bool(meta.get("bakedSpeed") is not None),
                 "workClipSec": float(meta.get("workDuration") or meta.get("previewSec") or 0),
                 "duration": float(meta.get("workDuration") or meta.get("duration") or 0),
                 "segments": meta.get("segments") or [],
@@ -632,7 +632,7 @@ def api_status(project_id: str):
     st["bakedPreferVideo"] = bool(speed_baked)
     st["bakedSpeed"] = baked_speed if user_bake else 1.0
     st["hasBakedSpeed"] = bool(user_bake)
-    # Tốc độ khởi tạo (preferVideo→0.8) — ghi 1 lần, không bake file
+    # Tốc độ khởi tạo luôn 1× — không bake file.
     from pipeline.core.media import ensure_project_initial_playback_rate
 
     had_init = meta.get("projectInitialPlaybackRate") is not None

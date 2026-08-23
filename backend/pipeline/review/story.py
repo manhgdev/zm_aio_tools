@@ -11,12 +11,21 @@ from pipeline.review.llm import generate_json
 
 BLOCK = 75
 CHAPTER = 4
-CLOUD_STORY_WORKERS = 4
+# Gemini's quota is shared by all requests on the API key.  Story blocks are
+# independent, but sending several large JSON prompts at once makes a single
+# temporary Gemini transport/rate-limit failure abort the whole Review.
+CLOUD_STORY_WORKERS = 3
+GEMINI_STORY_WORKERS = 1
+TIMELINE_BLOCKS = 14
+TIMELINE_MIN_SEC = 45.0
+TIMELINE_MAX_SEC = 130.0
 
 
 def story_workers(model: str | None) -> int:
     """Ceiling for story LLM concurrency. Local models may elastic-scale up to this."""
     name = str(model or "").lower()
+    if name.startswith("cloud:gemini:"):
+        return GEMINI_STORY_WORKERS
     if name.startswith("cloud:"):
         return CLOUD_STORY_WORKERS
     match = re.search(r"(\d+(?:\.\d+)?)b\b", name)
@@ -41,6 +50,7 @@ def story_pool_fixed(model: str | None) -> bool:
 def build_story(
     visuals: list[dict[str, Any]],
     *,
+    transcript: list[dict[str, Any]] | None = None,
     language: str = "vi",
     model: str | None = None,
     on_progress: Callable[[str, int, int, int], None] | None = None,
@@ -54,13 +64,19 @@ def build_story(
             "movie_context": {},
             "story_graph": {},
         }
+    timeline_blocks = _timeline_blocks(transcript or [], visuals)
     chunk_size = max(60, len(visuals) // 3 + 1)
-    blocks = [visuals[i : i + chunk_size] for i in range(0, len(visuals), chunk_size)] or [visuals]
+    scene_blocks = [visuals[i : i + chunk_size] for i in range(0, len(visuals), chunk_size)] or [visuals]
+    blocks: list[Any] = timeline_blocks or scene_blocks
     cap = min(len(blocks), story_workers(model))
     fixed = story_pool_fixed(model)
     block_summaries = _parallel_summaries(
         [chunk for chunk in blocks if chunk],
-        lambda chunk: _summarize_block(chunk, language, model=model, title=title, job_id=job_id),
+        (
+            lambda chunk: _summarize_timeline_block(chunk, language, model=model, title=title, job_id=job_id)
+            if timeline_blocks
+            else _summarize_block(chunk, language, model=model, title=title, job_id=job_id)
+        ),
         stage="blocks",
         on_progress=on_progress,
         workers=cap,
@@ -88,6 +104,75 @@ def build_story(
         "movie_context": context,
         "story_graph": graph,
     }
+
+
+def _timeline_blocks(
+    transcript: list[dict[str, Any]], visuals: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Group timed captions into chronological story beats.
+
+    Captions/ASR carry the actual plot and their timestamps are the reliable
+    link back to source footage.  Do not use keyframes as a substitute for
+    dialogue evidence: a text-led Review needs readable, causal story beats.
+    """
+    rows = sorted(
+        [
+            row for row in transcript
+            if str(row.get("text") or "").strip()
+            and float(row.get("end") or row.get("start") or 0) >= float(row.get("start") or 0)
+        ],
+        key=lambda row: float(row.get("start") or 0),
+    )
+    if not rows:
+        return []
+    start_all = float(rows[0].get("start") or 0)
+    end_all = max(float(row.get("end") or row.get("start") or start_all) for row in rows)
+    target_sec = max(TIMELINE_MIN_SEC, min(TIMELINE_MAX_SEC, (end_all - start_all) / TIMELINE_BLOCKS))
+    blocks: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] = []
+    current_chars = 0
+
+    def flush() -> None:
+        nonlocal current, current_chars
+        if not current:
+            return
+        start = float(current[0].get("start") or 0)
+        end = max(float(row.get("end") or row.get("start") or start) for row in current)
+        scene_ids = [
+            int(scene.get("scene_id") or 0)
+            for scene in visuals
+            if float(scene.get("end") or 0) >= start and float(scene.get("start") or 0) <= end
+        ]
+        blocks.append({
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "scene_ids": scene_ids,
+            "text": " ".join(str(row.get("text") or "").strip() for row in current),
+        })
+        current, current_chars = [], 0
+
+    for row in rows:
+        text = str(row.get("text") or "").strip()
+        row_end = float(row.get("end") or row.get("start") or 0)
+        if current:
+            block_start = float(current[0].get("start") or 0)
+            should_split = (
+                row_end - block_start >= target_sec and current_chars >= 260
+            ) or current_chars >= 2_800
+            if should_split:
+                flush()
+        current.append(row)
+        current_chars += len(text) + 1
+    flush()
+    # Tiny tail beats lack enough context to summarize well; merge them into
+    # the prior beat while preserving chronology.
+    if len(blocks) > 1 and len(str(blocks[-1].get("text") or "")) < 120:
+        tail = blocks.pop()
+        prev = blocks[-1]
+        prev["end"] = tail["end"]
+        prev["text"] = f"{prev['text']} {tail['text']}".strip()
+        prev["scene_ids"] = list(dict.fromkeys([*(prev.get("scene_ids") or []), *(tail.get("scene_ids") or [])]))
+    return blocks
 
 
 def _parallel_summaries(
@@ -165,6 +250,43 @@ def _summarize_block(
         "start": scenes[0]["start"],
         "end": scenes[-1]["end"],
         "summary": str(parsed.get("summary") or "")[:500],
+        "characters": list(parsed.get("characters") or []),
+        "events": list(parsed.get("events") or []),
+        "importance": _safe_float(parsed.get("importance"), 0.4),
+    }
+
+
+def _summarize_timeline_block(
+    block: dict[str, Any], language: str, *, model: str | None = None, title: str = "", job_id: str | None = None,
+) -> dict[str, Any]:
+    """Turn one contiguous caption range into concrete review evidence."""
+    start = float(block.get("start") or 0)
+    end = float(block.get("end") or start)
+    text = str(block.get("text") or "").strip()
+    name = _lang_name(language)
+    parsed = generate_json(
+        f"Video title: {title or 'Unknown'}. You are preparing evidence for a compelling YouTube movie review in {name}.\n"
+        f"This is one chronological caption range ({start:.1f}s–{end:.1f}s).\n"
+        "Return JSON keys: summary, characters, events, importance (0-1).\n"
+        "Write a concrete causal plot beat, not a generic genre description or a line-by-line transcript. "
+        "State only facts supported by the captions: what changes, who reacts, what conflict/stake appears, and why it matters. "
+        "If a name/action is unclear, keep it neutral rather than inventing it. Keep summary concise but specific.\n"
+        f"CAPTIONS:\n{text[:3200]}",
+        model=model,
+        job_id=job_id,
+    )
+    if not isinstance(parsed, dict):
+        parsed = {
+            "summary": text[:700],
+            "characters": [],
+            "events": [],
+            "importance": 0.55 if len(text) > 240 else 0.35,
+        }
+    return {
+        "scene_ids": list(block.get("scene_ids") or []),
+        "start": start,
+        "end": end,
+        "summary": str(parsed.get("summary") or text[:700])[:700],
         "characters": list(parsed.get("characters") or []),
         "events": list(parsed.get("events") or []),
         "importance": _safe_float(parsed.get("importance"), 0.4),

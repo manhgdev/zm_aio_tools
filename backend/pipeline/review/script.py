@@ -98,18 +98,22 @@ def write_script(
     context = story.get("movie_context") or {}
     hint = STYLES.get(style, STYLES["normal"])
     factor = NARRATION.get(str(narration or "default"), 1.0)
-    n = _segment_count(duration_sec, factor)
+    natural_duration = _natural_script_duration(duration_sec, visuals, source_transcript)
+    n = _segment_count(natural_duration, factor)
     min_segments = 1 if n == 1 else 2
     name = _lang_name(language)
-    word_budget = max(n * 22, round(float(duration_sec or 0) * 1.8))
+    word_budget = max(n * 22, round(natural_duration * 1.8))
     evidence, event_ids, scene_ids = _part_evidence(story, visuals)
     part_position = _part_position(visuals)
     if not use_llm:
-        return _translation_script(
+        result = _translation_script(
             story, n, language,
+            duration_sec=natural_duration,
             source_transcript=source_transcript,
             visuals=visuals,
         )
+        result["naturalDurationSec"] = round(natural_duration, 3)
+        return result
     extra = ""
     if genre:
         extra += f" Genre: {genre}."
@@ -117,18 +121,18 @@ def write_script(
         extra += f" Writer notes: {notes}."
     words_per_seg = max(15, word_budget // n)
     prompt = (
-        f"Write an engaging movie review narration in {name} ({duration_sec:.0f} seconds total).\n"
+        f"Write an engaging YouTube movie-review narration in {name} (roughly {natural_duration:.0f} seconds; natural pacing matters more than filling time).\n"
         f"Part position: {part_position}. Style: {hint}. Genre: {genre or 'auto'}.\n"
         "RULES:\n"
-        "1. Write natural narration sentences connecting the story events chronologically.\n"
-        "2. Hook the viewer in the first sentence; leave a punchy outro at the end.\n"
+        "1. Write a natural causal narrative, not a transcript: hook → setup → escalating conflict → turning point → payoff.\n"
+        "2. Hook the viewer in the first sentence; use transitions that explain why each beat changes the situation; leave a punchy outro at the end.\n"
         "3. Use ONLY facts explicitly stated in Story Events. Never invent food, props, weapons, places, characters,"
         " or actions. If an event is vague, narrate it vaguely rather than guessing.\n"
         f"4. All narration MUST be in {name} only.\n"
-        f"5. Write EXACTLY {n} narration sentences with at least {words_per_seg} words each.\n"
-        f"6. The complete narration MUST contain at least {word_budget} words so it fills {duration_sec:.0f} seconds of speech.\n"
-        f'7. Output only JSON: {{"script": ["Opening hook narration sentence...", "Next story sentence...", ...]}}\n\n'
-        f"Story Events:\n{evidence}"
+        f"5. Write about {n} narration beats, each around {words_per_seg} words; do not pad or repeat facts to meet a count.\n"
+        f"6. Aim for about {word_budget} words only when the evidence supports it; concise, specific narration is better than filler.\n"
+        f'7. Output only JSON: {{"script": ["Opening hook narration sentence...", "Next story sentence...", ...]}}.\n'
+        f"Writer direction:{extra or ' None.'}\n\nStory Events:\n{evidence}"
     )
     min_words = max(30, round(word_budget * 0.75))
 
@@ -162,22 +166,24 @@ def write_script(
         if _script_is_usable(parsed2, min_words, event_ids, scene_ids, min_segments=min_segments):
             items = items2
 
-    if not items or len(items) < min_segments:
-        _log("Chuyển sang kịch bản chuyển dịch theo nhịp phim để tiếp tục liền mạch…")
-        return _translation_script(
-            story, n, language,
-            source_transcript=source_transcript,
-            visuals=visuals,
-        )
     clean = _clean_segments(items, language, event_ids, scene_ids)
+    if len(clean) >= min_segments:
+        # A concise, grounded script is a better Review than mechanically
+        # stretching transcript fragments just to hit a minute preset.
+        if not _script_is_usable(items, min_words, event_ids, scene_ids, min_segments=min_segments):
+            _log("LLM trả kịch bản ngắn hơn mục tiêu — ưu tiên mạch review tự nhiên, không kéo dài bằng transcript.")
+        return {"segments": clean[:n], "language": language, "style": style, "spoiler": spoiler, "naturalDurationSec": round(natural_duration, 3)}
     if len(clean) < min_segments:
         _log("Sử dụng kịch bản dòng sự kiện để tiếp tục…")
-        return _translation_script(
+        result = _translation_script(
             story, n, language,
+            duration_sec=natural_duration,
             source_transcript=source_transcript,
             visuals=visuals,
         )
-    return {"segments": clean[:n], "language": language, "style": style, "spoiler": spoiler}
+        result["naturalDurationSec"] = round(natural_duration, 3)
+        return result
+    return {"segments": clean[:n], "language": language, "style": style, "spoiler": spoiler, "naturalDurationSec": round(natural_duration, 3)}
 
 
 def _segment_count(duration_sec: float, narration_factor: float = 1.0) -> int:
@@ -185,6 +191,26 @@ def _segment_count(duration_sec: float, narration_factor: float = 1.0) -> int:
     seconds = max(0.0, float(duration_sec or 0))
     factor = max(0.01, float(narration_factor or 1.0))
     return max(1, int(math.ceil(seconds * factor / _SEC_PER_LINE)))
+
+
+def _natural_script_duration(
+    requested_duration: float,
+    visuals: list[dict[str, Any]] | None,
+    transcript: list[dict[str, Any]] | None,
+) -> float:
+    """Treat the minute preset as a ceiling, not a reason to pad a Review."""
+    requested = max(1.0, float(requested_duration or 0))
+    ranges = [
+        (float(row.get("start") or 0), float(row.get("end") or row.get("start") or 0))
+        for row in (transcript or visuals or [])
+    ]
+    ranges = [(start, end) for start, end in ranges if end >= start]
+    if not ranges or requested <= 90:
+        return requested
+    source_span = max(end for _start, end in ranges) - min(start for start, _end in ranges)
+    # A good recap normally condenses a source section to roughly one quarter,
+    # with a four-minute per-part ceiling to keep a single prompt focused.
+    return min(requested, max(75.0, min(240.0, source_span * 0.26)))
 
 
 def _part_position(visuals: list[dict[str, Any]] | None) -> str:
@@ -299,6 +325,7 @@ def _translation_script(
     n: int,
     language: str,
     *,
+    duration_sec: float,
     source_transcript: list[dict[str, Any]] | None,
     visuals: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
@@ -321,6 +348,11 @@ def _translation_script(
             idx = min(n_buckets - 1, max(0, int((st - min_t) / step)))
             buckets[idx].append(r)
 
+        # The fallback is still a faithful transcript-led narration, but it
+        # must carry enough source speech to cover the selected Review length.
+        # The former 120-character ceiling yielded ~25 seconds of audio for a
+        # 300-second part and silently made the rendered video unusably short.
+        words_per_bucket = max(12, int(math.ceil(max(1.0, duration_sec) * 1.8 / n_buckets)))
         bucket_texts: list[str] = []
         bucket_scenes: list[list[int]] = []
         for b in buckets:
@@ -331,27 +363,30 @@ def _translation_script(
                 if not t:
                     continue
                 sc_set.update(_overlapping_scene_ids(r, visuals))
-                if not b_txt:
-                    b_txt = t
-                elif len(b_txt + " " + t) <= 120:
-                    b_txt = (b_txt + " " + t).strip()
-                else:
+                candidate = (b_txt + " " + t).strip() if b_txt else t
+                # A hard character ceiling protects CapCut/translation APIs
+                # from malformed gigantic captions; the word budget controls
+                # normal narration length.
+                if len(candidate) > 900:
+                    break
+                b_txt = candidate
+                if len(re.findall(r"\S+", b_txt)) >= words_per_bucket:
                     break
             bucket_texts.append(b_txt or (str(b[0].get("text") or "").strip() if b else ""))
             bucket_scenes.append(sorted(sc_set)[:8])
 
         translated = _translate_beats(bucket_texts, language)
         for index, (text, sc_ids) in enumerate(zip(translated, bucket_scenes)):
-            for sentence in _sentence_units(text):
-                clean = _finalize_line(sentence, language) or sentence.strip()
-                if not clean:
-                    continue
-                segments.append(_voice_item(len(segments), clean, {
-                    "event_refs": [f"src_{index:03d}"],
-                    "preferred_scene_ids": sc_ids,
-                }))
-                if len(segments) >= n:
-                    break
+            # One ordered bucket maps to one Review beat. Splitting the
+            # bucket into sentences would consume all output slots at the
+            # start of the movie and lose the later timeline.
+            clean = _finalize_line(text, language) or text.strip()
+            if not clean:
+                continue
+            segments.append(_voice_item(len(segments), clean, {
+                "event_refs": [f"src_{index:03d}"],
+                "preferred_scene_ids": sc_ids,
+            }))
             if len(segments) >= n:
                 break
     else:

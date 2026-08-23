@@ -186,6 +186,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
         notes: reviewSettings.notes,
         reviewMode: reviewSettings.reviewMode,
         reviewModel: reviewSettings.reviewModel,
+        reviewProvider: reviewSettings.reviewProvider,
         narration: reviewSettings.narration,
         pausePace: reviewSettings.pausePace,
         captionMode: reviewSettings.captionMode,

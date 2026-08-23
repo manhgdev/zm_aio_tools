@@ -48,13 +48,12 @@ export function previewVideoRate(
 /** Tốc độ bake file thật (1 = file 1×). Soft preferVideo không tính. */
 export function fileBakedSpeed(
   bakedSpeed?: number,
-  bakedPreferVideo?: boolean,
+  _bakedPreferVideo?: boolean,
   hasBakedSpeed?: boolean,
 ): number {
   if (typeof bakedSpeed === 'number' && bakedSpeed > 0.2 && (hasBakedSpeed || Math.abs(bakedSpeed - 1) > 0.02)) {
     return Math.max(0.5, Math.min(2, bakedSpeed))
   }
-  if (bakedPreferVideo) return 0.7
   return 1
 }
 

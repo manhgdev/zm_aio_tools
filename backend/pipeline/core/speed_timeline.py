@@ -16,13 +16,11 @@ def meta_baked_speed(meta: dict) -> float:
     """Tốc độ đã bake vào workVideo.
 
     - bakedSpeed có key (kể cả 1.0 sau «Áp dụng 1×») → dùng giá trị đó
-    - chỉ bakedPreferVideo (legacy) → 0.70
-    - không key → 1.0 (timeline 1×; soft preferVideo chỉ ở FE playbackRate)
+    - chỉ bakedPreferVideo (legacy) → 1.0; cờ cũ này không còn ép chậm
+    - không key → 1.0
     """
     if meta.get("bakedSpeed") is not None:
         return clamp_playback_speed(float(meta["bakedSpeed"]))
-    if meta.get("bakedPreferVideo"):
-        return 0.70
     return 1.0
 
 
@@ -32,25 +30,22 @@ def meta_has_user_bake(meta: dict) -> bool:
 
 
 def initial_rate_from_match_duration(match_duration: str | None) -> float:
-    """preferVideo → 0.70; còn lại → 1.00. Không bake file."""
-    return 0.70 if str(match_duration or "").strip() == "preferVideo" else 1.0
+    """Mọi chế độ bắt đầu ở 1.00×; matchDuration không tự đổi playback."""
+    return 1.0
 
 
 def ensure_project_initial_playback_rate(
     meta: dict,
     settings: dict | None = None,
 ) -> float:
-    """Ghi projectInitialPlaybackRate đúng một lần — không reset, không bake."""
-    raw = meta.get("projectInitialPlaybackRate")
-    if raw is not None:
-        try:
-            return clamp_playback_speed(float(raw))
-        except (TypeError, ValueError):
-            pass
+    """Lưu playback mặc định 1× và chuẩn hoá giá trị tự động cũ."""
+    # This field was only ever an automatic preferVideo setting. Normalize
+    # existing projects too, so a persisted legacy 0.70 value cannot revive.
+    if meta.get("projectInitialPlaybackRate") is not None:
+        meta["projectInitialPlaybackRate"] = 1.0
+        return 1.0
     s = settings if isinstance(settings, dict) else (meta.get("settings") or {})
-    rate = initial_rate_from_match_duration(
-        str((s or {}).get("matchDuration") or "")
-    )
+    rate = initial_rate_from_match_duration(str((s or {}).get("matchDuration") or ""))
     meta["projectInitialPlaybackRate"] = rate
     return rate
 

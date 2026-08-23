@@ -124,7 +124,7 @@ def api_run(project_id: str, settings: Settings):
     meta["settings"] = dumped
     # Cửa sổ clip làm việc / cache tag — không đụng ô Preview UI
     meta["previewSec"] = run_sec
-    # Tốc độ khởi tạo 1 lần từ Khớp thời lượng (preferVideo→0.80) — không bake
+    # Tốc độ khởi tạo luôn 1×; Khớp thời lượng không tự bake video.
     from pipeline.core.media import ensure_project_initial_playback_rate
 
     ensure_project_initial_playback_rate(meta, dumped)

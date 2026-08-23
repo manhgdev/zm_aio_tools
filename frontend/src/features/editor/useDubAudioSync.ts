@@ -86,12 +86,7 @@ export function useDubAudioSync(deps: DubAudioSyncDeps) {
     const playVideoAudio = !muteOriginal
     const rate = Math.max(0.5, Math.min(2, playRate))
     // Stem file luôn 1× nguồn; timeline display sau bake → map sourceTime = t * bakedSpeed
-    const bakeSp =
-      typeof bakedSpeed === 'number' && bakedSpeed > 0.2
-        ? bakedSpeed
-        : bakedPreferVideo
-          ? 0.7
-          : 1
+    const bakeSp = typeof bakedSpeed === 'number' && bakedSpeed > 0.2 ? bakedSpeed : 1
 
     if (playStem && bg) {
       video.muted = true

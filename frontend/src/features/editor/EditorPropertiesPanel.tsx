@@ -754,8 +754,8 @@ export function EditorPropertiesPanel({
                           const draftX = formatSpeedX(speedDraft)
                           const fileX = formatSpeedX(appliedSpeedX)
                           const draftMatchesFile = Math.abs(speedDraft - appliedSpeedX) < 0.005
-                          // Mặc định timeline luôn 1.00× — preferVideo chỉ phân tích ở 0.8
-                          // rồi tự nâng về 1× khi Dịch xong (asr_translate).
+                          // Mặc định timeline luôn 1.00×. Chỉ nút Áp dụng tốc độ
+                          // của người dùng mới thay đổi clock của file.
                           const defaultSpeedX = 1
                           const atDefault =
                             Math.abs(appliedSpeedX - defaultSpeedX) < 0.005

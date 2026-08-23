@@ -1427,12 +1427,12 @@ def ensure_preview_clip(
 def ensure_playback_speed(
     source: Path,
     dest: Path,
-    speed: float = 0.80,
+    speed: float = 1.0,
     project_id: str | None = None,
     *,
     force: bool = False,
 ) -> Path:
-    """Bake tốc độ phát vào file (preferVideo 0.80×) — chạy TRƯỚC ASR/OCR.
+    """Bake tốc độ người dùng chọn vào file.
 
     speed < 1 = chậm hơn (dài hơn): setpts *= 1/speed, atempo = speed.
 

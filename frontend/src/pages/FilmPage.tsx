@@ -106,6 +106,18 @@ function reviewErrorLabel(error: string, t: (vi: string, en: string) => string) 
       'The selected Cloud AI has no API key. Open Settings → Cloud, save its key, then retry.',
     )
   }
+  if (error.includes('REVIEW_CLOUD_GEMINI_HTTP_403')) {
+    return t(
+      'Gemini từ chối request. Kiểm tra lại API key, project sở hữu key và quyền dùng Gemini API trong Cấu hình → Cloud.',
+      'Gemini rejected the request. Check the API key, its project, and Gemini API access in Settings → Cloud.',
+    )
+  }
+  if (error.includes('REVIEW_CLOUD_GEMINI_UNAVAILABLE')) {
+    return t(
+      'Gemini đang tạm không phản hồi. Hệ thống đã thử lại tự động; kiểm tra mạng, Base URL và API key trong Cấu hình → Cloud rồi chạy lại.',
+      'Gemini is temporarily unreachable. The app retried automatically; check the network, base URL, and API key in Settings → Cloud, then retry.',
+    )
+  }
   if (error.includes('REVIEW_CLOUD_REQUEST_FAILED')) {
     return t(
       'Cloud AI từ chối hoặc không nhận được request. Kiểm tra API key, Base URL và Model AI Review.',

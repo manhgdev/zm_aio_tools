@@ -20,7 +20,9 @@ def export_source_video(project_id: str, meta: dict[str, Any]) -> tuple[Path, in
     bake = meta_baked_speed(meta)
     user_bake = meta_has_user_bake(meta)
     speed_off = abs(float(bake) - 1.0) > 0.02
-    use_work = work_ok and (user_bake or speed_off or bool(meta.get("bakedPreferVideo")))
+    # bakedPreferVideo alone is a legacy automatic-speed marker, not a user
+    # choice. Only use a work file when a real bake is present.
+    use_work = work_ok and (user_bake or speed_off)
 
     # Full source window
     if preview_sec <= 0:

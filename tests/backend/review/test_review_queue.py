@@ -91,6 +91,73 @@ class ReviewQueueTests(unittest.TestCase):
             )
         self.assertEqual(result, translated)
 
+    def test_timed_captions_are_grouped_into_chronological_story_beats(self):
+        from pipeline.review.story import _timeline_blocks
+
+        transcript = [
+            {
+                "start": index * 20.0,
+                "end": index * 20.0 + 18.0,
+                "text": f"Diễn biến số {index} cho thấy nhân vật phản ứng trước biến cố quan trọng.",
+            }
+            for index in range(12)
+        ]
+        visuals = [
+            {"scene_id": index, "start": index * 20.0, "end": index * 20.0 + 20.0}
+            for index in range(12)
+        ]
+        beats = _timeline_blocks(transcript, visuals)
+        self.assertGreater(len(beats), 1)
+        self.assertEqual(beats[0]["start"], 0.0)
+        self.assertEqual(beats[-1]["end"], 238.0)
+        self.assertIn("Diễn biến số 0", beats[0]["text"])
+        self.assertIn("Diễn biến số 11", beats[-1]["text"])
+
+    def test_cloud_review_failure_is_secret_free_and_never_falls_back_to_ollama(self):
+        from pipeline.review.llm import _cloud_failure_code
+
+        error = _cloud_failure_code("gemini", RuntimeError("GEMINI_HTTP_403 key=should-not-appear"))
+        self.assertEqual(error, "REVIEW_CLOUD_GEMINI_HTTP_403")
+        self.assertNotIn("should-not-appear", error)
+        self.assertEqual(
+            _cloud_failure_code("gemini", RuntimeError("GEMINI_TRANSPORT_UNAVAILABLE")),
+            "REVIEW_CLOUD_GEMINI_UNAVAILABLE",
+        )
+
+    def test_gemini_retries_transient_transport_errors(self):
+        from pipeline.mt import cloud
+
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+        class Client:
+            calls = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def post(self, *_args, **_kwargs):
+                self.calls += 1
+                if self.calls < 3:
+                    raise cloud.httpx.ConnectError("temporary network failure")
+                return Response()
+
+        client = Client()
+        with patch.object(cloud.httpx, "Client", return_value=client), patch.object(cloud.time, "sleep"):
+            result = cloud._gemini_generate(
+                base_url="https://example.invalid/v1beta",
+                api_keys=["test-key"], model="gemini-test", prompt="{}",
+            )
+        self.assertEqual(result, "{}")
+        self.assertEqual(client.calls, 3)
+
     def test_local_llm_stream_observes_cancel(self):
         """Deleting a Review must not wait for a complete Ollama response."""
         from pipeline.core.jobs import Cancelled, arm_job, clear_job, request_cancel
@@ -472,11 +539,12 @@ class ReviewQueueTests(unittest.TestCase):
         from pipeline.review.story import story_pool_fixed, story_workers
 
         self.assertEqual(story_workers("qwen3:4b"), 8)
-        self.assertEqual(story_workers("qwen3:8b"), 6)
+        self.assertEqual(story_workers("qwen3:8b"), 8)
         self.assertEqual(story_workers("qwen3:14b"), 4)
         self.assertEqual(story_workers("gemma4:26b"), 2)
         self.assertEqual(story_workers("custom-model"), 6)
-        self.assertEqual(story_workers("cloud:gemini:gemini-2.5-flash"), 3)
+        self.assertEqual(story_workers("cloud:gemini:gemini-2.5-flash"), 1)
+        self.assertEqual(story_workers("cloud:openai:gpt-4.1-mini"), 3)
         self.assertFalse(story_pool_fixed("qwen3:8b"))
         self.assertTrue(story_pool_fixed("cloud:gemini:gemini-2.5-flash"))
 
@@ -519,18 +587,69 @@ class ReviewQueueTests(unittest.TestCase):
             for start, end in capped
         ), 900.0)
 
-    def test_review_short_voice_is_slowed_toward_selected_total_duration(self):
-        from pipeline.review.run import _floor_voiced_duration, _require_review_voice_coverage
+    def test_review_short_voice_keeps_natural_tts_pace(self):
+        from pipeline.review.run import _cap_voiced_duration
 
-        fitted = _floor_voiced_duration([
+        fitted = _cap_voiced_duration([
             {"duration": 70.0},
             {"duration": 70.0},
         ], 180.0)
 
-        self.assertTrue(all(row["ttsSpeed"] < 1.0 for row in fitted))
-        self.assertAlmostEqual(sum(row["duration"] for row in fitted), 180.0, places=1)
-        with self.assertRaisesRegex(RuntimeError, "REVIEW_NARRATION_TOO_SHORT"):
-            _require_review_voice_coverage([{"duration": 4.0}], 300.0)
+        self.assertEqual(fitted, [{"duration": 70.0}, {"duration": 70.0}])
+
+    def test_translation_fallback_uses_natural_review_length_without_padding(self):
+        from pipeline.review import script as sc
+
+        rows = [
+            {
+                "start": float(index), "end": float(index + 1),
+                "text": f"Câu thoại thứ {index} tiếp tục diễn biến của câu chuyện.",
+            }
+            for index in range(340)
+        ]
+        original = sc._translate_beats
+        sc._translate_beats = lambda texts, _language, project_id=None: list(texts)
+        try:
+            result = sc.write_script(
+                {"story_graph": {}}, duration_sec=300, style="normal", language="vi", spoiler="none",
+                source_transcript=rows,
+                visuals=[{"scene_id": 1, "start": 0, "end": 340}],
+            )
+        finally:
+            sc._translate_beats = original
+        segments = result["segments"]
+        self.assertEqual(len(segments), 5)
+        self.assertLess(result["naturalDurationSec"], 300)
+        self.assertGreaterEqual(sum(len(str(item["text"]).split()) for item in segments), 150)
+
+    def test_review_duration_preset_is_a_ceiling_not_padding_requirement(self):
+        from pipeline.review.script import _natural_script_duration
+
+        natural = _natural_script_duration(
+            300,
+            [{"start": 0, "end": 630}],
+            [{"start": 0, "end": 630, "text": "Nội dung phim"}],
+        )
+        self.assertGreaterEqual(natural, 75)
+        self.assertLess(natural, 300)
+
+    def test_short_grounded_llm_script_is_preferred_over_transcript_padding(self):
+        from pipeline.review import script as sc
+
+        original = sc.generate_json
+        sc.generate_json = lambda *_args, **_kwargs: {"script": [
+            "Mở đầu, nhân vật chính phát hiện bí mật khiến cuộc đối đầu trở nên căng thẳng.",
+            "Ở phần sau, họ buộc phải lựa chọn trước hậu quả của sự thật vừa được hé lộ.",
+        ]}
+        try:
+            result = sc.write_script(
+                {"story_graph": {"events": []}}, duration_sec=300, style="normal", language="vi", spoiler="none",
+                visuals=[{"scene_id": 1, "start": 0, "end": 10, "transcript": "Một sự kiện xảy ra."}],
+                use_llm=True,
+            )
+        finally:
+            sc.generate_json = original
+        self.assertEqual(len(result["segments"]), 2)
 
     def test_part_cache_requires_current_review_plan_and_target(self):
         from pipeline.review.run import REVIEW_PLAN_VERSION, _part_cache_matches
@@ -589,7 +708,7 @@ class ReviewQueueTests(unittest.TestCase):
 
     def test_part_export_segments_use_local_timing_and_fixed_review_band(self):
         from pipeline.review.match import match_voice
-        from pipeline.review.run import _cap_voiced_duration, _floor_voiced_duration, _part_export_segments
+        from pipeline.review.run import _cap_voiced_duration, _part_export_segments
 
         fitted = _cap_voiced_duration([
             {"id": "p03_voice_001", "duration": 8.0, "text": "Local caption", "audio": "/tmp/p03_voice_001.wav"},
@@ -597,11 +716,6 @@ class ReviewQueueTests(unittest.TestCase):
         ], 6.0)
         self.assertEqual(sum(row["duration"] for row in fitted), 10.0)
         self.assertEqual(fitted[0]["ttsSpeed"], 1.2)
-        floored = _floor_voiced_duration([
-            {"id": "short", "duration": 70.0, "text": "Short narration"},
-        ], 90.0)
-        self.assertAlmostEqual(floored[0]["duration"], 90.0, places=1)
-        self.assertAlmostEqual(floored[0]["ttsSpeed"], 70 / 90, places=3)
         plan = match_voice(
             fitted,
             [{"scene_id": 1, "start": 0, "end": 20, "duration": 20}],
@@ -683,7 +797,7 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertLess(cover[1], source[1])
         self.assertGreaterEqual(cover[3], source[3])
 
-    def test_review_caption_cues_are_brief_and_cover_audio_timing(self):
+    def test_review_caption_cues_keep_one_stable_cue_per_voice_line(self):
         from pipeline.review.run import _review_caption_cues
 
         text = (
@@ -693,17 +807,13 @@ class ReviewQueueTests(unittest.TestCase):
         cues = _review_caption_cues([
             {"id": "voice_001", "start": 2.0, "end": 12.0, "translation": text}
         ])
-        self.assertGreater(len(cues), 1)
+        self.assertEqual(len(cues), 1)
         self.assertEqual(cues[0]["start"], 2.0)
         self.assertEqual(cues[-1]["end"], 12.0)
-        self.assertTrue(all(len(cue["translation"]) <= 38 for cue in cues))
-        self.assertTrue(all(
-            cues[index]["end"] == cues[index + 1]["start"]
-            for index in range(len(cues) - 1)
-        ))
+        self.assertEqual(cues[0]["translation"], text)
 
     def test_story_summaries_run_with_bounded_parallel_workers(self):
-        from pipeline.review.story import STORY_WORKERS, _parallel_summaries
+        from pipeline.review.story import _parallel_summaries, story_workers
 
         progress: list[tuple[str, int, int, int]] = []
         rows = _parallel_summaries(
@@ -713,10 +823,11 @@ class ReviewQueueTests(unittest.TestCase):
             on_progress=lambda stage, done, total, workers: progress.append(
                 (stage, done, total, workers)
             ),
+            workers=story_workers("qwen3:8b"),
         )
         self.assertEqual(rows, [{"item": 1}, {"item": 2}, {"item": 3}])
         self.assertEqual(progress[-1][:3], ("blocks", 3, 3))
-        self.assertEqual(progress[-1][3], min(STORY_WORKERS, 3))
+        self.assertEqual(progress[-1][3], min(story_workers("qwen3:8b"), 3))
 
     def test_parts_cache_requires_raw_and_finished_media(self):
         from pipeline.review.cache import save_json
@@ -1041,9 +1152,9 @@ class ReviewQueueTests(unittest.TestCase):
                 ],
             )
             joined = " ".join(s["text"] for s in out["segments"])
-            self.assertIn("gia tộc", joined)
+            self.assertIn("Cô bé khiến cả nhà", joined)
             self.assertGreaterEqual(len(out["segments"]), 1)
-            self.assertEqual(out["segments"][0]["event_refs"], ["src_00000"])
+            self.assertEqual(out["segments"][0]["event_refs"], ["src_000"])
         finally:
             sc.generate_json = orig_g
             sc._translate_beats = orig_t
@@ -1123,7 +1234,7 @@ class ReviewQueueTests(unittest.TestCase):
         finally:
             sc.generate_json = original
         self.assertIn("middle or later section", prompts[0])
-        self.assertIn("evt_000 900.0-906.0 scenes=[9]: Cô bé trở về gặp gia đình.", prompts[0])
+        self.assertIn("evt_000 15:00-15:06 scenes=[9] Cô bé trở về gặp gia đình.", prompts[0])
 
     def test_short_review_part_uses_one_clean_voice_line(self):
         from pipeline.review import script as sc

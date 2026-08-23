@@ -153,14 +153,14 @@ export function ReviewLeftPanel({ settings, onChange }: { settings: ReviewSettin
       ) : mode === 'accumulate' ? (
         <label className="rv-field">
           <div className="rv-inline">
-            <span className="rv-lab">{t('Độ dài video review sau ghép (phút)', 'Final review length (minutes)')}</span>
+            <span className="rv-lab">{t('Thời lượng review mong muốn (phút)', 'Preferred review length (minutes)')}</span>
             <div className="rv-seg">
               {([10, 15, 20] as const).map((n) => (
                 <button key={n} type="button" className={settings.chunkMinutes === n ? 'on' : undefined} onClick={() => onChange({ chunkMinutes: n })}>{n}p</button>
               ))}
             </div>
           </div>
-          <p className="rv-hint">{t('Phim được phân tích một lần; mỗi phần chỉ tạo lời kể và dựng đoạn tương ứng, rồi ghép lại đúng độ dài review đã chọn.', 'The film is analyzed once; each part only creates its narration and edit, then all parts are joined to the selected review length.')}</p>
+          <p className="rv-hint">{t('Ưu tiên mạch review tự nhiên và thông tin có căn cứ; thời lượng là mục tiêu, không kéo dài bằng lời hoặc cảnh đệm.', 'Prioritizes a natural, evidence-grounded review; length is a target, never padded with filler narration or footage.')}</p>
         </label>
       ) : mode === 'fixed' ? (
         <label className="rv-field">
@@ -334,8 +334,8 @@ export function ReviewRightPanel({
           <span>{t('AI phân tích các block cảnh rồi viết lời review theo mạch phim.', 'AI analyzes scene blocks and writes a chronological recap.')}</span>
         </button>
         <button type="button" className={`rv-choice${settings.reviewMode === 'cloud' ? ' on' : ''}`} onClick={() => onChange({ reviewMode: 'cloud' })}>
-          <b>{t('AI Cloud', 'Cloud AI')}</b>
-          <span>{t('Dùng API Gemini, Grok hoặc OpenAI để biên soạn nhanh.', 'Use Gemini, Grok, or OpenAI APIs for faster writing.')}</span>
+          <b>{t('Review · AI Cloud', 'Review · Cloud AI')}</b>
+          <span>{t('Gemini biên tập mạch truyện từ timeline SRT/thoại có timecode; không gửi khung hình.', 'Gemini edits a story arc from timed SRT/speech; no video frames are uploaded.')}</span>
         </button>
         <button type="button" className={`rv-choice${settings.reviewMode === 'translate' ? ' on' : ''}`} onClick={() => onChange({ reviewMode: 'translate' })}>
           <b>{t('Dịch tuần tự', 'Sequential translation')}</b>
@@ -363,8 +363,8 @@ export function ReviewRightPanel({
             <option value="openai">OpenAI</option>
           </select>
           <p className="rv-hint">{t(
-            'Đặt API key và model trong Cài đặt → Cloud. Key không được lưu trong job.',
-            'Set the API key and model in Settings → Cloud. Keys are never saved in the job.',
+            'Chọn Gemini để Review theo timeline thoại. Đặt API key và model trong Cài đặt → Cloud; key không được lưu trong job.',
+            'Choose Gemini for transcript-timeline Review. Set its API key and model in Settings → Cloud; keys are never saved in the job.',
           )}</p>
         </label>
       ) : null}

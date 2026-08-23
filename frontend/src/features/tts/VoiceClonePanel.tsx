@@ -1,4 +1,5 @@
 /** Form «Clone giọng nói» — dùng ở trang Clone (variant `page`) và dashboard (variant `dash`). */
+import { useState, type DragEvent } from 'react'
 import { VoiceTagPicker, type VoiceTagLabel } from './VoiceMetadataModal'
 import { IconUpload } from './TtsIcons'
 
@@ -30,6 +31,7 @@ export default function VoiceClonePanel({
   onSubmit,
   onOpenVoiceList,
 }: Props) {
+  const [isDragging, setIsDragging] = useState(false)
   const fileInputId = variant === 'dash' ? 'tts-clone-file-dash' : 'tts-clone-file'
   const introStyle =
     variant === 'dash'
@@ -57,7 +59,27 @@ export default function VoiceClonePanel({
           </>
         ) : null}
       </p>
-      <div className="tts-drop">
+      <div
+        className={`tts-drop${isDragging ? ' is-dragging' : ''}`}
+        onDragEnter={(event: DragEvent<HTMLDivElement>) => {
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'copy'
+          setIsDragging(true)
+        }}
+        onDragOver={(event: DragEvent<HTMLDivElement>) => {
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'copy'
+        }}
+        onDragLeave={(event: DragEvent<HTMLDivElement>) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDragging(false)
+        }}
+        onDrop={(event: DragEvent<HTMLDivElement>) => {
+          event.preventDefault()
+          setIsDragging(false)
+          const file = event.dataTransfer.files?.[0]
+          if (file) onFileChange(file)
+        }}
+      >
         <div className="ico"><IconUpload size={20} /></div>
         <p>Kéo & thả file audio vào đây<br />hoặc</p>
         <button

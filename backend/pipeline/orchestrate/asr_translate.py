@@ -138,8 +138,8 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
         else:
             video = source
 
-        # preferVideo: bake 0.80× TRƯỚC ASR (khối dưới) — xử lý thẳng trên file
-        # chậm. Các mode khác: 1×; đổi tốc độ sau bằng «Áp dụng» (rebake-speed).
+        # Phân tích luôn ở tốc độ file hiện tại. Chỉ «Áp dụng tốc độ» của người
+        # dùng mới tạo workVideo có clock khác 1×.
         match_mode = str(settings.get("matchDuration") or "preferVideo")
         user_baked = abs(float(meta.get("bakedSpeed") or 1.0) - 1.0) > 0.02
         work = Path(str(meta.get("workVideo") or ""))
@@ -170,9 +170,6 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
             meta.pop("workDuration", None)
             meta["workVideo"] = str(video.resolve())
 
-        # «Ưu tiên chậm» TẮT: phân tích ở 1× gốc — tránh lệch timestamp
-        # logo/caption khi remap tốc độ. TTS vẫn dùng preferVideo ở bước dub.
-        auto_baked_prefer = False
         video_1x = video
 
         # Cache key theo tốc độ file thật sự ASR (0.8 bake trước ≠ cache 1×)
@@ -646,7 +643,7 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                     message="Định vị logo…",
                     running=True,
                 )
-                # Dùng video gốc 1× — logo detection không cần 0.7× và
+                # Dùng video gốc 1× — logo detection không cần đổi tốc độ và
                 # timestamps sẽ khớp timeline cuối (1×) mà không cần remap.
                 # Không chờ bật «Che Logo»: video có AI生成+ phải hiện trong danh sách.
                 logo_detection = _detect_logo_via_runtime_subprocess(
@@ -686,32 +683,6 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
         meta["workVideo"] = str(video.resolve())
         # ASR/dịch mới → baseline bake cũ (id/time khác) không còn hợp lệ
         meta.pop("timelineBaseline", None)
-        # Phân tích 0.8 xong → nâng timeline + work file về 1.00× (yêu cầu:
-        # đầu vào 0.8 chỉ để đo; vào editor là tốc độ thật, khỏi nâng tay).
-        # Cache dịch (run_caches) giữ clock 0.8 khớp asrKey s080 cho lần chạy sau.
-        if auto_baked_prefer:
-            from pipeline.core.media import (
-                preview_1x_path,
-                remap_timeline_for_speed_change,
-            )
-
-            set_status(
-                project_id,
-                step="translate",
-                progress=98,
-                message="Phân tích xong — nâng timeline về 1.00×…",
-                running=True,
-            )
-            remap_timeline_for_speed_change(meta, 0.7, 1.0)
-            segments = meta.get("segments") or segments
-            base_1x = preview_1x_path(project_id, meta)
-            meta["bakedSpeed"] = 1.0
-            meta.pop("bakedPreferVideo", None)
-            meta.pop("workDuration", None)
-            meta["workVideo"] = str(base_1x.resolve())
-            meta["timelineClock"] = "display"
-            # Dấu vết flow «ưu tiên 0.8»: dub sẽ mặc định giọng 1.20× (khe đã co)
-            meta["analyzedAtSpeed"] = 0.7
         save_meta(project_id, meta)
         hint = f"Preview {preview_sec}s — " if preview_sec > 0 else ""
         no_tr = str(settings.get("targetLang") or "") in ("none", "off", "source", "")

@@ -36,6 +36,10 @@ def classify_error(exc: BaseException) -> str:
     text = str(exc).lower()
     if isinstance(exc, Cancelled) or type(exc).__name__ == "Cancelled":
         return "CANCELLED"
+    if "review_cloud_" in text:
+        # Cloud Review has a stable, UI-safe code.  It is a model/provider
+        # failure, never an unclassified queue error.
+        return "MODEL_ERROR"
     if "oom" in text or "out of memory" in text:
         return "GPU_OOM"
     if "disk" in text or "no space" in text:

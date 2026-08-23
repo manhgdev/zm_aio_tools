@@ -160,6 +160,15 @@ export function localize(locale: AppLocale, vietnamese: string, english: string)
 export function localizePipelineMessage(locale: AppLocale, message: string): string {
   if (locale !== 'en') return message
   return message
+    .replace(/^REVIEW_CLOUD_GEMINI_HTTP_403$/g, 'Gemini rejected this request. Check the API key, its project, and Gemini API access in Settings → Cloud.')
+    .replace(/^REVIEW_CLOUD_GEMINI_UNAVAILABLE$/g, 'Gemini is temporarily unreachable. Check the network, base URL, and API key in Settings → Cloud, then retry.')
+    .replace(/^Review script: AI dựng mạch từ timeline thoại · model (.+)$/g, 'Review script: AI builds an arc from the speech timeline · model $1')
+    .replace(/^Lập chỉ mục cảnh: (.+)$/g, 'Indexing scenes: $1')
+    .replace(/^Chỉ mục cảnh: (\d+) cảnh · (\d+)s$/g, 'Scene index: $1 scenes · $2s')
+    .replace(/^Tóm tắt mốc thoại: (\d+)\/(\d+) \((\d+)%\) · tiến trình (\d+)% · (\d+) luồng$/g, 'Summarizing speech beats: $1/$2 ($3%) · overall $4% · $5 workers')
+    .replace(/^Kịch bản phần (\d+): (\d+) đoạn · mục tiêu tự nhiên (\d+)s · (\d+)s(?: · cache)?$/g, 'Part $1 script: $2 beats · natural target $3s · $4s')
+    .replace(/^Lập chỉ mục cảnh & gắn transcript: (\d+)\/(\d+) cảnh \((\d+)%\)$/g, 'Indexing scenes and attaching transcript: $1/$2 scenes ($3%)')
+    .replace(/^LLM trả kịch bản ngắn hơn mục tiêu — ưu tiên mạch review tự nhiên, không kéo dài bằng transcript\.$/g, 'LLM returned a shorter script — keeping a natural review flow instead of padding with transcript.')
     .replace(/^CapCut: đang chuẩn bị video…$/g, 'CapCut: preparing video…')
     .replace(/^CapCut: đang tải video lên…$/g, 'CapCut: uploading video…')
     .replace(/^CapCut: đang nhận dạng và dịch…$/g, 'CapCut: recognizing and translating…')

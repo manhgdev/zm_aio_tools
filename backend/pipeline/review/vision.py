@@ -26,9 +26,8 @@ def analyze_scenes(
     frames_dir = cache_dir / "keyframes"
     frames_dir.mkdir(parents=True, exist_ok=True)
     # The current `generate_json` transport carries text only, not an image
-    # message.  Keep this parameter for API compatibility, but do not let a
-    # model infer a scene from a transcript and call it vision.
-    del use_vision
+    # message. Keep the switch for a future VLM transport, but never let a
+    # text-only model infer pixels from a transcript.
     out: list[dict[str, Any]] = []
     total_scenes = len(scenes)
     for i, scene in enumerate(scenes):
@@ -37,11 +36,14 @@ def analyze_scenes(
             try:
                 from pipeline.review.run import _note
                 pct = int((i + 1) / max(1, total_scenes) * 100)
-                _note(job_id, f"Phân tích hình ảnh: {i + 1}/{total_scenes} cảnh ({pct}%)")
+                _note(job_id, f"Lập chỉ mục cảnh & gắn transcript: {i + 1}/{total_scenes} cảnh ({pct}%)")
             except Exception:
                 pass
         text = _scene_text(scene, transcript)
-        frame = _keyframe(source, scene, frames_dir)
+        # Text-led Review uses caption timecodes to choose footage. Keyframes
+        # are optional future VLM evidence, so do not extract hundreds of
+        # images when no vision model is actually receiving them.
+        frame = _keyframe(source, scene, frames_dir) if use_vision else None
         row = _heuristic(scene, text)
         row["keyframe"] = str(frame) if frame else ""
         out.append(row)

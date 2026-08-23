@@ -139,7 +139,7 @@ type Props = {
   mediaDuration?: number
   /** Clip lần dịch (giây); >0 = chỉ làm việc trong cửa sổ đó (preview N giây) */
   workClipSec?: number
-  /** workVideo đã bake chậm 0.80× (preferVideo) → không playbackRate thêm */
+  /** workVideo đã được người dùng bake tốc độ → không playbackRate thêm */
   bakedPreferVideo?: boolean
   /** Tốc độ đã bake vào file preview */
   bakedSpeed?: number
