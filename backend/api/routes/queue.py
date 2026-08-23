@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from pipeline.core.config import DATA, safe_child
-from pipeline.queue.engine import enqueue, get_engine, job_action, list_jobs
+from pipeline.queue.engine import ArtifactBusyError, enqueue, get_engine, job_action, list_jobs
 from pipeline.queue.store import get as get_job, mutate
 
 router = APIRouter()
@@ -151,6 +151,8 @@ def api_queue_delete_part(job_id: str, index: int):
 def api_queue_job(job_id: str, body: QueueActionIn):
     try:
         return job_action(job_id, body.op)
+    except ArtifactBusyError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except KeyError:
         raise HTTPException(404, "Không thấy job") from None
 

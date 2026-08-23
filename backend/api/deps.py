@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -188,6 +188,11 @@ class TtsBlock(BaseModel):
 class AppConfigIn(BaseModel):
     cloud: dict[str, CloudBlock] | None = None
     tts: TtsBlock | None = None
+
+
+class UiPreferencesIn(BaseModel):
+    locale: Literal["vi", "en"] | None = None
+    storage: dict[str, str] | None = None
 
 
 class PreviewTtsIn(BaseModel):

@@ -6,9 +6,10 @@ from pathlib import Path
 
 import sys
 
-from pipeline.core.media import ffprobe_duration, h264_encoder_args, h264_hardware_encoder, video_size
+from pipeline.core.media import _ff_bin, ffprobe_duration, h264_encoder_args, h264_hardware_encoder, video_size
 from pipeline.cleaner.cleaner_jobs import (
     update_job,
+    append_job_log,
     register_proc,
     unregister_proc,
     get_job,
@@ -28,13 +29,24 @@ def _logo_filter(input_path: str) -> str:
     width, height = video_size(Path(input_path))
     if width < 1 or height < 1:
         raise RuntimeError("Không đọc được kích thước video để xoá logo")
-    x = max(0, min(width - 2, round(float(bbox.get("x") or 0) * width)))
-    y = max(0, min(height - 2, round(float(bbox.get("y") or 0) * height)))
-    w = max(2, min(width - x, round(float(bbox.get("w") or 0) * width)))
-    h = max(2, min(height - y, round(float(bbox.get("h") or 0) * height)))
-    # FFmpeg's delogo is a conservative blur/reconstruction filter for a
-    # static detected mark; moving marks require the editor's tracked masks.
-    return f"delogo=x={x}:y={y}:w={w}:h={h}:show=0"
+    raw_masks = (detection or {}).get("masks")
+    masks = raw_masks if isinstance(raw_masks, list) else [bbox]
+    filters: list[str] = []
+    for mask in masks:
+        if not isinstance(mask, dict):
+            continue
+        # FFmpeg delogo rejects a region touching the top/left boundary even
+        # when its dimensions are valid. Keep a one-pixel border and clip it.
+        x = max(1, min(width - 3, round(float(mask.get("x") or 0) * width)))
+        y = max(1, min(height - 3, round(float(mask.get("y") or 0) * height)))
+        w = max(2, min(width - x - 1, round(float(mask.get("w") or 0) * width)))
+        h = max(2, min(height - y - 1, round(float(mask.get("h") or 0) * height)))
+        filters.append(f"delogo=x={x}:y={y}:w={w}:h={h}:show=0")
+    if not filters:
+        raise RuntimeError("Không có vùng logo/watermark hợp lệ để xoá")
+    # FFmpeg applies each static mask sequentially; this covers a wordmark and
+    # a separate corner glyph in the same video.
+    return ",".join(filters)
 
 
 def run_cleaner_job_sync(job_id: str) -> None:
@@ -48,11 +60,14 @@ def run_cleaner_job_sync(job_id: str) -> None:
     options = job["options"]
     
     update_job(job_id, {"status": "processing", "startedAt": time.time(), "progress": 0})
+    append_job_log(job_id, f"Bắt đầu xử lý · {method}")
     
     try:
         duration_s = ffprobe_duration(input_path) or 100.0
         
-        cmd = ["ffmpeg", "-y", "-i", input_path]
+        # Always resolve the same FFmpeg binary as the rest of the app.  A
+        # packaged Windows/macOS app cannot rely on a globally installed ffmpeg.
+        cmd = [_ff_bin("ffmpeg"), "-y", "-hide_banner", "-i", input_path]
         
         # Build command
         if method == "metadata":
@@ -64,7 +79,7 @@ def run_cleaner_job_sync(job_id: str) -> None:
         
         elif method == "reencode":
             vcodec = options.get("videoCodec", "libx264")
-            acodec = options.get("audioMode", "copy")
+            audio_mode = str(options.get("audioMode", "copy"))
             crf = str(options.get("crf", 23))
             preset = options.get("preset", "fast")
             
@@ -75,7 +90,16 @@ def run_cleaner_job_sync(job_id: str) -> None:
             else:
                 cmd.extend(["-c:v", vcodec, "-preset", preset, "-crf", crf])
                 
-            cmd.extend(["-c:a", acodec])
+            audio_args = {
+                "copy": ["-c:a", "copy"],
+                "aac128": ["-c:a", "aac", "-b:a", "128k"],
+                "aac160": ["-c:a", "aac", "-b:a", "160k"],
+                "aac192": ["-c:a", "aac", "-b:a", "192k"],
+                "none": ["-an"],
+            }.get(audio_mode)
+            if audio_args is None:
+                raise ValueError(f"Chế độ âm thanh không hợp lệ: {audio_mode}")
+            cmd.extend(audio_args)
             
             if options.get("faststart"):
                 cmd.extend(["-movflags", "+faststart"])
@@ -99,6 +123,7 @@ def run_cleaner_job_sync(job_id: str) -> None:
             cmd.extend(["-c:a", "copy", "-map_metadata", "-1", "-movflags", "+faststart"])
             
         cmd.append(output_path)
+        append_job_log(job_id, "FFmpeg: " + subprocess.list2cmdline(cmd))
         
         proc = subprocess.Popen(
             cmd,
@@ -111,8 +136,14 @@ def run_cleaner_job_sync(job_id: str) -> None:
         )
         register_proc(job_id, proc)
         
+        stderr_tail: list[str] = []
         if proc.stderr:
             for line in proc.stderr:
+                cleaned = line.strip()
+                if cleaned:
+                    stderr_tail.append(cleaned)
+                    if len(stderr_tail) > 24:
+                        stderr_tail.pop(0)
                 if "time=" in line:
                     try:
                         time_str = line.split("time=")[1].split()[0]
@@ -134,7 +165,13 @@ def run_cleaner_job_sync(job_id: str) -> None:
             return
             
         if proc.returncode != 0:
-            raise RuntimeError(f"FFmpeg exit code {proc.returncode}")
+            detail = "\n".join(stderr_tail[-6:])
+            if detail:
+                append_job_log(job_id, "FFmpeg stderr:\n" + detail)
+            raise RuntimeError(
+                f"FFmpeg thất bại (exit {proc.returncode})"
+                + (f": {detail}" if detail else "")
+            )
             
         # Success
         out_size = Path(output_path).stat().st_size if Path(output_path).exists() else 0
@@ -144,11 +181,13 @@ def run_cleaner_job_sync(job_id: str) -> None:
             "outputSize": out_size,
             "finishedAt": time.time()
         })
+        append_job_log(job_id, "Hoàn thành")
         
     except Exception as e:
         unregister_proc(job_id)
         current_job = get_job(job_id)
         if current_job and current_job.get("status") != "cancelled":
+            append_job_log(job_id, "LỖI: " + str(e))
             update_job(job_id, {
                 "status": "error",
                 "error": str(e),

@@ -15,6 +15,12 @@ const oneFile = process.env.ONEFILE === '1' || process.env.ONEFILE === 'true'
 const clean = process.env.CLEAN === '1' || process.env.CLEAN === 'true'
 const skipArchive = process.env.SKIP_ARCHIVE === '1' || process.env.SKIP_ARCHIVE === 'true'
 const npmCommand = isWin ? process.env.ComSpec || 'cmd.exe' : 'npm'
+const APP_DISPLAY_NAME = 'ZM AIO TOOL'
+const APP_ARTIFACT_NAME = 'ZM_AIO_TOOL'
+const APP_EXECUTABLE_NAME = APP_DISPLAY_NAME
+// Useful for a local smoke build while a previous root-owned release bundle is
+// still present. CI leaves it unset and uses the normal release folder.
+const releaseDir = process.env.VIDEO_CLONE_BUILD_RELEASE_DIR || path.join(root, 'build_app', 'release')
 
 function npmArgs(...args) {
   return isWin ? ['/d', '/s', '/c', `npm ${args.join(' ')}`] : args
@@ -76,36 +82,6 @@ function parseSemver(v) {
 
 function formatSemver({ major, minor, patch }) {
   return `${major}.${minor}.${patch}`
-}
-
-function bumpPatch(version) {
-  // VideoClone uses decimal rollover per component (0..9), not unbounded SemVer minors:
-  // 2.9.8 -> 2.9.9 -> 3.0.0 -> 3.0.1.
-  const s = parseSemver(version)
-  if (s.patch >= 9) {
-    s.patch = 0
-    s.minor += 1
-    if (s.minor >= 10) {
-      s.minor = 0
-      s.major += 1
-    }
-  } else {
-    s.patch += 1
-  }
-  return formatSemver(s)
-}
-
-for (const [input, expected] of [
-  ['2.0.8', '2.0.9'],
-  ['2.0.9', '2.1.0'],
-  ['2.1.9', '2.2.0'],
-  ['2.9.9', '3.0.0'],
-]) {
-  const got = bumpPatch(input)
-  if (got !== expected) {
-    console.error(`bumpPatch(${input}) = ${got}, expected ${expected}`)
-    process.exit(1)
-  }
 }
 
 const FF_MIN_BYTES = 2_000_000 // Chocolatey ShimGen ~400KB; Gyan/full là chục–trăm MB.
@@ -178,7 +154,7 @@ if (!existsSync(python)) {
 const pkg = readPackage()
 const appVersion = formatSemver(parseSemver(pkg.version || '1.0.0'))
 writeFileSync(versionFilePath, `${appVersion}\n`, 'utf8')
-console.log(`Building VideoClone v${appVersion} (${oneFile ? 'onefile' : 'onedir'}${clean ? ', clean' : ''})`)
+console.log(`Building ${APP_DISPLAY_NAME} v${appVersion} (${oneFile ? 'onefile' : 'onedir'}${clean ? ', clean' : ''})`)
 
 if (
   !existsSync(path.join(root, 'node_modules', '.bin', isWin ? 'tsc.cmd' : 'tsc')) ||
@@ -217,8 +193,8 @@ const args = [
   '--noconfirm',
   ...(clean ? ['--clean'] : []),
   ...(oneFile ? ['--onefile'] : ['--onedir']),
-  '--name', 'VideoClone',
-  '--distpath', path.join(root, 'build_app', 'release'),
+  '--name', APP_EXECUTABLE_NAME,
+  '--distpath', releaseDir,
   '--workpath', path.join(root, 'build_app', '.work'),
   '--specpath', path.join(root, 'build_app'),
   '--paths', path.join(root, 'backend'),
@@ -304,7 +280,7 @@ if (isWin) {
 // ── MACOS-SPECIFIC ───────────────────────────────────────────────────────────
 if (isMac) {
   // Bundle identifier cho .app (macOS yêu cầu reverse-DNS)
-  args.push('--osx-bundle-identifier', 'com.videoclone.app')
+  args.push('--osx-bundle-identifier', 'com.zmaio.tool')
   // Universal2: build cho cả Apple Silicon + Intel (nếu cross-compile được)
   // Bỏ comment dòng dưới nếu build trên máy hỗ trợ universal2:
   // args.push('--target-arch', 'universal2')
@@ -341,23 +317,41 @@ run(python, args, {
   VIDEO_CLONE_PUBLIC_DATA: path.join(buildHome, 'public_data'),
 })
 
-const releaseDir = path.join(root, 'build_app', 'release')
-const verName = `VideoClone_v${appVersion}`
+const verName = `${APP_ARTIFACT_NAME}_v${appVersion}`
 let output
 let packageTarget = ''
-if (oneFile) {
-  const built = path.join(releaseDir, isWin ? 'VideoClone.exe' : isMac ? 'VideoClone.app' : 'VideoClone')
+if (oneFile || isMac) {
+  const built = path.join(releaseDir, isWin ? `${APP_EXECUTABLE_NAME}.exe` : isMac ? `${APP_EXECUTABLE_NAME}.app` : APP_EXECUTABLE_NAME)
   output = path.join(releaseDir, isWin ? `${verName}.exe` : isMac ? `${verName}.app` : verName)
   if (existsSync(output)) rmSync(output, { recursive: true, force: true })
   if (existsSync(built)) renameSync(built, output)
   packageTarget = output
 } else {
-  const builtDir = path.join(releaseDir, 'VideoClone')
+  const builtDir = path.join(releaseDir, APP_EXECUTABLE_NAME)
   const outDir = path.join(releaseDir, verName)
   if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true })
   if (existsSync(builtDir)) renameSync(builtDir, outDir)
   packageTarget = outDir
-  output = path.join(outDir, isWin ? 'VideoClone.exe' : 'VideoClone')
+  output = path.join(outDir, isWin ? `${APP_EXECUTABLE_NAME}.exe` : APP_EXECUTABLE_NAME)
+}
+
+if (isMac && packageTarget) {
+  const info = path.join(packageTarget, 'Contents', 'Info.plist')
+  for (const [key, value] of [
+    ['CFBundleDisplayName', APP_DISPLAY_NAME],
+    ['CFBundleName', APP_DISPLAY_NAME],
+    ['CFBundleShortVersionString', appVersion],
+    ['CFBundleVersion', appVersion],
+  ]) {
+    let result = spawnSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, info], { encoding: 'utf8' })
+    if (result.status !== 0) {
+      result = spawnSync('/usr/libexec/PlistBuddy', ['-c', `Add :${key} string ${value}`, info], { encoding: 'utf8' })
+    }
+    if (result.status !== 0) {
+      console.error(`Không thể đặt ${key} cho bundle macOS: ${result.stderr || result.stdout}`)
+      process.exit(1)
+    }
+  }
 }
 
 if (packageTarget && !skipArchive) {
@@ -372,19 +366,15 @@ if (packageTarget && !skipArchive) {
     output.on('error', reject)
     archive.on('error', reject)
     archive.pipe(output)
-    if (statSync(packageTarget).isDirectory()) archive.directory(packageTarget, oneFile ? path.basename(packageTarget) : false)
+    if (statSync(packageTarget).isDirectory()) archive.directory(packageTarget, (oneFile || isMac) ? path.basename(packageTarget) : false)
     else archive.file(packageTarget, { name: path.basename(packageTarget) })
     archive.finalize()
   })
   console.log(`Bản ZIP: ${archivePath}`)
 }
 
-const nextVersion = bumpPatch(appVersion)
-const nextPkg = readPackage()
-nextPkg.version = nextVersion
-writeFileSync(packageJsonPath, `${JSON.stringify(nextPkg, null, 2)}\n`, 'utf8')
 console.log(`\nBuild hoàn tất: ${output}`)
-console.log(`Version: v${appVersion} → next build will be v${nextVersion}`)
+console.log(`Version: v${appVersion}`)
 if (!oneFile) {
   console.log(`Chạy cả thư mục release/${verName}/ (không copy riêng .exe).`)
 }

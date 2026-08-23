@@ -1198,6 +1198,17 @@ class ReviewQueueTests(unittest.TestCase):
             self.assertFalse(cache.exists())
             self.assertFalse(project.exists())
 
+    def test_remove_job_artifacts_reports_locked_output_without_dropping_job(self):
+        from pipeline.queue import engine
+
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "review.mp4"
+            output.write_bytes(b"data")
+            with patch.object(Path, "unlink", side_effect=PermissionError(32, "locked")):
+                with self.assertRaises(engine.ArtifactBusyError):
+                    engine.remove_job_artifacts({"output": str(output)})
+            self.assertTrue(output.exists())
+
     def test_review_segment_count_scales_without_fixed_bounds(self):
         from pipeline.review.script import _segment_count
 

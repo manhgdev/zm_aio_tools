@@ -159,6 +159,16 @@ export const api = {
 
   getConfig: () => fetchJson<AppConfig>(`${base}/config`, undefined, 20_000),
 
+  getLocalePreference: () =>
+    fetchJson<{ locale: 'vi' | 'en' | null }>(`${base}/ui-preferences`, undefined, 5_000),
+
+  saveLocalePreference: (locale: 'vi' | 'en') =>
+    fetchJson<{ locale: 'vi' | 'en' }>(`${base}/ui-preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locale }),
+    }, 5_000),
+
   saveConfig: (body: {
     cloud?: Record<
       string,

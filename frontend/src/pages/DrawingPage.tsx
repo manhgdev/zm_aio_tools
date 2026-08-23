@@ -91,8 +91,14 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
   const [dragging, setDragging] = useState(false)
   const [artifactError, setArtifactError] = useState<PreviewTab | null>(null)
   const [jobsRestored, setJobsRestored] = useState(false)
+  const [runRequested, setRunRequested] = useState(false)
 
-  const active = [job, ...batchJobs].some((item) => item?.status === 'queued' || item?.status === 'processing')
+  // A selected source is saved as a queued backend job immediately.  Queued
+  // means safely cached and ready to start; only processing blocks edits.
+  const active = [job, ...batchJobs].some((item) => item?.status === 'processing')
+  const queuedJobs = [job, ...batchJobs].filter((item): item is DrawingJob => item?.status === 'queued')
+  const hasCachedSource = Boolean(job)
+  const [savingSource, setSavingSource] = useState(false)
   const visual = useMemo(() => {
     if (previewTab === 'line-map' && job && artifactError !== 'line-map') return artifact(job, 'lineMap')
     if (previewTab === 'stroke-path' && job && artifactError !== 'stroke-path') return artifact(job, 'strokePath')
@@ -124,7 +130,7 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
   }, [batchJobs, job, jobsRestored])
   useEffect(() => { setArtifactError(null) }, [job?.id, job?.progress, previewTab])
   useEffect(() => {
-    const ids = [job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item && (item.status === 'queued' || item.status === 'processing'))).map((item) => item.id)
+    const ids = [job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item && (item.status === 'processing' || (runRequested && item.status === 'queued')))).map((item) => item.id)
     if (!ids.length) return
     const timer = window.setInterval(async () => {
       const results = await Promise.all(ids.map(async (id) => {
@@ -137,18 +143,37 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
       setBatchJobs((current) => current.map((item) => updates.get(item.id) ?? item))
     }, 800)
     return () => window.clearInterval(timer)
-  }, [active, job?.id, batchJobs])
+  }, [active, batchJobs, job?.id, runRequested])
+  useEffect(() => {
+    if (runRequested && [job, ...batchJobs].every((item) => !item || ['done', 'error', 'cancelled'].includes(item.status))) setRunRequested(false)
+  }, [batchJobs, job, runRequested])
 
-  const selectFiles = (next: FileList | File[] | null | undefined) => {
+  const selectFiles = async (next: FileList | File[] | null | undefined) => {
     const accepted = Array.from(next ?? []).filter((item) => item.type.startsWith('image/'))
     if (!accepted.length) return
     setFile(accepted[0])
     setBatchFiles(accepted)
-    setJob(null)
-    setBatchJobs([])
     setArtifactError(null)
     setPreviewTab('preview')
     setLocalPreview(URL.createObjectURL(accepted[0]))
+    setSavingSource(true)
+    try {
+      const body = new FormData()
+      accepted.forEach((item) => body.append('images', item))
+      body.append('options', JSON.stringify({ preset, mode, tool, duration, detail, thickness, fps, resolution, smartOrder, showOriginalEnd }))
+      body.append('start_now', 'false')
+      const response = await fetch('/api/drawing/jobs/batch', { method: 'POST', body })
+      if (!response.ok) throw new Error(await response.text())
+      const result = await response.json() as { jobs: DrawingJob[] }
+      setJob(result.jobs[0] ?? null)
+      setBatchJobs(result.jobs.slice(1))
+      setRunRequested(false)
+    } catch (error) {
+      setJob({ id: '', status: 'error', progress: 0, step: 'error', error: error instanceof Error ? error.message : String(error) })
+      setBatchJobs([])
+    } finally {
+      setSavingSource(false)
+    }
   }
   const applyPreset = (id: Preset) => {
     const value = PRESETS[id]
@@ -156,24 +181,26 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
     setTool(value.tool); setMode(value.mode); setShowOriginalEnd(value.showOriginalEnd)
   }
   const generate = async () => {
-    const selected = batchFiles.length ? batchFiles : file ? [file] : []
-    if (!selected.length || active) return
-    const body = new FormData()
-    const endpoint = selected.length > 1 ? '/api/drawing/jobs/batch' : '/api/drawing/jobs'
-    selected.forEach((item) => body.append(selected.length > 1 ? 'images' : 'image', item))
-    body.append('options', JSON.stringify({ preset, mode, tool, duration, detail, thickness, fps, resolution, smartOrder, showOriginalEnd }))
-    const response = await fetch(endpoint, { method: 'POST', body })
-    if (!response.ok) {
-      setJob({ id: '', status: 'error', progress: 0, step: 'error', error: await response.text() })
-      return
-    }
-    const result = await response.json() as DrawingJob | { jobs: DrawingJob[] }
-    if ('jobs' in result) {
-      setJob(result.jobs[0] ?? null)
-      setBatchJobs(result.jobs.slice(1))
-    } else {
-      setJob(result)
-      setBatchJobs([])
+    if (!queuedJobs.length || active || savingSource) return
+    try {
+      const options = { preset, mode, tool, duration, detail, thickness, fps, resolution, smartOrder, showOriginalEnd }
+      const updates = await Promise.all(queuedJobs.map(async (item) => {
+        const response = await fetch(`/api/drawing/jobs/${item.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options),
+        })
+        if (!response.ok) throw new Error(await response.text())
+        return await response.json() as DrawingJob
+      }))
+      const response = await fetch('/api/drawing/jobs/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: updates.map((item) => item.id) }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      setJob(updates[0] ?? null)
+      setBatchJobs(updates.slice(1))
+      setRunRequested(true)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setJob((current) => current ? { ...current, error: message } : { id: '', status: 'error', progress: 0, step: 'error', error: message })
     }
   }
   const cancelJob = async (jobId: string) => {
@@ -189,6 +216,8 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
     : job?.step === 'ink' ? t('Đang vẽ từng nét', 'Drawing stroke by stroke')
     : job?.step === 'color' ? t('Đang tô màu', 'Adding colour')
     : job?.step === 'encoding' ? t('Đang mã hóa video', 'Encoding video')
+    : savingSource ? t('Đang lưu ảnh vào hàng đợi', 'Saving image to queue')
+    : queuedJobs.length ? t('Đã lưu, sẵn sàng tạo video', 'Saved, ready to create video')
     : active ? t('Đang tạo video vẽ tay', 'Creating drawing video') : t('Sẵn sàng render cục bộ', 'Ready for local rendering')
 
   return (
@@ -202,10 +231,10 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
           <h2>{t('Ảnh nguồn', 'Source image')}</h2>
           <button className={`drawing-dropzone${dragging ? ' is-dragging' : ''}`} type="button"
             onClick={() => inputRef.current?.click()} onDragOver={(event) => { event.preventDefault(); setDragging(true) }}
-            onDragLeave={() => setDragging(false)} onDrop={(event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); setDragging(false); selectFiles(event.dataTransfer.files) }}>
+            onDragLeave={() => setDragging(false)} onDrop={(event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); setDragging(false); void selectFiles(event.dataTransfer.files) }}>
             {localPreview ? <img src={localPreview} alt="" /> : <><b>＋</b><strong>{t('Kéo ảnh vào đây', 'Drop an image here')}</strong><span>JPG · PNG · WebP</span></>}
           </button>
-          <input ref={inputRef} className="drawing-visually-hidden" type="file" multiple accept="image/jpeg,image/png,image/webp,image/bmp" onChange={(event) => selectFiles(event.target.files)} />
+          <input ref={inputRef} className="drawing-visually-hidden" type="file" multiple accept="image/jpeg,image/png,image/webp,image/bmp" onChange={(event) => void selectFiles(event.target.files)} />
           {file ? <div className="drawing-file"><span>{batchFiles.length > 1 ? t(`${batchFiles.length} ảnh đã chọn`, `${batchFiles.length} images selected`) : file.name}</span><button type="button" onClick={() => { setFile(null); setBatchFiles([]); setJob(null); setBatchJobs([]); setLocalPreview('') }}>{t('Đổi ảnh', 'Change')}</button></div> : null}
           <label className="drawing-field"><span>{t('Chế độ vẽ', 'Drawing mode')}</span><select value={mode} onChange={(event) => setMode(event.target.value as 'drawing' | 'hand')}><option value="drawing">{t('Vẽ nét liên tục', 'Continuous strokes')}</option><option value="hand">{t('Tay cầm bút vẽ nét', 'Hand drawing strokes')}</option></select></label>
           <span className="drawing-label">{t('Loại dụng cụ', 'Tool')}</span>
@@ -236,8 +265,8 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
           <Range label={t('Độ chi tiết', 'Detail')} value={detail} min={10} max={100} suffix="%" onChange={setDetail} />
           <Range label={t('Độ dày nét', 'Stroke thickness')} value={thickness} min={1} max={8} suffix=" px" onChange={setThickness} />
           <div className="drawing-setting-row"><label className="drawing-field"><span>FPS</span><select value={fps} onChange={(event) => setFps(Number(event.target.value) as 24 | 30 | 60)}><option value="24">24</option><option value="30">30</option><option value="60">60</option></select></label><label className="drawing-field"><span>{t('Độ phân giải', 'Resolution')}</span><select value={resolution} onChange={(event) => setResolution(event.target.value as '720p' | '1080p' | '4k')}><option value="720p">720p</option><option value="1080p">1080p</option><option value="4k">4K</option></select></label></div>
-          <button className="drawing-generate" type="button" disabled={!file || active} onClick={generate}>{active ? `${Math.round(job?.progress ?? 0)}% · ${t('Đang tạo', 'Creating')}` : batchFiles.length > 1 ? t(`▶ Vẽ tay hàng loạt (${batchFiles.length})`, `▶ Batch draw (${batchFiles.length})`) : t('▶ Tạo video vẽ tay', '▶ Create drawing video')}</button>
-          {active ? <button className="drawing-cancel" type="button" onClick={() => [job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item && (item.status === 'queued' || item.status === 'processing'))).forEach((item) => void cancelJob(item.id))}>{t('Hủy tất cả', 'Cancel all')}</button> : null}
+          <button className="drawing-generate" type="button" disabled={!hasCachedSource || !queuedJobs.length || active || savingSource} onClick={() => void generate()}>{savingSource ? t('Đang lưu ảnh…', 'Saving image…') : active ? `${Math.round(job?.progress ?? 0)}% · ${t('Đang tạo', 'Creating')}` : batchFiles.length > 1 ? t(`▶ Vẽ tay hàng loạt (${batchFiles.length})`, `▶ Batch draw (${batchFiles.length})`) : t('▶ Tạo video vẽ tay', '▶ Create drawing video')}</button>
+          {(active || queuedJobs.length) ? <button className="drawing-cancel" type="button" onClick={() => [job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item && (item.status === 'queued' || item.status === 'processing'))).forEach((item) => void cancelJob(item.id))}>{t('Hủy tất cả', 'Cancel all')}</button> : null}
           {job?.status === 'done' ? <a className="drawing-download" href={artifact(job, 'output')} download>{t('Tải video MP4', 'Download MP4 video')}</a> : null}
           {batchJobs.length ? <div className="drawing-batch" aria-label={t('Tiến độ vẽ tay hàng loạt', 'Batch drawing progress')}><b>{t('Hàng loạt · chạy tuần tự', 'Batch · sequential rendering')}</b>{[job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item)).map((item, index) => <div key={item.id}><span>{index + 1}. {item.filename || (index === 0 ? file?.name : batchFiles[index]?.name) || t('Ảnh vẽ tay', 'Drawing image')}</span><em>{item.status === 'done' ? t('Xong', 'Done') : item.status === 'cancelled' ? t('Đã hủy', 'Cancelled') : item.status === 'error' ? t('Lỗi', 'Error') : `${item.progress}%`}</em>{item.status === 'queued' || item.status === 'processing' ? <button type="button" onClick={() => void cancelJob(item.id)}>{t('Hủy', 'Cancel')}</button> : null}</div>)}</div> : null}
         </section>

@@ -32,6 +32,19 @@ test('English catalog has no empty entries', () => {
   assert.deepEqual(missing, [])
 })
 
+test('interface locale is persisted through the app API', async () => {
+  const [app, api, index] = await Promise.all([
+    readFile(new URL('../frontend/src/app/App.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/project/project.api.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/index.html', import.meta.url), 'utf8'),
+  ])
+  assert.match(app, /getLocalePreference\(\)/)
+  assert.match(app, /saveLocalePreference\(nextLocale\)/)
+  assert.match(api, /ui-preferences/)
+  assert.match(index, /ui-preferences/)
+  assert.match(index, /localStorage\.setItem/)
+})
+
 test('English catalog covers interrupted TTS and Log UI text', () => {
   const expected = [
     'Lỗi job (Dịch / Lồng tiếng / Xuất), warm-models, crash hook. Copy gửi AI để sửa.',
@@ -160,4 +173,16 @@ test('License gate is bilingual and accepts keyboard focus', async () => {
   assert.match(license, /inputRef\.current\?\.focus/)
   assert.match(app, /app-license-gate/)
   assert.match(app, /appMode === 'license' && !licenseBlocked/)
+})
+
+test('ZM AIO TOOL branding keeps the SRT logo label bilingual', async () => {
+  const [header, license, srt] = await Promise.all([
+    readFile(new URL('../frontend/src/shared/components/Header.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/license/LicensePage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/SrtImagePage.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(header, /ZM AIO TOOL/)
+  assert.match(license, /ZM AIO TOOL/)
+  assert.match(srt, /Logo \/ Watermark ZM AIO TOOL/)
+  assert.match(srt, /ZM AIO TOOL logo \/ watermark/)
 })

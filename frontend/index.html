@@ -7,10 +7,67 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/zm-logo.png" />
     <link rel="preload" href="/fonts/NotoSans-Bold.ttf" as="font" type="font/ttf" crossorigin />
-    <title>ZM TOOL — Studio Dịch Thuật & Ghép & Lồng Tiếng AI</title>
-    <!-- Anti-FOUC: apply saved theme before first paint, default = light -->
+    <title>ZM AIO TOOL — Studio Dịch Thuật & Ghép & Lồng Tiếng AI</title>
+    <!-- Desktop chooses a free localhost port at launch. Mirror UI preferences
+         before React reads localStorage so settings survive a port change. -->
     <script>
-      (function(){try{var t=localStorage.getItem('videoclone.theme');if(t==='dark')document.documentElement.classList.add('dark');}catch(e){}})();
+      (function () {
+        var ignored = /^(videoclone\.(?:videoClips|bgClips|importedClips|bookmarks)\.)/
+        var isPersistent = function (key) {
+          return !ignored.test(key) && (
+            key.indexOf('videoclone.') === 0 ||
+            key.indexOf('video-clone:') === 0 ||
+            key.indexOf('zm-tool:') === 0 ||
+            key === 'exportOutputDir'
+          )
+        }
+        try {
+          var request = new XMLHttpRequest()
+          request.open('GET', '/api/ui-preferences', false)
+          request.send(null)
+          if (request.status >= 200 && request.status < 300) {
+            var stored = JSON.parse(request.responseText).storage || {}
+            Object.keys(stored).forEach(function (key) {
+              if (isPersistent(key) && typeof stored[key] === 'string') localStorage.setItem(key, stored[key])
+            })
+          }
+        } catch (_) { /* Browser/dev mode falls back to its own localStorage. */ }
+
+        var timer = 0
+        var sync = function () {
+          timer = 0
+          try {
+            var storage = {}
+            for (var index = 0; index < localStorage.length; index += 1) {
+              var key = localStorage.key(index)
+              if (key && isPersistent(key)) storage[key] = localStorage.getItem(key) || ''
+            }
+            fetch('/api/ui-preferences', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ storage: storage }),
+              keepalive: true,
+            }).catch(function () {})
+          } catch (_) {}
+        }
+        var scheduleSync = function () {
+          if (!timer) timer = window.setTimeout(sync, 250)
+        }
+        var storagePrototype = Object.getPrototypeOf(localStorage)
+        var setItem = storagePrototype.setItem
+        var removeItem = storagePrototype.removeItem
+        storagePrototype.setItem = function (key, value) {
+          setItem.call(this, key, value)
+          if (isPersistent(String(key))) scheduleSync()
+        }
+        storagePrototype.removeItem = function (key) {
+          removeItem.call(this, key)
+          if (isPersistent(String(key))) scheduleSync()
+        }
+        window.addEventListener('pagehide', sync)
+        if (localStorage.length) scheduleSync()
+        if (localStorage.getItem('videoclone.theme') === 'dark') document.documentElement.classList.add('dark')
+      })();
     </script>
   </head>
   <body>

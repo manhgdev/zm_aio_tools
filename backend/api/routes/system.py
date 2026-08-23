@@ -31,6 +31,7 @@ from api.deps import (
     Settings,
     StudioSynthIn,
     TextOverlayIn,
+    UiPreferencesIn,
     VoiceBulkMoveIn,
     VoicePatchIn,
     require_meta,
@@ -292,6 +293,20 @@ def api_save_config(body: AppConfigIn):
     except Exception:
         pass
     return public_app_config()
+
+
+@router.get("/api/ui-preferences")
+def api_get_ui_preferences():
+    from pipeline.core.ui_preferences import load_ui_preferences
+
+    return load_ui_preferences()
+
+
+@router.put("/api/ui-preferences")
+def api_save_ui_preferences(body: UiPreferencesIn):
+    from pipeline.core.ui_preferences import save_ui_preferences
+
+    return save_ui_preferences(locale=body.locale, storage=body.storage)
 
 
 @router.get("/api/system/checks")

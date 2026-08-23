@@ -11,18 +11,17 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const isWin = process.platform === 'win32'
 const releaseDir = path.join(root, 'build_app', 'release')
 
-// `build:app` intentionally advances package.json for the next build after it
-// has produced the current artifact. The bundled VERSION is therefore the
-// source of truth for preflight unless a caller explicitly supplies a version.
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
 const bundledVersionPath = path.join(root, 'build_app', 'VERSION')
 const bundledVersion = existsSync(bundledVersionPath)
   ? readFileSync(bundledVersionPath, 'utf8').trim()
   : ''
 const version = process.argv[2] || bundledVersion || pkg.version.match(/^\d+\.\d+\.\d+/)?.[0] || '0.0.0'
-const verName = `VideoClone_v${version}`
+const APP_ARTIFACT_NAME = 'ZM_AIO_TOOL'
+const APP_EXECUTABLE_NAME = 'ZM AIO TOOL'
+const verName = `${APP_ARTIFACT_NAME}_v${version}`
 const distDir = path.join(releaseDir, verName)
-const exePath = path.join(distDir, isWin ? 'VideoClone.exe' : 'VideoClone')
+const exePath = path.join(distDir, isWin ? `${APP_EXECUTABLE_NAME}.exe` : APP_EXECUTABLE_NAME)
 
 let ok = true
 function check(label, pass, detail = '') {
@@ -51,14 +50,14 @@ function dirSize(dir) {
   return `${(total / 1024 / 1024).toFixed(1)} MB`
 }
 
-console.log(`\nVideoClone Build Check — v${version}`)
+console.log(`\nZM AIO TOOL Build Check — v${version}`)
 console.log(`Release: ${distDir}\n`)
 
 // 1. Thư mục release tồn tại
 check('Release dir exists', existsSync(distDir))
 
 // 2. EXE chính
-check('VideoClone.exe', existsSync(exePath), size(exePath))
+check(`${APP_EXECUTABLE_NAME}${isWin ? '.exe' : ''}`, existsSync(exePath), size(exePath))
 
 // 3. dist/index.html (frontend build đã được pack)
 const internalDir = existsSync(path.join(distDir, '_internal')) ? path.join(distDir, '_internal') : distDir

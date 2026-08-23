@@ -12,6 +12,7 @@ type OutputMode = 'original' | 'translated' | 'bilingual'
 type RecognitionEngine = 'whisper' | 'capcut'
 type Job = { id: string; filename: string; sourceKind: SourceKind | 'platform'; status: 'queued' | 'processing' | 'done' | 'error' | 'cancelled'; progress: number; message: string; error?: string; files: string[]; options?: { outputMode?: OutputMode; targetLang?: string; recognitionEngine?: RecognitionEngine } }
 const CACHE_KEY = 'videoclone.srt-export.source-kind'
+const JOB_KEY = 'videoclone.srt-export.job-id.v1'
 const LANGUAGE_LABELS: Record<string, string> = { vi: 'Tiếng Việt', en: 'Tiếng Anh', zh: 'Tiếng Trung', ja: 'Tiếng Nhật', ko: 'Tiếng Hàn' }
 
 function loadKind(): SourceKind {
@@ -38,6 +39,25 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
   const capcutTranslate = kind === 'media' && recognitionEngine === 'capcut'
 
   useEffect(() => { try { localStorage.setItem(CACHE_KEY, kind) } catch {} }, [kind])
+  // Source files are moved into the job workspace on submit.  Re-open the
+  // most recent workspace after F5 so processing/downloads do not disappear
+  // from the UI while the backend job still exists.
+  useEffect(() => {
+    let cancelled = false
+    void fetchJson<Job[]>('/api/srt-export/jobs').then((jobs) => {
+      if (cancelled || !jobs.length) return
+      let cachedId = ''
+      try { cachedId = localStorage.getItem(JOB_KEY) || '' } catch { /* unavailable storage */ }
+      setJob(jobs.find((item) => item.id === cachedId) ?? jobs[0])
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+  useEffect(() => {
+    try {
+      if (job?.id) localStorage.setItem(JOB_KEY, job.id)
+      else localStorage.removeItem(JOB_KEY)
+    } catch { /* unavailable storage */ }
+  }, [job?.id])
   useEffect(() => {
     if (!job || !['queued', 'processing'].includes(job.status)) return
     const timer = window.setInterval(() => fetchJson<Job>(`/api/srt-export/jobs/${job.id}`).then(setJob).catch(() => {}), 900)

@@ -40,6 +40,10 @@ def create_job(filename: str, method: str, options: dict, input_path: str) -> di
     ext = Path(filename).suffix or ".mp4"
     if method == "reencode" and options.get("container"):
         ext = f".{options['container']}"
+    elif method in {"optimize", "logo"}:
+        # Các filter/encoder của hai chế độ này không hợp lệ với mọi container
+        # đầu vào (đặc biệt WebM). MP4 là output tương thích nhất để preview và tải.
+        ext = ".mp4"
         
     output_path = CLEANER_OUT_DIR / f"{Path(filename).stem}_{job_id}{ext}"
     
@@ -49,10 +53,12 @@ def create_job(filename: str, method: str, options: dict, input_path: str) -> di
         "method": method,
         "status": "queued",
         "progress": 0,
+        "inputSize": Path(input_path).stat().st_size if Path(input_path).is_file() else 0,
         "outputSize": None,
         "startedAt": None,
         "finishedAt": None,
         "error": None,
+        "logs": ["Job đã vào hàng đợi"],
         "input_path": str(input_path),
         "output_path": str(output_path),
         "options": options,
@@ -65,6 +71,23 @@ def update_job(job_id: str, updates: dict[str, Any]) -> None:
     with _LOCK:
         if job_id in _JOBS:
             _JOBS[job_id].update(updates)
+
+
+def append_job_log(job_id: str, message: str) -> None:
+    """Keep a bounded, API-visible diagnostic trail for the cleaner UI."""
+    line = str(message or "").strip()
+    if not line:
+        return
+    with _LOCK:
+        job = _JOBS.get(job_id)
+        if not job:
+            return
+        logs = job.setdefault("logs", [])
+        if not isinstance(logs, list):
+            logs = job["logs"] = []
+        logs.append(line)
+        if len(logs) > 80:
+            del logs[:-80]
 
 def register_proc(job_id: str, proc: subprocess.Popen) -> None:
     with _LOCK:
@@ -82,6 +105,9 @@ def cancel_job(job_id: str) -> bool:
         if job["status"] in ("done", "error", "cancelled"):
             return True
         job["status"] = "cancelled"
+        logs = job.setdefault("logs", [])
+        if isinstance(logs, list):
+            logs.append("Job đã hủy theo yêu cầu người dùng")
         
     proc = _PROCS.get(job_id)
     if proc:

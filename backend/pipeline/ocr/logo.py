@@ -175,6 +175,37 @@ def _full_clip_branding_tracks(
     ]
 
 
+def _corner_graphic_masks(
+    samples: list[list[dict[str, Any]]], fw: int, fh: int
+) -> list[dict[str, float]]:
+    """Find small non-text glyph watermarks that corner OCR cannot name.
+
+    Some generators use a simple sparkle/arrow icon instead of a wordmark.
+    RapidOCR commonly returns a one-character symbol for these.  Restrict this
+    fallback to a small bottom-right mark so ordinary on-screen text is never
+    selected merely because it is near an edge.
+    """
+    masks: list[dict[str, float]] = []
+    for items in samples:
+        for item in items:
+            text = str(item.get("text") or "").strip()
+            if not text or text.isalnum() or len(text) > 3:
+                continue
+            x0, y0, x1, y1 = item["box"]
+            cx, cy = (x0 + x1) / (2 * fw), (y0 + y1) / (2 * fh)
+            bw, bh = x1 - x0, y1 - y0
+            if cx < 0.78 or cy < 0.78 or bw > fw * 0.16 or bh > fh * 0.16:
+                continue
+            padded = _padded_normalized_box((x0, y0, x1, y1), fw, fh)
+            if not any(
+                abs(padded["x"] - current["x"]) < 0.03
+                and abs(padded["y"] - current["y"]) < 0.03
+                for current in masks
+            ):
+                masks.append(padded)
+    return masks
+
+
 def _parse_logo_rows(
     result: Any,
     sample: int,
@@ -314,15 +345,13 @@ def pick_logo_detection(
             else:
                 match.append(item)
 
-    required = max(2, math.ceil(len(samples) * 0.60))
+    # Ordinary text close to an edge is content, not a watermark. Only an
+    # explicit platform/handle mark can be selected by the text detector;
+    # icon-only marks go through the separate corner-glyph path below.
     eligible = [
         cluster
         for cluster in clusters
-        if len(cluster) >= (
-            1
-            if any(_branding_text(str(item.get("text") or "")) for item in cluster)
-            else required
-        )
+        if any(_branding_text(str(item.get("text") or "")) for item in cluster)
     ]
     if not eligible:
         return None
@@ -336,6 +365,7 @@ def pick_logo_detection(
         return len(cluster), confidence, -edge_distance
 
     best = max(eligible, key=rank)
+
     boxes = [item["box"] for item in best]
     x0, y0 = median(box[0] for box in boxes), median(box[1] for box in boxes)
     x1, y1 = median(box[2] for box in boxes), median(box[3] for box in boxes)
@@ -406,10 +436,11 @@ def detect_logo_bbox_inprocess(
     times = [time_by_frame[frame_index] for frame_index in ordered_frames]
     samples = [sample_by_frame.get(frame_index, []) for frame_index in ordered_frames]
     static = pick_logo_detection(samples, fw, fh)
+    graphic_masks = _corner_graphic_masks(samples, fw, fh)
     tracks = _full_clip_branding_tracks(samples, fw, fh, duration)
     if not tracks:
         tracks = _moving_branding_tracks(samples, times, fw, fh)
-    if not static and not tracks:
+    if not static and not tracks and not graphic_masks:
         return None
     result: dict[str, Any] = static or {
         "version": _LOGO_DETECTION_VERSION,
@@ -424,6 +455,15 @@ def detect_logo_bbox_inprocess(
         if not result.get("bbox"):
             result["bbox"] = tracks[0].get("bbox")
             result["text"] = str(tracks[0].get("text") or result.get("text") or "")
+    if graphic_masks:
+        primary = result.get("bbox")
+        if not isinstance(primary, dict):
+            result["bbox"] = graphic_masks[0]
+            result["text"] = "corner graphic"
+            primary = result["bbox"]
+        masks = [primary]
+        masks.extend(mask for mask in graphic_masks if mask != primary)
+        result["masks"] = masks
     result["version"] = _LOGO_DETECTION_VERSION
     return result
 

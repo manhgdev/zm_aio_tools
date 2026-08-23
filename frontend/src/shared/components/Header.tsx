@@ -49,6 +49,8 @@ const NAV: {
   { id: 'config', label: 'nav.settings', Icon: IconGear, action: 'config' },
 ]
 
+const HARDWARE_SHORT: Record<string, string> = { cpu: 'CPU', cuda: 'GPU', metal: 'GPU' }
+
 function IconMenu({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
@@ -88,6 +90,7 @@ export default function Header({
   onOpenLicense,
 }: Props) {
   const t = (key: Parameters<typeof translate>[1], values?: Record<string, string | number>) => translate(locale, key, values)
+  const hardwareDisplay = HARDWARE_SHORT[hardware.accel] ?? hardware.accel.toUpperCase()
   const showTtsMenu = mode === 'tts' && typeof onMenuClick === 'function'
   const [openMenu, setOpenMenu] = useState<null | 'clone' | 'tools'>(null)
   const cloneRef = useRef<HTMLDivElement>(null)
@@ -137,7 +140,7 @@ export default function Header({
             <IconLogo />
           </span>
           <span className="brand-text">
-            <strong>ZM TOOL</strong>
+            <strong>ZM AIO TOOL</strong>
             <span>{t('brand.tagline')}</span>
           </span>
         </button>
@@ -307,6 +310,8 @@ export default function Header({
             {licenseStatus.remainingDay === -1 ? t('header.unlimited') : t('header.daysLeft', { count: licenseStatus.remainingDay })}
           </button>
         )}
+        <span className="dot" aria-hidden="true" />
+        <span className="hw-usage">{hardwareDisplay}</span>
         <button
           type="button"
           className="theme-toggle"

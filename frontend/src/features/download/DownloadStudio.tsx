@@ -612,7 +612,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                         void applySavePath()
                       }
                     }}
-                    placeholder="D:\VideoClone\downloads"
+                    placeholder="D:\ZM-AIO-TOOL\downloads"
                     title="Path trên máy chạy backend — lưu localStorage + server"
                     spellCheck={false}
                   />

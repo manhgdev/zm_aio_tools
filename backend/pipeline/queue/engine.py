@@ -28,6 +28,10 @@ ERROR_TYPES = {
 }
 
 
+class ArtifactBusyError(OSError):
+    """An owned artifact is still locked by a player or Explorer on Windows."""
+
+
 def classify_error(exc: BaseException) -> str:
     text = str(exc).lower()
     if isinstance(exc, Cancelled) or type(exc).__name__ == "Cancelled":
@@ -86,9 +90,29 @@ def _unlink_file(path: Path, *, source: Path | None = None) -> int:
     resolved = path.resolve()
     if source is not None and resolved == source.resolve():
         return 0
-    if resolved.is_file():
-        resolved.unlink()
-        return 1
+    if not resolved.is_file():
+        return 0
+    last_error: OSError | None = None
+    # Windows keeps an MP4 handle open while it is previewed in Explorer,
+    # Photos, or a browser <video>. Retrying avoids a false 500 during the
+    # short interval in which the player releases the handle.
+    for attempt in range(8):
+        try:
+            resolved.unlink()
+            return 1
+        except FileNotFoundError:
+            return 0
+        except PermissionError as exc:
+            last_error = exc
+        except OSError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32} and getattr(exc, "errno", None) not in {13, 16}:
+                raise
+            last_error = exc
+        time.sleep(0.12 * (attempt + 1))
+    raise ArtifactBusyError(
+        f"Không thể xóa vì file đang được sử dụng: {resolved}. "
+        "Hãy đóng video/Explorer rồi thử lại."
+    ) from last_error
     return 0
 
 

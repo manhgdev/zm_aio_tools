@@ -14,6 +14,7 @@ type Job = {
 }
 
 const SETTINGS_KEY = 'videoclone.srt-image.settings.v1'
+const JOB_KEY = 'videoclone.srt-image.job-id.v1'
 const HELP = {
   media: ['Thư mục ảnh / video', 'Chọn một thư mục chứa toàn bộ ảnh hoặc clip dùng để dựng video. APP đọc trực tiếp trong thư mục và tự sắp xếp theo tên, không upload/copy từng video.', 'Dùng JPG, JPEG, JFIF, PNG, WEBP, BMP, MP4, MOV, MKV, WEBM, AVI hoặc M4V. Nên đặt tên 001, 002, 003… tương ứng từng dòng timeline.'],
   audio: ['File audio', 'Âm thanh narration chính của video. Audio có sẵn trong các clip đầu vào sẽ bị bỏ để tránh chồng tiếng.', 'Dùng MP3, WAV, M4A hoặc định dạng audio FFmpeg đọc được. Có thể bỏ qua nếu muốn video không có tiếng.'],
@@ -123,6 +124,29 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
   const [sending, setSending] = useState(false)
   const [logStart, setLogStart] = useState(0)
   const settingsSnapshot = useRef('')
+
+  // A render owns a server-side workspace.  Restore that workspace after an
+  // F5 instead of leaving the user with an empty page while FFmpeg continues.
+  useEffect(() => {
+    let cancelled = false
+    void fetch('/api/srt-image/jobs').then(async (response) => {
+      if (!response.ok) return [] as Job[]
+      return await response.json() as Job[]
+    }).then((jobs) => {
+      if (cancelled || !jobs.length) return
+      let cachedId = ''
+      try { cachedId = localStorage.getItem(JOB_KEY) || '' } catch { /* unavailable storage */ }
+      setJob(jobs.find((item) => item.id === cachedId) ?? jobs[0])
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    try {
+      if (job?.id) localStorage.setItem(JOB_KEY, job.id)
+      else localStorage.removeItem(JOB_KEY)
+    } catch { /* unavailable storage */ }
+  }, [job?.id])
 
   useEffect(() => {
     if (!job || !['queued', 'processing', 'paused'].includes(job.status)) return
@@ -514,7 +538,7 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
                 </label>}
               </div>
               <div className="siv-logo">
-                <div className="siv-logo-head"><strong>Logo / Watermark VideoClone</strong><label><input type="checkbox" checked={logoEnabled} onChange={(e) => setLogoEnabled(e.target.checked)} /> {t('Áp dụng', 'Apply')}</label></div>
+                <div className="siv-logo-head"><strong>{t('Logo / Watermark ZM AIO TOOL', 'ZM AIO TOOL logo / watermark')}</strong><label><input type="checkbox" checked={logoEnabled} onChange={(e) => setLogoEnabled(e.target.checked)} /> {t('Áp dụng', 'Apply')}</label></div>
                 <div className="siv-logo-sources">
                   {(['text', 'image', 'icon'] as const).map((source) => <button key={source} className={logoSource === source ? 'active' : ''} onClick={() => setLogoSource(source)}>{source === 'text' ? `T  ${t('Chữ', 'Text')}` : source === 'image' ? `▧  ${t('Ảnh', 'Image')}` : '★  Icon'}</button>)}
                 </div>

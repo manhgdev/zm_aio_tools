@@ -9,9 +9,10 @@ export type JobStatus = 'queued' | 'processing' | 'done' | 'error' | 'cancelled'
 export type ResultTab = 'all' | 'processing' | 'done' | 'error'
 
 interface FileInfo {
-  file: File
+  file?: File
   name: string
   size: number
+  jobId?: string
   resolution?: string
   fps?: number
   duration?: number
@@ -26,9 +27,11 @@ export interface CleanJob {
   status: JobStatus
   progress: number
   outputSize?: number
+  inputSize?: number
   startedAt?: number
   finishedAt?: number
   error?: string
+  logs?: string[]
 }
 
 export interface AdvancedOptions {
@@ -76,14 +79,6 @@ function methodLabel(method: CleanMethod, t: (vi: string, en: string) => string)
   if (method === 'optimize') return t('Tối ưu', 'Optimize')
   return t('Xóa logo / watermark', 'Remove logo / watermark')
 }
-const STATUS_LABELS: Record<JobStatus, string> = {
-  queued: 'Chờ xử lý',
-  processing: 'Đang xử lý',
-  done: 'Hoàn thành',
-  error: 'Lỗi',
-  cancelled: 'Đã hủy',
-}
-
 const ACTIVE_STATES = new Set<JobStatus>(['queued', 'processing'])
 
 // ponytail: inline SVGs — no icon library
@@ -174,7 +169,24 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
     const poll = async () => {
       try {
         const backendJobs = await cleanerApi.list()
-        if (active) setJobs(backendJobs)
+        if (active) {
+          setJobs(backendJobs)
+          // Browser File objects cannot survive F5, but the backend upload is
+          // still cached by its job. Rehydrate that cache into the file list.
+          setSelectedFiles(previous => {
+            const pending = previous.filter(file => !file.jobId)
+            const byJobId = new Map(previous.filter(file => file.jobId).map(file => [file.jobId, file]))
+            const cached = backendJobs.map(job => {
+              const existing = byJobId.get(job.id)
+              return existing || {
+                name: job.filename,
+                size: job.inputSize || 0,
+                jobId: job.id,
+              }
+            })
+            return [...pending, ...cached]
+          })
+        }
       } catch (e) {
         // ignore polling errors
       }
@@ -235,9 +247,10 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
   }, [addFiles])
 
   const startProcessing = async () => {
-    if (!selectedFiles.length) return
+    const pendingFiles = selectedFiles.filter((file): file is FileInfo & { file: File } => !file.jobId && file.file instanceof File)
+    if (!pendingFiles.length) return
     
-    const files = selectedFiles.map(f => f.file)
+    const files = pendingFiles.map(f => f.file)
     try {
       const newJobs = await cleanerApi.start(files, method, options)
       
@@ -249,7 +262,13 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
       
       setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${t('Đã gửi', 'Submitted')} ${files.length} ${t('file xử lý', 'files for processing')} · ${t('phương pháp', 'method')}: ${methodLabel(method, t)}`])
       setActiveTab('all')
-      setSelectedFiles([]) // Clear input after submission
+      // Keep uploaded files visible. The backend owns the cached upload from
+      // this point; jobId prevents a second click from uploading it again.
+      const queuedIdByFile = new Map(pendingFiles.map((file, index) => [file.file, newJobs[index]?.id]))
+      setSelectedFiles(prev => prev.map(file => {
+        const jobId = file.file ? queuedIdByFile.get(file.file) : undefined
+        return jobId ? { ...file, jobId } : file
+      }))
     } catch (e: any) {
       alert(`Lỗi khi tạo job: ${e.message}`)
     }
@@ -266,6 +285,35 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
     processing: jobs.filter(j => j.status === 'queued' || j.status === 'processing').length,
     done: jobs.filter(j => j.status === 'done').length,
     error: jobs.filter(j => j.status === 'error').length,
+  }
+
+  const detailLog = [
+    ...logs,
+    ...jobs.flatMap(job => (job.logs || []).map(line => `[${job.filename}] ${line}`)),
+  ].join('\n')
+
+  const copyDetailLog = async () => {
+    if (!detailLog) return
+    try {
+      await navigator.clipboard.writeText(detailLog)
+      alert(t('Đã sao chép log chi tiết', 'Detailed log copied'))
+    } catch {
+      alert(t('Không thể sao chép log', 'Could not copy log'))
+    }
+  }
+
+  const deleteJob = async (jobId: string) => {
+    try {
+      // DELETE removes the owned source cache and output on the backend, not
+      // merely this table row.  Keep UI in sync immediately after success.
+      await cleanerApi.remove(jobId)
+      setJobs((previous) => previous.filter((item) => item.id !== jobId))
+      setSelectedFiles((previous) => previous.filter((item) => item.jobId !== jobId))
+      setPreviewJobId((current) => current === jobId ? null : current)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      alert(t(`Không thể xóa job: ${detail}`, `Could not delete job: ${detail}`))
+    }
   }
 
   const opt = (key: keyof AdvancedOptions, val: unknown) => setOptions(o => ({ ...o, [key]: val }))
@@ -304,7 +352,9 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
               ) : (
                 <div className="vc-file-list">
                   <div className="vc-file-bar" style={{ marginBottom: 6 }}>
-                    <span style={{ fontSize: '.78rem', fontWeight: 550 }}>{selectedFiles.length} file đã chọn</span>
+                    <span style={{ fontSize: '.78rem', fontWeight: 550 }}>
+                      {t(`${selectedFiles.length} file đã chọn`, `${selectedFiles.length} files selected`)}
+                    </span>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button className="vc-btn" type="button" onClick={() => fileInputRef.current?.click()}>+ Thêm</button>
                       <button className="vc-btn vc-btn-danger" type="button" onClick={() => setSelectedFiles([])}>Xóa hết</button>
@@ -315,8 +365,12 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                       <div key={i} className="vc-file-item">
                         <span>{f.name}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                          {f.jobId ? <span className="vc-file-queued">{t('Đã lưu trong hàng đợi', 'Saved in queue')}</span> : null}
                           <span className="vc-file-size">{formatBytes(f.size)}</span>
-                          <button className="vc-file-remove" type="button" onClick={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))} title="Xóa file này">
+                          <button className="vc-file-remove" type="button" onClick={async () => {
+                            if (f.jobId) await cleanerApi.remove(f.jobId)
+                            setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))
+                          }} title={t('Xóa file này', 'Delete this file')}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                           </button>
                         </div>
@@ -427,14 +481,14 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                     ))}
                   </div>
 
-                  <div className="vc-actions">
-                    <button className="vc-btn-link" type="button">Xem hướng dẫn chi tiết</button>
-                    <button className="vc-btn vc-btn-primary" type="button" disabled={!selectedFiles.length} onClick={startProcessing}>
-                      Bắt đầu xử lý
-                    </button>
-                  </div>
                 </>
               )}
+              <div className="vc-actions">
+                <button className="vc-btn-link" type="button">{t('Xem hướng dẫn chi tiết', 'View detailed guide')}</button>
+                <button className="vc-btn vc-btn-primary" type="button" disabled={!selectedFiles.some(file => !file.jobId)} onClick={startProcessing}>
+                  {t('Bắt đầu xử lý', 'Start processing')}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -494,25 +548,31 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                           <td title={job.filename} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.filename}</td>
                           <td>{methodLabel(job.method, t)}</td>
                           <td>
-                            <span className={`vc-status ${job.status}`}>{STATUS_LABELS[job.status]}</span>
+                            <span className={`vc-status ${job.status}`} title={job.status === 'error' ? job.error : undefined}>
+                              {job.status === 'error' ? t('Lỗi', 'Failed') : job.status === 'cancelled' ? t('Đã hủy', 'Cancelled') : job.status === 'queued' ? t('Chờ xử lý', 'Queued') : job.status === 'processing' ? t('Đang xử lý', 'Processing') : t('Hoàn thành', 'Done')}
+                            </span>
                             {job.status === 'processing' && (
                               <div className="vc-progress" style={{ marginTop: 4 }}>
                                 <div className="vc-progress-bar" style={{ width: `${job.progress}%` }} />
                               </div>
                             )}
+                            {job.status === 'error' && job.error ? (
+                              <div className="vc-error-message" title={job.error}>{job.error}</div>
+                            ) : null}
                           </td>
                           <td>{job.outputSize ? formatBytes(job.outputSize) : '—'}</td>
                           <td>
                             {job.status === 'done' ? (
                               <div style={{ display: 'flex', gap: '10px' }}>
-                                <button className="vc-btn-link" type="button" title="Xem trước file kết quả" onClick={() => setPreviewJobId(job.id)}>Xem</button>
-                                <button className="vc-btn-link" type="button" title="Mở thư mục chứa file trên máy tính" onClick={async () => {
+                                <button className="vc-btn-link" type="button" title={t('Xem trước file kết quả', 'Preview output file')} onClick={() => setPreviewJobId(job.id)}>{t('Xem', 'Preview')}</button>
+                                <button className="vc-btn-link" type="button" title={t('Mở thư mục chứa file trên máy tính', 'Open the output folder')} onClick={async () => {
                                   try {
                                     await cleanerApi.reveal(job.id)
                                   } catch (e: any) {
-                                    alert(`Lỗi mở file: ${e.message}`)
+                                    alert(t(`Lỗi mở file: ${e.message}`, `Could not open file: ${e.message}`))
                                   }
-                                }}>Mở thư mục</button>
+                                }}>{t('Mở thư mục', 'Open folder')}</button>
+                                <button className="vc-btn-link" type="button" style={{ color: '#dc2626' }} onClick={() => void deleteJob(job.id)}>{t('Xóa', 'Delete')}</button>
                               </div>
                             ) : ACTIVE_STATES.has(job.status) ? (
                               <div style={{ display: 'flex', gap: '10px' }}>
@@ -524,6 +584,8 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                                   }
                                 }}>Hủy</button>
                               </div>
+                            ) : job.status === 'error' || job.status === 'cancelled' ? (
+                              <button className="vc-btn-link" type="button" style={{ color: '#dc2626' }} onClick={() => void deleteJob(job.id)}>{t('Xóa', 'Delete')}</button>
                             ) : (
                               '—'
                             )}
@@ -539,11 +601,16 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
               <div className="vc-log">
                 <div className="vc-log-header" onClick={() => setLogExpanded(!logExpanded)}>
                   <span>Log chi tiết</span>
-                  <SvgChevron open={logExpanded} />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+                    <button className="vc-btn-link" type="button" onClick={(event) => { event.stopPropagation(); void copyDetailLog() }}>
+                      {t('Sao chép', 'Copy')}
+                    </button>
+                    <SvgChevron open={logExpanded} />
+                  </span>
                 </div>
                 {logExpanded && (
                   <div className="vc-log-content">
-                    {logs.length === 0 ? 'Chưa có log...' : logs.join('\n')}
+                    {detailLog || t('Chưa có log...', 'No logs yet...')}
                   </div>
                 )}
               </div>

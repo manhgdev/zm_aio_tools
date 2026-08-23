@@ -93,6 +93,7 @@
 }
 .vc-file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .vc-file-item .vc-file-size { flex-shrink: 0; color: var(--muted-foreground); font-size: .75rem; }
+.vc-file-queued { flex-shrink: 0; color: #15803d; font-size: .7rem; font-weight: 650; }
 .vc-file-remove { border: 0; background: none; color: var(--muted-foreground); cursor: pointer; padding: 2px; font-size: .82rem; }
 .vc-file-remove:hover { color: #dc2626; }
 .vc-file-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
@@ -189,6 +190,16 @@
 .vc-status.done { background: #f0fdf4; color: #16a34a; }
 .vc-status.error { background: #fef2f2; color: #dc2626; }
 .vc-status.cancelled { background: #fefce8; color: #a16207; }
+.vc-error-message {
+  max-width: 260px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #b91c1c;
+  font-size: .68rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .vc-progress { width: 80px; height: 5px; background: #f1f5f9; border-radius: 3px; overflow: hidden; }
 .vc-progress-bar { height: 100%; background: var(--primary, #3b82f6); transition: width .3s; border-radius: 3px; }

@@ -45,11 +45,11 @@ jobs:
         id: package
         shell: pwsh
         run: |
-          $package = Get-ChildItem build_app/release -Directory -Filter 'VideoClone_v*' |
+          $package = Get-ChildItem build_app/release -Directory -Filter 'ZM_AIO_TOOL_v*' |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
           if (-not $package) { throw 'Không tìm thấy thư mục bản build.' }
-          $exe = Join-Path $package.FullName 'VideoClone.exe'
+          $exe = Join-Path $package.FullName 'ZM AIO TOOL.exe'
           if (-not (Test-Path $exe)) { throw "Không tìm thấy EXE: $exe" }
           $zip = Join-Path (Split-Path $package.FullName) "$($package.Name)-windows-x64.zip"
           if (-not (Test-Path $zip)) {
@@ -70,5 +70,5 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:TAG $env:ZIP --clobber
           } else {
-            gh release create $env:TAG $env:ZIP --generate-notes --title "VideoClone $env:TAG"
+            gh release create $env:TAG $env:ZIP --generate-notes --title "ZM AIO TOOL $env:TAG"
           }

@@ -1,4 +1,4 @@
-"""Packaged VideoClone desktop window: local API + built web UI."""
+"""Packaged ZM AIO TOOL desktop window: local API + built web UI."""
 from __future__ import annotations
 
 import multiprocessing
@@ -11,6 +11,8 @@ import time
 import traceback
 import urllib.request
 from pathlib import Path
+
+APP_DISPLAY_NAME = "ZM AIO TOOL"
 
 
 def _unblock_zone_identifier(path: Path) -> bool:
@@ -134,7 +136,7 @@ def _unsigned_exit(code: int) -> int:
 def _crash_report(exit_code: int) -> str:
     u = _unsigned_exit(exit_code)
     lines: list[str] = [
-        f"VideoClone đã thoát bất thường.",
+        f"{APP_DISPLAY_NAME} đã thoát bất thường.",
         f"Mã: {exit_code} (0x{u:08X})",
         f"Log: {home / 'app.log'}",
         "",
@@ -164,7 +166,7 @@ def show_copyable_crash(exit_code: int) -> None:
         from tkinter.scrolledtext import ScrolledText
 
         root = tk.Tk()
-        root.title("VideoClone — lỗi (copy gửi để sửa)")
+        root.title(f"{APP_DISPLAY_NAME} — lỗi (copy gửi để sửa)")
         root.geometry("720x480")
         root.attributes("-topmost", True)
         hint = tk.Label(
@@ -206,7 +208,7 @@ def show_copyable_crash(exit_code: int) -> None:
                 0,
                 f"APP đã thoát bất thường (0x{_unsigned_exit(exit_code):08X}).\n"
                 f"Notepad đang mở log để copy:\n{crash_file}",
-                "VideoClone — lỗi",
+                f"{APP_DISPLAY_NAME} — lỗi",
                 0x10 | 0x40000,
             )
             return
@@ -579,7 +581,7 @@ def _activate_existing_window() -> None:
             if length:
                 title = ctypes.create_unicode_buffer(length + 1)
                 user32.GetWindowTextW(hwnd, title, length + 1)
-                if title.value.startswith("VideoClone v"):
+                if title.value.startswith(f"{APP_DISPLAY_NAME} v"):
                     user32.ShowWindow(hwnd, 9)
                     user32.SetForegroundWindow(hwnd)
                     return False
@@ -598,7 +600,7 @@ def acquire_single_instance() -> bool:
     import ctypes
 
     kernel32 = ctypes.windll.kernel32
-    handle = kernel32.CreateMutexW(None, False, "Local\\VideoClone.Desktop")
+    handle = kernel32.CreateMutexW(None, False, "Local\\ZMAIOTool.Desktop")
     if not handle:
         return True
     if kernel32.GetLastError() == 183:
@@ -623,21 +625,21 @@ def run_desktop() -> int:
     port = pick_api_port()
     os.environ["VIDEO_CLONE_PORT"] = str(port)
     base = api_base(port)
-    print(f"VideoClone API → {base}", flush=True)
+    print(f"{APP_DISPLAY_NAME} API → {base}", flush=True)
 
     config = uvicorn.Config(app, host=API_HOST, port=port, log_level="error")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, name="videoclone-api", daemon=True)
     thread.start()
     _t0 = time.monotonic()
-    print(f"VideoClone v{APP_VERSION} — chờ API...", flush=True)
+    print(f"{APP_DISPLAY_NAME} v{APP_VERSION} — chờ API...", flush=True)
     try:
         if not wait_for_server(port):
             print(f"[desktop] API không khởi được sau {time.monotonic()-_t0:.1f}s", flush=True)
             # Giữ cửa sổ thông báo thay vì im lặng exit
             try:
                 webview.create_window(
-                    f"VideoClone v{APP_VERSION}",
+                    f"{APP_DISPLAY_NAME} v{APP_VERSION}",
                     html=(
                         "<html><body style='font-family:sans-serif;padding:2rem'>"
                         f"<h2>Không mở được API</h2><p>{base}</p>"
@@ -670,7 +672,7 @@ def run_desktop() -> int:
             win_kw["icon"] = icon
         try:
             webview.create_window(
-                f"VideoClone v{APP_VERSION}",
+                f"{APP_DISPLAY_NAME} v{APP_VERSION}",
                 f"{base}/?v={APP_VERSION}",
                 **win_kw,
             )
@@ -678,7 +680,7 @@ def run_desktop() -> int:
             # pywebview cũ không hỗ trợ icon=
             win_kw.pop("icon", None)
             webview.create_window(
-                f"VideoClone v{APP_VERSION}",
+                f"{APP_DISPLAY_NAME} v{APP_VERSION}",
                 f"{base}/?v={APP_VERSION}",
                 **win_kw,
             )

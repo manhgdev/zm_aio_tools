@@ -81,6 +81,7 @@ const EMPTY_LICENSE: LicenseStatus = {
 
 export default function App() {
   const [locale, setLocale] = useState<AppLocale>(loadLocale)
+  const localeChangedRef = useRef(false)
   const [dark, setDark] = useState(loadTheme)
   const [appMode, setAppMode] = useState<AppMode>(loadAppMode)
   const tabPrev = useRef<AppMode[]>([])
@@ -119,6 +120,24 @@ export default function App() {
     persistLocale(locale)
     document.documentElement.lang = locale
   }, [locale])
+
+  useEffect(() => {
+    api.getLocalePreference()
+      .then(({ locale: savedLocale }) => {
+        if (savedLocale && !localeChangedRef.current) setLocale(savedLocale)
+      })
+      .catch(() => {
+        /* Browser/dev mode continues with localStorage or browser language. */
+      })
+  }, [])
+
+  const changeLocale = (nextLocale: AppLocale) => {
+    localeChangedRef.current = true
+    setLocale(nextLocale)
+    void api.saveLocalePreference(nextLocale).catch(() => {
+      /* localStorage remains a fallback when the API is unavailable. */
+    })
+  }
 
   const {
     segments,
@@ -802,7 +821,7 @@ export default function App() {
   const configModalOpen = configOpen || firstRunBlocked
 
   return (
-    <LocaleContext.Provider value={{ locale, setLocale }}>
+    <LocaleContext.Provider value={{ locale, setLocale: changeLocale }}>
     <LocaleTextSync />
     <div className={`app${licenseBlocked ? ' app-license-gate' : ''}`}>
       {!appUsable ? (
@@ -827,7 +846,7 @@ export default function App() {
         onModeChange={navigateToMode}
         onToggleTheme={() => setDark(d => !d)}
         locale={locale}
-        onLocaleChange={setLocale}
+        onLocaleChange={changeLocale}
         onOpenLicense={() => {
           setConfigSection('license')
           setConfigOpen(true)
