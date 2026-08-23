@@ -160,6 +160,16 @@ export function localize(locale: AppLocale, vietnamese: string, english: string)
 export function localizePipelineMessage(locale: AppLocale, message: string): string {
   if (locale !== 'en') return message
   return message
+    .replace(/^CapCut: đang chuẩn bị video…$/g, 'CapCut: preparing video…')
+    .replace(/^CapCut: đang tải video lên…$/g, 'CapCut: uploading video…')
+    .replace(/^CapCut: đang nhận dạng và dịch…$/g, 'CapCut: recognizing and translating…')
+    .replace(/^CapCut: đang gửi video cho CapCut…$/g, 'Transcript: sending video to CapCut…')
+    .replace(/^Transcript: CapCut hoàn tất · (\d+) câu$/g, 'Transcript: CapCut completed · $1 cues')
+    .replace(/^CapCut: CapCut đang nhận dạng và dịch · (\d+)% · đã chờ (\d+)s · kiểm tra #(\d+)$/g, 'CapCut: recognizing and translating · $1% · waited $2s · check #$3')
+    .replace(/^CapCut: CapCut đã hoàn tất · (\d+)% · đã chờ (\d+)s · kiểm tra #(\d+)$/g, 'CapCut: completed · $1% · waited $2s · check #$3')
+    .replace(/^CapCut: đang xếp hàng trên CapCut( · \d+%)? · đã chờ (\d+)s · kiểm tra #(\d+)$/g, 'CapCut: queued on CapCut$1 · waited $2s · check #$3')
+    .replace(/^CapCut: đang chờ CapCut xử lý( · \d+%)? · đã chờ (\d+)s · kiểm tra #(\d+)$/g, 'CapCut: waiting for CapCut to process$1 · waited $2s · check #$3')
+    .replace(/^CapCut: đang chờ phản hồi từ CapCut · đã chờ (\d+)s · kiểm tra #(\d+)$/g, 'CapCut: waiting for a CapCut response · waited $1s · check #$2')
     .replace(/Xong (\d+) đoạn — tiếp theo: Lồng tiếng → Xuất bản/g, 'Completed $1 segments — next: Dubbing → Export')
     .replace(/Dùng phụ đề SRT: (\d+) đoạn — tiếp theo: Lồng tiếng → Xuất bản/g, 'Using SRT subtitles: $1 segments — next: Dubbing → Export')
     .replace(/Xong (\d+) đoạn — không dịch, không chèn caption/g, 'Completed $1 segments — no translation or captions added')

@@ -186,7 +186,7 @@ def _recover_orphan_wavs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 _ENGINE_NAME_PREFIX = re.compile(
-    r"^(?:VieNeu\s*[·•.\-]\s*(?:Clone\s*[·•.\-]\s*)?|"
+    r"^(?:(?:VieNeu|zmAI)\s*[·•.\-]\s*(?:Clone\s*[·•.\-]\s*)?|"
     r"CapCut\s*[·•.\-]\s*|ElevenLabs\s*[·•.\-]\s*|macOS\s*[·•.\-]\s*)+",
     re.IGNORECASE,
 )
@@ -306,7 +306,7 @@ def update_reference(
     language: str | None = None,
     favorite: bool | None = None,
 ) -> dict[str, Any] | None:
-    clean_name = (name or "").strip() if name is not None else None
+    clean_name = clean_display_name(name or "", fallback="") if name is not None else None
     if name is not None and not clean_name:
         return None
     clean_tags = normalize_voice_tags(tags, strict=True) if tags is not None else None

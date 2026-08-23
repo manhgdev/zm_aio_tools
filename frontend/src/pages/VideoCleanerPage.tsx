@@ -116,6 +116,7 @@ function SvgChevron({ open }: { open: boolean }) {
 const LS_VC_JOBS = 'videoclone.vc.jobs'
 const LS_VC_METHOD = 'videoclone.vc.method'
 const LS_VC_OPTS = 'videoclone.vc.opts'
+const LS_VC_OUTPUT_DIR = 'videoclone.vc.output-dir'
 
 function loadJobs(): CleanJob[] {
   try {
@@ -158,10 +159,14 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
   const [logs, setLogs] = useState<string[]>([])
   const [optionsExpanded, setOptionsExpanded] = useState(true)
   const [previewJobId, setPreviewJobId] = useState<string | null>(null)
+  const [outputDir, setOutputDir] = useState(() => localStorage.getItem(LS_VC_OUTPUT_DIR) || '')
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
 
   useEffect(() => { localStorage.setItem(LS_VC_JOBS, JSON.stringify(jobs)) }, [jobs])
   useEffect(() => { localStorage.setItem(LS_VC_METHOD, method) }, [method])
   useEffect(() => { localStorage.setItem(LS_VC_OPTS, JSON.stringify(options)) }, [options])
+  useEffect(() => { localStorage.setItem(LS_VC_OUTPUT_DIR, outputDir) }, [outputDir])
+  useEffect(() => { void fetch('/api/config').then(async (r) => r.ok && setIsDesktopApp(Boolean((await r.json() as { desktop?: boolean }).desktop))).catch(() => undefined) }, [])
 
   // Polling real backend jobs
   useEffect(() => {
@@ -252,7 +257,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
     
     const files = pendingFiles.map(f => f.file)
     try {
-      const newJobs = await cleanerApi.start(files, method, options)
+      const newJobs = await cleanerApi.start(files, method, options, outputDir)
       
       setJobs(prev => {
         const map = new Map(prev.map(j => [j.id, j]))
@@ -317,6 +322,12 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
   }
 
   const opt = (key: keyof AdvancedOptions, val: unknown) => setOptions(o => ({ ...o, [key]: val }))
+  const pickOutputDir = async () => {
+    const response = await fetch('/api/system/pick-folder', { method: 'POST' })
+    if (!response.ok) throw new Error(await response.text())
+    const picked = await response.json() as { path?: string }
+    if (picked.path) setOutputDir(picked.path)
+  }
 
   return (
     <div className="vc-page">
@@ -379,6 +390,13 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                   </div>
                 </div>
               )}
+              {isDesktopApp && <label className="vc-field" style={{ marginTop: 14 }}>
+                <span>{t('Thư mục lưu', 'Save folder')}</span>
+                <div className="vc-output-row">
+                  <input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder={t('Mặc định: Downloads/cleaner', 'Default: Downloads/cleaner')} />
+                  <button className="vc-output-choose" type="button" onClick={() => void pickOutputDir().catch((error) => alert(error instanceof Error ? error.message : String(error)))}>{t('Chọn', 'Choose')}</button>
+                </div>
+              </label>}
             </div>
 
             {/* Card 2 — Phương pháp */}

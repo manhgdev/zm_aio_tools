@@ -190,16 +190,34 @@ def subtitle_cues(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[d
     return source, translated
 
 
-def _poll_progress_message(status: str, elapsed_sec: float, poll_count: int) -> str:
-    """Useful progress without inventing a completion percentage for CapCut."""
+def _task_progress(task: dict[str, Any]) -> int | None:
+    """Read CapCut's real task percentage, if this API deployment supplies it."""
+    for key in ("progress", "percent", "percentage", "task_progress"):
+        value = task.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            # The live endpoint currently returns integer 0..100.  Keep the
+            # bounds defensive so a malformed upstream response never shows
+            # an impossible percentage in a job log.
+            return max(0, min(100, round(float(value))))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _poll_progress_message(status: str, elapsed_sec: float, poll_count: int, percent: int | None = None) -> str:
+    """Show CapCut's own percentage when present; never synthesize one."""
     state = {
         "queueing": "đang xếp hàng trên CapCut",
         "queued": "đang xếp hàng trên CapCut",
         "pending": "đang chờ CapCut xử lý",
         "processing": "CapCut đang nhận dạng và dịch",
         "running": "CapCut đang nhận dạng và dịch",
+        "success": "CapCut đã hoàn tất",
     }.get((status or "").lower(), "đang chờ phản hồi từ CapCut")
-    return f"CapCut: {state} · đã chờ {max(0, round(elapsed_sec))}s · kiểm tra #{max(1, poll_count)}"
+    cloud_percent = f" · {percent}%" if percent is not None else ""
+    return f"CapCut: {state}{cloud_percent} · đã chờ {max(0, round(elapsed_sec))}s · kiểm tra #{max(1, poll_count)}"
 
 
 def _task_status(query: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -242,6 +260,7 @@ def transcribe_and_translate(path: Path, source_lang: str, target_lang: str, *, 
         missing_status_polls = 0
         last_report_at = -6.0
         last_status = ""
+        last_percent: int | None = None
         while time.monotonic() < deadline:
             _cancelled(cancelled)
             query = _post_task(client, "/lv/v1/common_task/query", {"tasks": [{"bind_id": "", "id": task_id, "req_key": "cc_audio_subtitle_asr", "task_version": "v3", "token": token}]}, device, babi=None, appid=False)
@@ -260,11 +279,14 @@ def transcribe_and_translate(path: Path, source_lang: str, target_lang: str, *, 
                 time.sleep(2)
                 continue
             missing_status_polls = 0
+            cloud_percent = _task_progress(task)
             # Polling is every two seconds; log at a readable six-second
-            # cadence and whenever CapCut moves between queue/processing.
-            if progress and (status != last_status or elapsed - last_report_at >= 6.0):
-                progress(_poll_progress_message(status, elapsed, polls))
-                last_report_at, last_status = elapsed, status
+            # cadence, whenever CapCut moves state, or when its real
+            # percentage changes.  The last condition prevents 23% → 99%
+            # from being hidden between the six-second status updates.
+            if progress and (status != last_status or cloud_percent != last_percent or elapsed - last_report_at >= 6.0):
+                progress(_poll_progress_message(status, elapsed, polls, cloud_percent))
+                last_report_at, last_status, last_percent = elapsed, status, cloud_percent
             if status == "success":
                 source, translated = subtitle_cues(_task_payload(task))
                 if not source:

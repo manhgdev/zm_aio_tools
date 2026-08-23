@@ -158,7 +158,9 @@ def list_voices(lang: str | None = None) -> list[dict[str, Any]]:
     voices.extend(_cc_voice_options(lang))
     voices.extend(_el_voice_options())
     voices.extend(system_engine.list_voices(lang))
-    return voices[:200]
+    # Auto includes the online ZMTTS catalog too; do not truncate it before
+    # the selector can show the voices that are available on demand.
+    return voices[:500]
 
 
 def resolve_voice(voice: str, lang: str = "vi") -> str:

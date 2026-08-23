@@ -48,6 +48,7 @@ type Props = {
   voices: Voice[]
   onBack: () => void
   onRefreshVoices?: (lang?: string) => void
+  isDesktopApp?: boolean
   /** Mobile drawer — controlled từ Header ☰ */
   sideOpen?: boolean
   onSideOpenChange?: (open: boolean) => void
@@ -124,10 +125,21 @@ const SECTION_LABELS: Record<string, string> = {
   advanced: 'Tùy chọn nâng cao',
 }
 
+const TTS_URL_SECTIONS = new Set([
+  'overview', 'history', 'voice', 'clone', 'engines', 'audio', 'match', 'advanced',
+])
+
+function sectionFromUrl(): string {
+  if (typeof window === 'undefined') return 'overview'
+  const section = new URLSearchParams(window.location.search).get('tab') || ''
+  return TTS_URL_SECTIONS.has(section) ? section : 'overview'
+}
+
 export default function TtsStudio({
   voices,
   onBack,
   onRefreshVoices,
+  isDesktopApp = false,
   sideOpen: sideOpenProp,
   onSideOpenChange,
 }: Props) {
@@ -145,7 +157,7 @@ export default function TtsStudio({
     if (sideOpenProp === undefined) setSideOpenLocal(open)
   }
 
-  const [section, setSection] = useState('overview')
+  const [section, setSection] = useState(sectionFromUrl)
   const [text, setText] = useState('')
   const [lang, setLang] = useState(saved.lang)
   const [engine, setEngine] = useState<TtsEngine>(saved.engine)
@@ -199,6 +211,8 @@ export default function TtsStudio({
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
   const [voiceQuery, setVoiceQuery] = useState('')
   const [voiceTag, setVoiceTag] = useState('')
+  const [voiceListPage, setVoiceListPage] = useState(1)
+  const [voiceListPageSize, setVoiceListPageSize] = useState(25)
   const [editingVoice, setEditingVoice] = useState<Voice | null>(null)
   const [localFavorites, setLocalFavorites] = useState<Set<string>>(() => {
     try {
@@ -272,7 +286,7 @@ export default function TtsStudio({
 
   /** Chỉ giọng thuộc Engine đang chọn */
   const engineVoices = useMemo(
-    () => sortedVoices.filter((v) => voiceEngineBucket(v) === engine),
+    () => engine === 'all' ? sortedVoices : sortedVoices.filter((v) => voiceEngineBucket(v) === engine),
     [sortedVoices, engine],
   )
   const voiceFilterTags: readonly string[] = VOICE_TAGS
@@ -289,6 +303,12 @@ export default function TtsStudio({
       return matchesTag && matchesQuery
     })
   }, [activeVoiceTag, engineVoices, voiceQuery])
+  const voiceListPageCount = Math.max(1, Math.ceil(visibleEngineVoices.length / voiceListPageSize))
+  const safeVoiceListPage = Math.min(voiceListPage, voiceListPageCount)
+  const pagedEngineVoices = useMemo(() => {
+    const start = (safeVoiceListPage - 1) * voiceListPageSize
+    return visibleEngineVoices.slice(start, start + voiceListPageSize)
+  }, [safeVoiceListPage, visibleEngineVoices, voiceListPageSize])
   const canBulkManage = engine === 'zmai' || engine === 'clone'
   const selectedVoiceCount = canBulkManage
     ? engineVoices.filter((v) => selectedVoiceIds.has(v.id)).length
@@ -308,7 +328,12 @@ export default function TtsStudio({
 
   useEffect(() => {
     setSelectedVoiceIds(new Set())
+    setVoiceListPage(1)
   }, [engine, lang])
+
+  useEffect(() => {
+    setVoiceListPage(1)
+  }, [voiceQuery, activeVoiceTag, voiceListPageSize])
 
   useEffect(() => {
     // Keep restored/preferred voice until the async list arrives; only then fall back.
@@ -379,6 +404,12 @@ export default function TtsStudio({
   useEffect(() => {
     persistDashLayout(dashLayout)
   }, [dashLayout])
+
+  useEffect(() => {
+    const onPopState = () => setSection(sectionFromUrl())
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   const setDashLayoutSafe = useCallback((next: DashLayout | ((prev: DashLayout) => DashLayout)) => {
     setDashLayout(next)
@@ -467,12 +498,17 @@ export default function TtsStudio({
 
   function go(id: string) {
     // input/srt gộp vào dashboard Tổng quan (không còn tab sidebar riêng)
-    if (id === 'input' || id === 'srt' || id === 'make') {
-      setSection('overview')
-      setSideOpen(false)
-      return
+    const next = id === 'input' || id === 'srt' || id === 'make' || !TTS_URL_SECTIONS.has(id)
+      ? 'overview'
+      : id
+    const url = new URL(window.location.href)
+    if (next === 'overview') url.searchParams.delete('tab')
+    else url.searchParams.set('tab', next)
+    const destination = `${url.pathname}${url.search}${url.hash}`
+    if (destination !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+      window.history.pushState({ ttsSection: next }, '', destination)
     }
-    setSection(id)
+    setSection(next)
     setSideOpen(false)
   }
 
@@ -903,7 +939,7 @@ export default function TtsStudio({
     }
     return (
       <ul className="tts-clone-list">
-        {visibleEngineVoices.map((v) => {
+        {pagedEngineVoices.map((v) => {
           const voiceBucket = voiceEngineBucket(v)
           const isClone = voiceBucket === 'clone'
           const isZmai = voiceBucket === 'zmai'
@@ -1059,6 +1095,19 @@ export default function TtsStudio({
     setKeepTimeline(true) // mặc định giữ timeline khi vào mode SRT
     setAutoSplit(false) // SRT không tách câu CapCut
     setText(srtPreviewLines(body))
+  }
+
+  async function revealTtsOutput(kind: 'wav' | 'mp3' | 'srt' | 'zip', style = 'hard') {
+    if (!jobId) return
+    try {
+      const response = await fetch(
+        `/api/tts/studio/jobs/${encodeURIComponent(jobId)}/reveal/${kind}?style=${encodeURIComponent(style)}`,
+        { method: 'POST' },
+      )
+      if (!response.ok) throw new Error(await response.text())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('Không thể mở kết quả TTS', 'Could not open the TTS output'))
+    }
   }
 
   function onLoadSrt(file: File) {
@@ -1311,6 +1360,7 @@ export default function TtsStudio({
                       setVoice('')
                     }}
                   >
+                    <option value="all">{t('Tất cả', 'All')}</option>
                     <option value="zmai">zmAI</option>
                     <option value="vieneu">VieNeu Local</option>
                     <option value="clone">Clone{cloneCount > 0 ? ` (${cloneCount})` : ''}</option>
@@ -1332,6 +1382,19 @@ export default function TtsStudio({
                     placeholder="Tìm kiếm giọng nói…"
                     aria-label="Tìm giọng theo tên, mô tả hoặc tag"
                   />
+                </label>
+                <label className="tts-field tts-voice-page-size">
+                  <span>{t('Mỗi trang', 'Per page')}</span>
+                  <select
+                    value={voiceListPageSize}
+                    aria-label={t('Số giọng mỗi trang', 'Voices per page')}
+                    onChange={(e) => setVoiceListPageSize(Number(e.target.value))}
+                  >
+                    <option value={20}>20</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
                 </label>
               </div>
               <div className="tts-voice-filter">
@@ -1383,6 +1446,37 @@ export default function TtsStudio({
                 </div>
               )}
               {renderVoiceList()}
+              {visibleEngineVoices.length > voiceListPageSize && (
+                <nav className="tts-voice-pagination" aria-label={t('Phân trang danh sách giọng', 'Voice list pagination')}>
+                  <span className="tts-pager-info">
+                    {t(
+                      `${(safeVoiceListPage - 1) * voiceListPageSize + 1}–${Math.min(safeVoiceListPage * voiceListPageSize, visibleEngineVoices.length)} / ${visibleEngineVoices.length} giọng`,
+                      `${(safeVoiceListPage - 1) * voiceListPageSize + 1}–${Math.min(safeVoiceListPage * voiceListPageSize, visibleEngineVoices.length)} of ${visibleEngineVoices.length} voices`,
+                    )}
+                  </span>
+                  <div className="tts-pager-btns">
+                    <button
+                      type="button"
+                      className="tts-btn tts-btn-ghost"
+                      disabled={safeVoiceListPage === 1}
+                      onClick={() => setVoiceListPage((page) => Math.max(1, page - 1))}
+                    >
+                      {t('Trước', 'Previous')}
+                    </button>
+                    <span className="tts-pager-page" aria-current="page">
+                      {t(`Trang ${safeVoiceListPage}/${voiceListPageCount}`, `Page ${safeVoiceListPage}/${voiceListPageCount}`)}
+                    </span>
+                    <button
+                      type="button"
+                      className="tts-btn tts-btn-ghost"
+                      disabled={safeVoiceListPage === voiceListPageCount}
+                      onClick={() => setVoiceListPage((page) => Math.min(voiceListPageCount, page + 1))}
+                    >
+                      {t('Sau', 'Next')}
+                    </button>
+                  </div>
+                </nav>
+              )}
               <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button type="button" className="tts-btn tts-btn-blue" onClick={() => go('clone')}>
                   Clone giọng mới
@@ -1512,6 +1606,7 @@ export default function TtsStudio({
                       setVoice('') // effect chọn giọng đầu của engine
                     }}
                   >
+                    <option value="all">{t('Tất cả', 'All')}</option>
                     <option value="zmai">zmAI</option>
                     <option value="vieneu">VieNeu Local</option>
                     <option value="clone">
@@ -1927,22 +2022,25 @@ export default function TtsStudio({
           <section className="tts-card" id="tts-export">
             <h3 className="tts-card-title"><span className="tts-step">6</span> Xuất kết quả</h3>
             <div className="tts-export-grid">
-              <a
-                className="tts-btn tts-btn-ghost"
-                href={downloadWavHref(audioUrl)}
-                download={audioUrl ? 'tts-output.wav' : undefined}
-                style={{ pointerEvents: audioUrl ? 'auto' : 'none', opacity: audioUrl ? 1 : 0.5, textDecoration: 'none' }}
-              >
-                <IconDownload size={14} /> Tải audio (WAV)
-              </a>
-              <a
-                className="tts-btn tts-btn-ghost"
-                href={mp3Url || undefined}
-                download={mp3Url ? 'tts-output.mp3' : undefined}
-                style={{ pointerEvents: mp3Url ? 'auto' : 'none', opacity: mp3Url ? 1 : 0.5, textDecoration: 'none' }}
-              >
-                <IconDownload size={14} /> Tải audio (MP3)
-              </a>
+              {isDesktopApp ? (
+                <>
+                  <button type="button" className="tts-btn tts-btn-ghost" disabled={!jobId} onClick={() => void revealTtsOutput('wav')}>
+                    <IconFile size={14} /> {t('Mở thư mục audio (WAV)', 'Open audio folder (WAV)')}
+                  </button>
+                  <button type="button" className="tts-btn tts-btn-ghost" disabled={!jobId} onClick={() => void revealTtsOutput('mp3')}>
+                    <IconFile size={14} /> {t('Mở thư mục audio (MP3)', 'Open audio folder (MP3)')}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <a className="tts-btn tts-btn-ghost" href={downloadWavHref(audioUrl)} download={audioUrl ? 'tts-output.wav' : undefined} style={{ pointerEvents: audioUrl ? 'auto' : 'none', opacity: audioUrl ? 1 : 0.5, textDecoration: 'none' }}>
+                    <IconDownload size={14} /> {t('Tải audio (WAV)', 'Download audio (WAV)')}
+                  </a>
+                  <a className="tts-btn tts-btn-ghost" href={mp3Url || undefined} download={mp3Url ? 'tts-output.mp3' : undefined} style={{ pointerEvents: mp3Url ? 'auto' : 'none', opacity: mp3Url ? 1 : 0.5, textDecoration: 'none' }}>
+                    <IconDownload size={14} /> {t('Tải audio (MP3)', 'Download audio (MP3)')}
+                  </a>
+                </>
+              )}
               <div className="tts-export-menu-wrap" data-dl-menu>
                 <button
                   type="button"
@@ -1962,10 +2060,9 @@ export default function TtsStudio({
                         type="button"
                         role="menuitem"
                         onClick={() =>
-                          triggerDownload(
-                            `/api/tts/studio/jobs/${jobId}/subs.srt?style=${opt.id}&t=${Date.now()}`,
-                            `tts-output-${opt.id}.srt`,
-                          )
+                          isDesktopApp
+                            ? void revealTtsOutput('srt', opt.id)
+                            : triggerDownload(`/api/tts/studio/jobs/${jobId}/subs.srt?style=${opt.id}&t=${Date.now()}`, `tts-output-${opt.id}.srt`)
                         }
                       >
                         {opt.label}
@@ -1974,14 +2071,15 @@ export default function TtsStudio({
                   </div>
                 )}
               </div>
-              <a
-                className="tts-btn tts-btn-ghost"
-                href={jobId ? `/api/tts/studio/jobs/${jobId}/bundle.zip?style=hard&t=${Date.now()}` : undefined}
-                download={jobId ? 'tts-bundle.zip' : undefined}
-                style={{ pointerEvents: jobId ? 'auto' : 'none', opacity: jobId ? 1 : 0.5, textDecoration: 'none' }}
-              >
-                <IconFile size={14} /> Xuất ZIP (Audio + SRT)
-              </a>
+              {isDesktopApp ? (
+                <button type="button" className="tts-btn tts-btn-ghost" disabled={!jobId} onClick={() => void revealTtsOutput('zip')}>
+                  <IconFile size={14} /> {t('Xuất ZIP (Audio + SRT)', 'Export ZIP (Audio + SRT)')}
+                </button>
+              ) : (
+                <a className="tts-btn tts-btn-ghost" href={jobId ? `/api/tts/studio/jobs/${jobId}/bundle.zip?style=hard&t=${Date.now()}` : undefined} download={jobId ? 'tts-bundle.zip' : undefined} style={{ pointerEvents: jobId ? 'auto' : 'none', opacity: jobId ? 1 : 0.5, textDecoration: 'none' }}>
+                  <IconFile size={14} /> {t('Xuất ZIP (Audio + SRT)', 'Export ZIP (Audio + SRT)')}
+                </a>
+              )}
             </div>
           </section>
           </DashPanel>

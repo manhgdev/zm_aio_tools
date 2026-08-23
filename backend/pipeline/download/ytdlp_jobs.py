@@ -13,9 +13,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 from pipeline.core.config import DATA, PUBLIC_DATA, SERVER_ROOT
+from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
 
-_DEFAULT_DOWNLOAD_ROOT = PUBLIC_DATA / "downloads"
+_DEFAULT_DOWNLOAD_ROOT = downloads_folder("download-video")
 _PREF_PATH = DATA / "download_root.json"
 _JOBS_CACHE = DATA / "download_jobs.json"
 _root_lock = threading.Lock()

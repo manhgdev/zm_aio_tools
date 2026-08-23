@@ -19,6 +19,7 @@ from typing import Any
 
 from pipeline.core.config import DATA, safe_child
 from pipeline.core.jobs import kill_process_tree
+from pipeline.core.output_paths import selected_or_default
 from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
 
 ROOT = DATA / "drawing"
@@ -285,7 +286,6 @@ def run(job_id: str) -> None:
             return
         _update(job_id, step="rendering", progress=52)
         encoder = h264_hardware_encoder() or "libx264"
-        _log(job_id, f"Rendering continuous drawing strokes (OpenCV CPU; H.264={encoder})")
         duration = max(2, min(60, float(options.get("duration", 10))))
         fps = int(options.get("fps", 30))
         fps = fps if fps in {24, 30, 60} else 30
@@ -294,7 +294,13 @@ def run(job_id: str) -> None:
         # Detail drives the grid density.  Skeleton paths follow clean line art
         # precisely, while grid paths remain stable on dense photographs.
         grid_edge = max(5, min(18, round(19 - detail * .13)))
-        ink_path = "skeleton" if detail >= 68 else "grid"
+        stroke_order = str(options.get("strokeOrder", "natural"))
+        if stroke_order not in {"natural", "outline", "region", "reading", "center", "horizontal", "vertical"}:
+            stroke_order = "natural"
+        # Only outline mode forces skeleton. Directional/centre modes require
+        # grid cells so their requested route remains visible.
+        ink_path = "skeleton" if stroke_order == "outline" else "grid"
+        _log(job_id, f"Rendering drawing strokes ({stroke_order}; OpenCV CPU; H.264={encoder})")
         renderer = Path(__file__).with_name("stream_runner.py")
         if not renderer.is_file():
             raise RuntimeError("Streaming drawing renderer is not bundled with this build")
@@ -310,6 +316,7 @@ def run(job_id: str) -> None:
             "--grid-edge", str(grid_edge), "--ink-path", ink_path,
             "--long-edge", str(render_long_edge),
             "--tool", tool, "--thickness", str(thickness),
+            "--stroke-order", stroke_order,
         ]
         # Selecting the Pen is actionable: it uses the visible hand/pen tip
         # even when the user leaves the general drawing mode selected.
@@ -332,6 +339,10 @@ def run(job_id: str) -> None:
         ], timeout=max(900, int(duration * 60)))
         if (get_job(job_id) or {}).get("status") == "cancelled":
             return
+        target_dir = selected_or_default("drawing", str(options.get("outputDir") or ""))
+        published = target_dir / f"{Path(job['filename']).stem}_drawing_{job_id}.mp4"
+        shutil.copy2(job["output"], published)
+        _update(job_id, publishedOutput=str(published))
         _update(job_id, status="done", step="done", progress=100)
         _log(job_id, "Drawing video ready")
     except Exception as exc:

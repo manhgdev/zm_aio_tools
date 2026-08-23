@@ -79,6 +79,18 @@ class ReviewQueueTests(unittest.TestCase):
             )
         self.assertEqual(result, rows)
 
+    def test_capcut_review_uses_timed_target_language_cues(self):
+        from pipeline.review import transcript as tr
+
+        rows = [{"start": 0.0, "end": 1.0, "text": "原文"}]
+        translated = [{"start": 0.0, "end": 1.0, "text": "Bản dịch"}]
+        with patch("pipeline.capcut_stt.transcribe_and_translate", return_value=(rows, translated)):
+            result = tr.load_transcript(
+                Path("/tmp/review.mp4"), Path("/tmp"), source_lang="zh", target_lang="vi",
+                recognition_engine="capcut",
+            )
+        self.assertEqual(result, translated)
+
     def test_local_llm_stream_observes_cancel(self):
         """Deleting a Review must not wait for a complete Ollama response."""
         from pipeline.core.jobs import Cancelled, arm_job, clear_job, request_cancel
@@ -506,6 +518,19 @@ class ReviewQueueTests(unittest.TestCase):
             _script_duration("accumulate", start, end, covered, settings, 1.0)
             for start, end in capped
         ), 900.0)
+
+    def test_review_short_voice_is_slowed_toward_selected_total_duration(self):
+        from pipeline.review.run import _floor_voiced_duration, _require_review_voice_coverage
+
+        fitted = _floor_voiced_duration([
+            {"duration": 70.0},
+            {"duration": 70.0},
+        ], 180.0)
+
+        self.assertTrue(all(row["ttsSpeed"] < 1.0 for row in fitted))
+        self.assertAlmostEqual(sum(row["duration"] for row in fitted), 180.0, places=1)
+        with self.assertRaisesRegex(RuntimeError, "REVIEW_NARRATION_TOO_SHORT"):
+            _require_review_voice_coverage([{"duration": 4.0}], 300.0)
 
     def test_part_cache_requires_current_review_plan_and_target(self):
         from pipeline.review.run import REVIEW_PLAN_VERSION, _part_cache_matches
@@ -1032,6 +1057,12 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertTrue(_script_is_usable(full, 10, {"evt_001"}, {1}))
         full["segments"][0]["event_refs"] = ["unknown"]
         self.assertFalse(_script_is_usable(full, 10, {"evt_001"}, {1}))
+
+    def test_llm_script_rejects_short_plain_string_response(self):
+        from pipeline.review.script import _script_is_usable
+
+        parsed = {"script": ["Một câu quá ngắn", "Câu nữa"]}
+        self.assertFalse(_script_is_usable(parsed, 40, {"evt_001"}, {1}))
 
     def test_slice_story_keeps_window(self):
         from pipeline.review.run import _slice_story

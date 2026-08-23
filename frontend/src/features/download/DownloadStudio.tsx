@@ -8,6 +8,7 @@ import type {
 } from './download.types'
 import { downloadApi } from './download.api'
 import { BackTitle } from '@/shared/components/BackTitle'
+import { localize, useLocale } from '@/app/i18n'
 import './DownloadStudio.css'
 
 const ACTIVE = new Set(['queued', 'running'])
@@ -207,6 +208,8 @@ type Props = {
 }
 
 export default function DownloadStudio({ onBack, onUseInClone }: Props) {
+  const { locale } = useLocale()
+  const t = (vi: string, en: string) => localize(locale, vi, en)
   const [text, setText] = useState(() => {
     try {
       return localStorage.getItem(LS_LINKS) || ''
@@ -231,6 +234,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
   })
   const [pathBusy, setPathBusy] = useState(false)
   const [pathMsg, setPathMsg] = useState('')
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
   const [taH, setTaH] = useState(loadTextareaH)
   const fileRef = useRef<HTMLInputElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -291,6 +295,11 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
 
   useEffect(() => {
     void refresh()
+    void fetch('/api/config').then(async (response) => {
+      if (!response.ok) return
+      const config = await response.json() as { desktop?: boolean }
+      setIsDesktopApp(Boolean(config.desktop))
+    }).catch(() => undefined)
     void downloadApi
       .root()
       .then((r) => {
@@ -593,51 +602,15 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                 </label>
               </div>
 
-              <label className="dl-field">
-                <span>Thư mục lưu</span>
+              {isDesktopApp ? <label className="dl-field">
+                <span>{t('Thư mục lưu', 'Save folder')}</span>
                 <div className="dl-path-row">
-                  <input
-                    type="text"
-                    value={savePath}
-                    onChange={(e) => {
-                      setSavePath(e.target.value)
-                      setPathMsg('')
-                    }}
-                    onBlur={() => {
-                      if (savePath.trim()) void applySavePath()
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        void applySavePath()
-                      }
-                    }}
-                    placeholder="D:\ZM-AIO-TOOL\downloads"
-                    title="Path trên máy chạy backend — lưu localStorage + server"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="dl-btn outline sm"
-                    disabled={pathBusy}
-                    title="Chọn / dán path thư mục"
-                    onClick={() => void onPickFolder()}
-                  >
-                    <IconFolder />
-                    Chọn
-                  </button>
-                  <button
-                    type="button"
-                    className="dl-btn outline sm"
-                    disabled={pathBusy || !savePath.trim()}
-                    title="Lưu path"
-                    onClick={() => void applySavePath()}
-                  >
-                    {pathBusy ? '…' : 'Lưu'}
-                  </button>
+                  <input type="text" value={savePath} onChange={(e) => { setSavePath(e.target.value); setPathMsg('') }} onBlur={() => { if (savePath.trim()) void applySavePath() }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void applySavePath() } }} placeholder="D:\ZM-AIO-TOOL\downloads" title={t('Đường dẫn trên máy chạy ứng dụng', 'Path on the app computer')} spellCheck={false} />
+                  <button type="button" className="dl-btn outline sm" disabled={pathBusy} title={t('Chọn thư mục lưu', 'Choose save folder')} onClick={() => void onPickFolder()}><IconFolder />{t('Chọn', 'Choose')}</button>
+                  <button type="button" className="dl-btn outline sm" disabled={pathBusy || !savePath.trim()} title={t('Lưu thư mục', 'Save folder')} onClick={() => void applySavePath()}>{pathBusy ? '…' : t('Lưu', 'Save')}</button>
                 </div>
                 {pathMsg && <span className="dl-path-msg">{pathMsg}</span>}
-              </label>
+              </label> : <p className="dl-browser-download-note">{t('Trên web, bấm Tải xuống ở kết quả để lưu vào thư mục Downloads của trình duyệt.', 'On the web, click Download in the result to save to your browser’s Downloads folder.')}</p>}
 
               <div className="dl-checks">
                 <label className="dl-check" title="Tải .srt + nhúng phụ đề (nếu có)">
@@ -806,6 +779,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                         <span className="dl-c-act">
                           {j.status === 'done' && (
                             <>
+                              {!isDesktopApp && <a className="dl-link" href={j.downloadUrl || downloadApi.fileUrl(j.id)} download title={t('Lưu vào Downloads của trình duyệt', 'Save to the browser Downloads folder')}>{t('Tải xuống', 'Download')}</a>}
                               <button
                                 type="button"
                                 className="dl-link"
@@ -815,7 +789,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                               >
                                 {useBusyId === j.id ? '…' : 'Sử dụng'}
                               </button>
-                              <button
+                              {isDesktopApp && <button
                                 type="button"
                                 className="dl-link"
                                 title="Mở thư mục / chọn file trên máy server"
@@ -828,7 +802,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                                 }}
                               >
                                 Mở
-                              </button>
+                              </button>}
                             </>
                           )}
                           {ACTIVE.has(j.status) && (

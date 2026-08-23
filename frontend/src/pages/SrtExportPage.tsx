@@ -13,6 +13,7 @@ type RecognitionEngine = 'whisper' | 'capcut'
 type Job = { id: string; filename: string; sourceKind: SourceKind | 'platform'; status: 'queued' | 'processing' | 'done' | 'error' | 'cancelled'; progress: number; message: string; error?: string; files: string[]; options?: { outputMode?: OutputMode; targetLang?: string; recognitionEngine?: RecognitionEngine } }
 const CACHE_KEY = 'videoclone.srt-export.source-kind'
 const JOB_KEY = 'videoclone.srt-export.job-id.v1'
+const OUTPUT_DIR_KEY = 'videoclone.srt-export.output-dir.v1'
 const LANGUAGE_LABELS: Record<string, string> = { vi: 'Tiếng Việt', en: 'Tiếng Anh', zh: 'Tiếng Trung', ja: 'Tiếng Nhật', ko: 'Tiếng Hàn' }
 
 function loadKind(): SourceKind {
@@ -30,6 +31,8 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
   const [job, setJob] = useState<Job | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [outputDir, setOutputDir] = useState(() => localStorage.getItem(OUTPUT_DIR_KEY) || '')
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
   const saved = useRef(loadSettings()).current
   const [outputMode, setOutputMode] = useState<OutputMode>('original')
   const [sourceLang, setSourceLang] = useState(saved.sourceLang)
@@ -39,6 +42,8 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
   const capcutTranslate = kind === 'media' && recognitionEngine === 'capcut'
 
   useEffect(() => { try { localStorage.setItem(CACHE_KEY, kind) } catch {} }, [kind])
+  useEffect(() => { try { localStorage.setItem(OUTPUT_DIR_KEY, outputDir) } catch {} }, [outputDir])
+  useEffect(() => { void fetchJson<{ desktop?: boolean }>('/api/config').then((config) => setIsDesktopApp(Boolean(config.desktop))).catch(() => undefined) }, [])
   // Source files are moved into the job workspace on submit.  Re-open the
   // most recent workspace after F5 so processing/downloads do not disappear
   // from the UI while the backend job still exists.
@@ -82,6 +87,7 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
       form.append('ollama_mode', saved.ollamaMode)
       form.append('ollama_model', saved.ollamaModel)
       form.append('ollama_local_tier', saved.ollamaLocalTier)
+      form.append('output_dir', outputDir)
       setJob(await fetchJson<Job>('/api/srt-export/jobs', { method: 'POST', body: form }, 60_000))
     } catch (e) { setError(e instanceof Error ? e.message : 'Không thể tạo phụ đề') }
     finally { setBusy(false) }
@@ -106,6 +112,10 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
     setRecognitionEngine(value)
     if (value === 'capcut' && outputMode === 'original') setOutputMode('translated')
   }
+  async function pickOutputDir() {
+    const picked = await fetchJson<{ path?: string }>('/api/system/pick-folder', { method: 'POST' }, 300_000)
+    if (picked.path) setOutputDir(picked.path)
+  }
 
   return <main className="srt-export-page">
     <header className="srt-export-head">
@@ -123,6 +133,7 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
         <h2>{kind === 'media' ? t('Chọn audio hoặc video', 'Choose audio or video') : kind === 'caption' ? t('Chọn file phụ đề có sẵn', 'Choose an existing subtitle file') : kind === 'manual' ? t('Nhập nội dung caption', 'Enter caption content') : t('Dán URL từ nền tảng hoặc file trực tiếp', 'Paste a platform or direct-file URL')}</h2>
         <p>{kind === 'media' ? capcutTranslate ? t('CapCut nhận dạng và dịch trực tiếp trên cloud, rồi trả SRT có timecode. Không chạy Whisper hoặc API dịch khác.', 'CapCut recognizes and translates in the cloud, then returns a timed SRT. Whisper and other translation APIs are not used.') : t('Whisper tự nhận dạng lời nói và giữ mốc thời gian.', 'Whisper recognizes speech and preserves timestamps.') : kind === 'manual' ? t('Mỗi dòng là một caption. Với nội dung có timecode, hãy dùng định dạng SRT.', 'Each line is one caption. Use SRT when the content has timecodes.') : kind === 'url' ? t('Ưu tiên subtitle/caption sẵn có trên nền tảng. Khi không có, app mới tải audio và dùng Whisper.', 'Prefer subtitles/captions available on the platform. Only when absent will the app download audio and use Whisper.') : t('Hỗ trợ SRT, VTT và TXT. SRT/VTT giữ timecode; TXT chia mỗi dòng thành một caption ngắn.', 'Supports SRT, VTT, and TXT. SRT/VTT preserves timecodes; TXT makes each line a short caption.')}</p>
         {kind === 'manual' ? <textarea className="srt-export-textarea" value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder={t('Nhập từng câu phụ đề, mỗi dòng một caption…', 'Enter one subtitle sentence per line…')} rows={7} /> : kind === 'url' ? <input className="srt-export-url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://www.tiktok.com/... hoặc https://youtube.com/..." /> : <><input ref={inputRef} type="file" accept={accepted} hidden onChange={(event) => setFile(event.target.files?.[0] || null)} /><button className="srt-export-picker" type="button" onClick={() => inputRef.current?.click()}>{file ? file.name : t('Chọn file', 'Choose file')}</button>{file && <span className="srt-export-file">{(file.size / 1024 / 1024).toFixed(file.size > 10 * 1024 * 1024 ? 0 : 1)} MB</span>}</>}
+        {isDesktopApp && <label className="srt-export-output"><span>{t('Thư mục lưu', 'Save folder')}</span><div><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder={t('Mặc định: Downloads/subtitle-export', 'Default: Downloads/subtitle-export')} /><button className="srt-export-output-choose" type="button" onClick={() => void pickOutputDir().catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Chọn', 'Choose')}</button></div></label>}
       </div>
       <div className="srt-export-settings">
         {kind === 'media' && <label><span>{t('Nhận dạng & dịch', 'Recognition & translation')}</span><select value={recognitionEngine} onChange={(event) => selectRecognitionEngine(event.target.value as RecognitionEngine)}><option value="whisper">{t('Whisper + công cụ dịch', 'Whisper + translation provider')}</option><option value="capcut">{t('CapCut dịch (không dùng Whisper)', 'CapCut Translate (no Whisper)')}</option></select></label>}

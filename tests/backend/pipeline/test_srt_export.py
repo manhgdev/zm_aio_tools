@@ -21,10 +21,15 @@ def test_capcut_vod_transfer_ret_2000_is_success():
 
 
 def test_capcut_poll_progress_reports_state_elapsed_and_poll_count():
-    from pipeline.capcut_stt import _poll_progress_message
+    from pipeline.capcut_stt import _poll_progress_message, _task_progress
 
     assert _poll_progress_message("queueing", 6.4, 4) == "CapCut: đang xếp hàng trên CapCut · đã chờ 6s · kiểm tra #4"
+    assert _poll_progress_message("processing", 6.4, 4, 23) == "CapCut: CapCut đang nhận dạng và dịch · 23% · đã chờ 6s · kiểm tra #4"
+    assert _poll_progress_message("success", 6.4, 4, 100) == "CapCut: CapCut đã hoàn tất · 100% · đã chờ 6s · kiểm tra #4"
     assert "đang chờ phản hồi" in _poll_progress_message("", 0, 0)
+    assert _task_progress({"progress": "99"}) == 99
+    assert _task_progress({"percent": 150}) == 100
+    assert _task_progress({"progress": "unknown"}) is None
 
 
 def test_capcut_task_without_status_is_not_treated_as_running():

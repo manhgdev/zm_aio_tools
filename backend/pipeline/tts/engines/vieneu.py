@@ -23,6 +23,7 @@ from typing import Any, Callable
 
 from ..schemas import PREFIX_VIENEU
 from .. import voice_store
+from .. import zmtss_catalog
 _lock = threading.Lock()
 _client: Any = None
 _client_err: str | None = None
@@ -501,9 +502,7 @@ def status() -> dict[str, Any]:
 
 
 def list_voices(lang: str | None = None) -> list[dict[str, Any]]:
-    _ = lang
-    if not available():
-        return []
+    requested_language = voice_store.normalize_voice_language(lang)
     out: list[dict[str, Any]] = []
     for item in voice_store.load_reference_voices():
         voice_id = str(item["id"])
@@ -522,6 +521,23 @@ def list_voices(lang: str | None = None) -> list[dict[str, Any]]:
                 "previewUrl": f"/api/tts/voices/{voice_id}/preview" if ref_path.is_file() else None,
             }
         )
+    # ZMTTS remains online until selected. Its demo is fetched and registered
+    # as a local zmAI reference immediately before the first synthesis.
+    for item in zmtss_catalog.voices():
+        language = zmtss_catalog.language_code(item.get("language"))
+        if requested_language and language != requested_language:
+            continue
+        remote_id = str(item["id"])
+        voice_id = f"{zmtss_catalog.VOICE_ID_PREFIX}{remote_id}"
+        local = voice_store.get_reference_voice(voice_id)
+        path = voice_store.reference_path(local or {})
+        out.append({
+            "id": voice_id,
+            "name": voice_store.clean_display_name(str(item.get("name") or remote_id), fallback=remote_id),
+            "engine": "zmai", "type": "zmAI", "mode": "remote-reference",
+            "available": path.is_file(), "language": language,
+            "source": "zmtss", "previewUrl": zmtss_catalog.remote_url(item),
+        })
     # The live client also contains user clones, which are appended separately below.
     presets = list_preset_from_assets()
     for preset in presets:
@@ -543,7 +559,7 @@ def list_voices(lang: str | None = None) -> list[dict[str, Any]]:
         out.append(
             {
                 "id": f"{PREFIX_VIENEU}clone:{cid}",
-                "name": f"VieNeu · Clone · {name}",
+                "name": voice_store.clean_display_name(name, fallback=cid),
                 "engine": "clone",
                 "type": "clone",
                 "tags": voice_store.normalize_voice_tags(item.get("tags")),
@@ -577,6 +593,8 @@ def preview_path(voice: str) -> Path | None:
 def parse_voice(voice: str) -> tuple[str, str] | None:
     if not voice:
         return None
+    if str(voice).startswith(zmtss_catalog.VOICE_ID_PREFIX):
+        return "remote-reference", str(voice)
     direct = voice_store.get_reference_voice(str(voice))
     if direct:
         return "reference", str(direct["id"])
@@ -586,6 +604,26 @@ def parse_voice(voice: str) -> tuple[str, str] | None:
     if rest.startswith("clone:"):
         return "clone", rest[6:].strip()
     return "preset", rest.strip()
+
+
+def _ensure_remote_reference(voice_id: str) -> None:
+    """Materialize a selected ZMTTS demo as a local VieNeu reference once."""
+    if voice_store.get_reference_voice(voice_id):
+        return
+    item = zmtss_catalog.get(voice_id)
+    if not item:
+        raise RuntimeError(f"Không tìm thấy giọng ZMTTS '{voice_id}' trên GitHub")
+    filename = zmtss_catalog.local_filename(item)
+    path = voice_store.REFERENCE_ROOT / filename
+    zmtss_catalog.download_reference(item, path)
+    entries = [entry for entry in voice_store._read_reference_raw() if entry.get("id") != voice_id]
+    name = voice_store.clean_display_name(str(item.get("name") or item["id"]), fallback=str(item["id"]))
+    entries.append({
+        "id": voice_id, "name": name, "label": name, "type": "zmAI", "engine": "vieneu",
+        "mode": "reference", "language": zmtss_catalog.language_code(item.get("language")),
+        "ref_file": filename, "hidden": False, "favorite": False, "tags": [], "source": "ZMTTS",
+    })
+    voice_store.save_reference_voices(entries)
 
 
 def reference_cache_token(voice: str) -> str:
@@ -733,6 +771,9 @@ def synthesize(
     if not parsed:
         raise ValueError(f"Không phải giọng VieNeu: {voice}")
     kind, name = parsed
+    if kind == "remote-reference":
+        _ensure_remote_reference(name)
+        kind = "reference"
     out_wav.parent.mkdir(parents=True, exist_ok=True)
     text = (text or ".").strip() or "."
     if style not in ("tu_nhien", "tin_tuc", "doc_truyen"):
@@ -890,7 +931,7 @@ def clone_voice(
     voice_store.add_cloned(safe, display, f"cloned/{safe}.wav", tags=clean_tags)
     return {
         "id": f"{PREFIX_VIENEU}clone:{safe}",
-        "name": f"VieNeu · Clone · {display}",
+        "name": voice_store.clean_display_name(display, fallback=safe),
         "tags": clean_tags,
     }
 

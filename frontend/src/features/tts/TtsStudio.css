@@ -1340,6 +1340,11 @@ html.dark .tts-btn-sm:hover:not(:disabled) {
   margin-bottom: 0;
 }
 
+.tts-voice-toolbar .tts-voice-page-size {
+  flex: 0 0 auto;
+  min-width: 104px;
+}
+
 .tts-voice-toolbar .tts-voice-search input {
   padding-top: 7px;
   padding-bottom: 7px;
@@ -1998,6 +2003,21 @@ html.dark .tts-wave-box {
 .tts-pager .tts-btn {
   padding: 5px 10px;
   font-size: 0.74rem;
+}
+
+.tts-voice-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tts-line);
+}
+
+.tts-voice-pagination .tts-pager-info {
+  margin-right: auto;
 }
 
 .tts-listen-row {

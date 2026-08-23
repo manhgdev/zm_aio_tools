@@ -37,7 +37,7 @@ from pipeline.review.vision import analyze_scenes
 from pipeline.tts import tts_segment
 
 
-REVIEW_PLAN_VERSION = 20
+REVIEW_PLAN_VERSION = 22
 REVIEW_STORY_VERSION = 7
 REVIEW_FINALIZE_VERSION = 8
 REVIEW_MATCH_VERSION = 4
@@ -175,9 +175,13 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
             job_id, "scenes", 0.12, "Cắt cảnh",
         )
     _note(job_id, f"Cảnh: {len(scenes) if isinstance(scenes, list) else 0} đoạn · {_t_scenes.elapsed:.0f}s")
+    # Earlier CapCut runs cached the untranslated ASR although CapCut already
+    # supplied timed target-language cues. Keep that legacy cache isolated so
+    # a retry rebuilds its evidence and script from the translated transcript.
+    capcut_target_cache = "_capcut_target_v1" if recognition_engine == "capcut" else ""
     with _timed("transcript") as _t_tr:
         transcript = _cached_or(
-            root / f"transcript_{recognition_engine}_{source_lang}_{lang}.json",
+            root / f"transcript_{recognition_engine}_{source_lang}_{lang}{capcut_target_cache}.json",
             lambda: load_transcript(
                 src, root, job_id=job_id, duration=duration,
                 sidecar=str(settings.get("subtitleFile") or ""),
@@ -194,7 +198,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
     _note(job_id, f"Transcript: {len(transcript)} câu · {_t_tr.elapsed:.0f}s" + (f" · ví dụ: {sample}" if sample else ""))
     with _timed("visual_analysis") as _t_vis:
         visuals = _cached_or(
-            root / "visual_analysis" / f"scenes_grounded_v2_{review_mode}_{source_lang}.json",
+            root / "visual_analysis" / f"scenes_grounded_v2_{review_mode}_{source_lang}{capcut_target_cache}.json",
             lambda: analyze_scenes(
                 src, scenes, transcript, root, job_id=job_id,
                 use_vision=review_mode == "llm",
@@ -232,7 +236,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
     story_model_key = re.sub(r"[^A-Za-z0-9._-]+", "_", review_model or "translate")
     with _timed("story_graph") as _t_story:
         story = _cached_or(
-            root / f"story_graph_v{REVIEW_STORY_VERSION}_{review_mode}_{story_model_key}_{lang}_{source_lang}.json",
+            root / f"story_graph_v{REVIEW_STORY_VERSION}_{review_mode}_{story_model_key}_{lang}_{source_lang}{capcut_target_cache}.json",
             story_builder,
             job_id,
             "story_graph",
@@ -471,7 +475,15 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
                     )
                 tts_sum = sum(float(v.get("duration") or 0) for v in voiced)
                 _note(job_id, f"TTS xong phần {pi + 1}: {len(voiced)} file · {tts_sum:.1f}s audio · {_t_tts.elapsed:.0f}s real")
-            voiced = _cap_voiced_duration(voiced, script_dur)
+            # The selected 10/15/20-minute value is the total final duration,
+            # not merely a source-window size. First trim an overlong voice
+            # track, then gently slow a short one to keep the concatenated
+            # Review close to the requested total.
+            voiced = _floor_voiced_duration(
+                _cap_voiced_duration(voiced, script_dur),
+                script_dur,
+            )
+            _require_review_voice_coverage(voiced, script_dur)
             with _progress_heartbeat(job_id, "matching"):
                 plan = match_voice(
                     voiced,
@@ -819,6 +831,18 @@ def _floor_voiced_duration(
         item["ttsSpeed"] = round(speed, 4)
         fitted.append(item)
     return fitted
+
+
+def _require_review_voice_coverage(
+    voiced: list[dict[str, Any]], target_duration: float,
+) -> None:
+    """Never mark a Review done when its narration cannot cover the request."""
+    spoken = sum(max(0.0, float(row.get("duration") or 0)) for row in voiced)
+    target = max(1.0, float(target_duration or 0))
+    # `_floor_voiced_duration` can only slow speech to 0.70×.  Anything below
+    # this threshold is missing script content, not a pacing adjustment.
+    if spoken < target * 0.45:
+        raise RuntimeError(f"REVIEW_NARRATION_TOO_SHORT:{spoken:.1f}/{target:.1f}")
 
 
 def _apply_fixed_review_bboxes(

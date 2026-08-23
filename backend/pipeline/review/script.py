@@ -125,11 +125,12 @@ def write_script(
         "3. Use ONLY facts explicitly stated in Story Events. Never invent food, props, weapons, places, characters,"
         " or actions. If an event is vague, narrate it vaguely rather than guessing.\n"
         f"4. All narration MUST be in {name} only.\n"
-        f"5. Output EXACTLY a JSON object with a list of {n} narration sentences:\n"
-        f'{{"script": ["Opening hook narration sentence...", "Next story sentence...", ...]}}\n\n'
+        f"5. Write EXACTLY {n} narration sentences with at least {words_per_seg} words each.\n"
+        f"6. The complete narration MUST contain at least {word_budget} words so it fills {duration_sec:.0f} seconds of speech.\n"
+        f'7. Output only JSON: {{"script": ["Opening hook narration sentence...", "Next story sentence...", ...]}}\n\n'
         f"Story Events:\n{evidence}"
     )
-    min_words = max(30, round(word_budget * 0.35))
+    min_words = max(30, round(word_budget * 0.75))
 
     def _log(msg: str) -> None:
         target_id = job_id or project_id
@@ -148,17 +149,17 @@ def write_script(
     _log(f"LLM đang viết kịch bản · {n} đoạn · ~{word_budget} từ · {llm_model or 'auto'}…")
     parsed = generate_json(prompt, model=llm_model, job_id=job_id)
     items = _normalize_parsed_script(parsed)
-    if len(items) < min_segments:
-        _log(f"LLM thử lại ngắn gọn ({llm_model or 'auto'})…")
+    if not _script_is_usable(parsed, min_words, event_ids, scene_ids, min_segments=min_segments):
+        _log(f"LLM thử lại · cần tối thiểu {min_words} từ ({llm_model or 'auto'})…")
         parsed2 = generate_json(
             prompt
-            + '\nRETURN JSON only. Do not number or prefix narration lines. '
-            + '{"script": ["A concise narration of the selected moment."]}.',
+            + f"\nRETURN VALID JSON NOW: {n} sentences, at least {min_words} words total, "
+            f"at least {words_per_seg} words per sentence. Do not number or prefix lines.",
             model=llm_model,
             job_id=job_id,
         )
         items2 = _normalize_parsed_script(parsed2)
-        if len(items2) >= min_segments:
+        if _script_is_usable(parsed2, min_words, event_ids, scene_ids, min_segments=min_segments):
             items = items2
 
     if not items or len(items) < min_segments:
@@ -210,18 +211,41 @@ def _normalize_parsed_script(parsed: Any) -> list[dict[str, Any]]:
 
 
 def _script_is_usable(
-    parsed: Any, min_words: int, event_ids: set[str], scene_ids: set[int],
+    parsed: Any,
+    min_words: int,
+    event_ids: set[str],
+    scene_ids: set[int],
+    *,
+    min_segments: int = 2,
 ) -> bool:
-    """Require enough usable text before sending it to TTS."""
+    """Require enough narration to fill the selected final review duration."""
     items = _normalize_parsed_script(parsed)
-    if len(items) < 2:
+    if len(items) < min_segments:
         return False
     valid_texts = [
         str(item.get("text") or "").strip()
         for item in items
         if str(item.get("text") or "").strip()
     ]
-    return len(valid_texts) >= 2
+    if len(valid_texts) < min_segments:
+        return False
+    if sum(len(text.split()) for text in valid_texts) < min_words:
+        return False
+    for item in items:
+        refs = {str(ref) for ref in (item.get("event_refs") or [])}
+        preferred = {
+            int(ref) for ref in (item.get("preferred_scene_ids") or [])
+            if str(ref).isdigit() or isinstance(ref, int)
+        }
+        # Plain string output is valid: `_clean_segments` attaches stable
+        # chronological references. Explicit but invalid references are not.
+        if refs and not refs <= event_ids:
+            return False
+        if preferred and not preferred <= scene_ids:
+            return False
+        if _GENERIC_RECAP.search(str(item.get("text") or "")):
+            return False
+    return True
 
 
 def _part_evidence(

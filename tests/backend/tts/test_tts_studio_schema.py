@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("fastapi", reason="Python hệ thống thiếu fastapi — test API chạy trong venv backend")
 
 from api.deps import StudioSynthIn
-from api.routes.tts_studio import api_tts_studio_synth
+from api.routes.tts_studio import _tts_job_artifact, api_tts_studio_synth
 from pipeline.tts import studio
 
 
@@ -30,3 +30,11 @@ def test_tts_studio_schema_covers_text_and_srt(monkeypatch):
     ))
     assert srt["voice"] == "speaker-1"
     assert srt["keep_timeline"] is True
+
+
+def test_tts_desktop_reveal_resolves_requested_artifact(monkeypatch, tmp_path):
+    wav = tmp_path / "audio.wav"
+    wav.write_bytes(b"wav")
+    monkeypatch.setattr(studio, "ensure_wav", lambda _: wav)
+
+    assert _tts_job_artifact("job-1", "wav") == wav

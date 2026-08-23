@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import importlib.util
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -64,6 +65,67 @@ def _transcode_with_app_encoder(raw: Path, final: Path, fps: int, renderer_modul
     return result
 
 
+def _ordered_grid_cells(renderer_module, renderer, order: str) -> list[tuple[int, int]]:
+    """Build a visible pen route without changing the reference renderer.
+
+    ``natural`` preserves its semantic object/text/contour grouping. The other
+    choices only reorder the grid route; edge extraction and ink rendering stay
+    untouched in the upstream implementation.
+    """
+    streams = list(renderer.ink_streams)
+    if order == "natural":
+        return renderer_module.flatten_streams(streams)
+    if order == "region":
+        # Complete one major visual region before moving to the next one.
+        return renderer_module.flatten_streams(sorted(streams, key=len, reverse=True))
+
+    cells = renderer_module.flatten_streams(streams)
+    if not cells:
+        return []
+    if order == "reading":
+        return sorted(cells, key=lambda cell: (cell[0], cell[1]))
+    if order == "horizontal":
+        rows: dict[int, list[tuple[int, int]]] = {}
+        for cell in cells:
+            rows.setdefault(cell[0], []).append(cell)
+        return [
+            cell for index, row in enumerate(sorted(rows))
+            for cell in sorted(rows[row], key=lambda item: item[1], reverse=bool(index % 2))
+        ]
+    if order == "vertical":
+        columns: dict[int, list[tuple[int, int]]] = {}
+        for cell in cells:
+            columns.setdefault(cell[1], []).append(cell)
+        return [
+            cell for index, column in enumerate(sorted(columns))
+            for cell in sorted(columns[column], key=lambda item: item[0], reverse=bool(index % 2))
+        ]
+    if order == "center":
+        centre_row = sum(row for row, _ in cells) / len(cells)
+        centre_col = sum(column for _, column in cells) / len(cells)
+        # Radius first reveals the centre; the angle makes the sweep circular
+        # rather than the old top-to-bottom fill.
+        return sorted(cells, key=lambda cell: (
+            round(math.hypot(cell[0] - centre_row, cell[1] - centre_col), 1),
+            math.atan2(cell[0] - centre_row, cell[1] - centre_col),
+        ))
+    return renderer_module.flatten_streams(streams)
+
+
+def _apply_stroke_order(renderer_module, renderer, order: str) -> None:
+    if order in {"natural", "outline"}:
+        # Natural keeps semantic groups; outline keeps skeleton strokes and
+        # their explicit pen lifts from the reference renderer.
+        return
+    if order == "region":
+        renderer.ink_streams = sorted(renderer.ink_streams, key=len, reverse=True)
+        renderer.stroke_path = renderer_module.flatten_streams(renderer.ink_streams)
+        return
+    route = _ordered_grid_cells(renderer_module, renderer, order)
+    renderer.ink_streams = [route] if route else []
+    renderer.stroke_path = route
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
@@ -75,6 +137,7 @@ def main() -> int:
     parser.add_argument("--long-edge", type=int, required=True)
     parser.add_argument("--tool", choices=("pencil", "pen", "marker", "brush"), default="pencil")
     parser.add_argument("--thickness", type=int, default=2)
+    parser.add_argument("--stroke-order", choices=("natural", "outline", "region", "reading", "center", "horizontal", "vertical"), default="natural")
     parser.add_argument("--bare-tip", action="store_true")
     args = parser.parse_args()
 
@@ -110,6 +173,8 @@ def main() -> int:
     renderer = renderer_module.StreamBoardRenderer(
         image, config, hand_asset if not args.bare_tip else None, args.bare_tip,
     )
+    _apply_stroke_order(renderer_module, renderer, args.stroke_order)
+    print(f"STROKE_ORDER={args.stroke_order}")
     renderer.render_to(raw, args.total_ms)
     result = _transcode_with_app_encoder(raw, final, args.fps, renderer_module)
     print(f"OUTPUT={result}")

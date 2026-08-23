@@ -13,6 +13,7 @@ from typing import Any
 
 from pipeline.asr.whisper import asr_whisper
 from pipeline.core.config import DATA
+from pipeline.core.output_paths import selected_or_default
 from pipeline.core.media import extract_audio
 from pipeline.export.srt import SRT_STYLES, _split_for_style, parse_srt, style_params, wrap_capcut_text, write_subtitle
 from pipeline.mt.api import translate_segments
@@ -182,6 +183,15 @@ def _zip_outputs(work: Path, files: list[str], *, bilingual: bool = False, targe
             archive.write(work / name, f"{folder}/{name}" if folder else name)
 
 
+def _publish_outputs(work: Path, files: list[str], output_dir: str) -> str:
+    target = selected_or_default("subtitle-export", output_dir)
+    for name in files:
+        source = work / name
+        if source.is_file():
+            shutil.copy2(source, target / name)
+    return str(target)
+
+
 def _run(job_id: str) -> None:
     job = get_job(job_id)
     if not job:
@@ -255,8 +265,9 @@ def _run(job_id: str) -> None:
             files = _write_outputs(work, cues, "subtitles")
         _zip_outputs(work, files, bilingual=mode == "bilingual", target_lang=lang if mode == "bilingual" else "")
         files.append("subtitles-all.zip")
+        published_dir = _publish_outputs(work, files, str(options.get("outputDir") or ""))
         suffix = f" · {platform_note}" if platform_note else ""
-        _update(job_id, status="done", progress=100, message=f"Đã xuất {len(files)} file{suffix}", files=files)
+        _update(job_id, status="done", progress=100, message=f"Đã xuất {len(files)} file{suffix}", files=files, publishedDir=published_dir)
     except Exception as exc:
         if not get_job(job_id).get("cancelled"):
             _update(job_id, status="error", error=str(exc), message="Xuất phụ đề thất bại")

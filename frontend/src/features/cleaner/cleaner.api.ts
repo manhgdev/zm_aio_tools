@@ -8,11 +8,12 @@ export const cleanerApi = {
     return fetchJson<CleanJob[]>(base, undefined, 5000)
   },
 
-  async start(files: File[], method: CleanMethod, options: AdvancedOptions): Promise<CleanJob[]> {
+  async start(files: File[], method: CleanMethod, options: AdvancedOptions, outputDir = ''): Promise<CleanJob[]> {
     const fd = new FormData()
     files.forEach(f => fd.append('files', f))
     fd.append('method', method)
     fd.append('options', JSON.stringify(options))
+    fd.append('output_dir', outputDir)
     
     // timeout larger since uploading files might take time
     return fetchJson<CleanJob[]>(base, {

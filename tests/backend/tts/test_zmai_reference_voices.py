@@ -60,3 +60,37 @@ def test_missing_reference_is_explicit_and_never_falls_back(tmp_path, monkeypatc
 
     with pytest.raises(RuntimeError, match="Thiếu file reference"):
         vieneu._encoded_reference(_FakeClient(), "voice")
+
+
+def test_remote_zmtts_voice_downloads_only_when_synthesized(tmp_path, monkeypatch) -> None:
+    item = {"id": "tieng-viet--ngoc-huyen", "name": "Ngọc Huyền", "language": "Tiếng Việt", "audio": "audio/demo.mp3"}
+    monkeypatch.setattr(vieneu.zmtss_catalog, "get", lambda _: item)
+    monkeypatch.setattr(vieneu.voice_store, "REFERENCE_ROOT", tmp_path)
+    monkeypatch.setattr(vieneu.voice_store, "_read_reference_raw", lambda: [])
+    saved = []
+    monkeypatch.setattr(vieneu.voice_store, "save_reference_voices", lambda entries: saved.extend(entries))
+
+    def download(_item, path):
+        path.write_bytes(b"wav")
+
+    monkeypatch.setattr(vieneu.zmtss_catalog, "download_reference", download)
+    monkeypatch.setattr(vieneu.zmtss_catalog, "local_filename", lambda _: "zmt-demo.wav")
+    remote_id = "zmt:tieng-viet--ngoc-huyen"
+    vieneu._ensure_remote_reference(remote_id)
+
+    assert (tmp_path / "zmt-demo.wav").is_file()
+    assert saved[0]["id"] == remote_id
+    assert saved[0]["name"] == "Ngọc Huyền"
+
+
+def test_auto_lists_zmtts_catalog_even_before_vieneu_runtime_is_installed(monkeypatch) -> None:
+    monkeypatch.setattr(vieneu, "available", lambda: False)
+    monkeypatch.setattr(vieneu.voice_store, "load_reference_voices", lambda: [])
+    monkeypatch.setattr(vieneu.voice_store, "load_cloned", lambda: [])
+    monkeypatch.setattr(vieneu.zmtss_catalog, "voices", lambda: [
+        {"id": "tieng-viet--demo", "name": "Demo", "language": "Tiếng Việt", "audio": "audio/demo.mp3"},
+    ])
+
+    listed = vieneu.list_voices("auto")
+
+    assert any(voice["id"] == "zmt:tieng-viet--demo" for voice in listed)

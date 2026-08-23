@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.core.config import DATA, PUBLIC_DATA
+from pipeline.core.output_paths import selected_or_default
 from pipeline.core.jobs import kill_process_tree
 
 _LOCK = threading.Lock()
@@ -34,7 +35,7 @@ def get_job(job_id: str) -> dict[str, Any] | None:
     with _LOCK:
         return _JOBS.get(job_id)
 
-def create_job(filename: str, method: str, options: dict, input_path: str) -> dict[str, Any]:
+def create_job(filename: str, method: str, options: dict, input_path: str, output_dir: str = "") -> dict[str, Any]:
     job_id = uuid.uuid4().hex[:8]
     
     ext = Path(filename).suffix or ".mp4"
@@ -45,7 +46,8 @@ def create_job(filename: str, method: str, options: dict, input_path: str) -> di
         # đầu vào (đặc biệt WebM). MP4 là output tương thích nhất để preview và tải.
         ext = ".mp4"
         
-    output_path = CLEANER_OUT_DIR / f"{Path(filename).stem}_{job_id}{ext}"
+    selected_dir = selected_or_default("cleaner", output_dir)
+    output_path = selected_dir / f"{Path(filename).stem}_{job_id}{ext}"
     
     job = {
         "id": job_id,
@@ -61,6 +63,7 @@ def create_job(filename: str, method: str, options: dict, input_path: str) -> di
         "logs": ["Job đã vào hàng đợi"],
         "input_path": str(input_path),
         "output_path": str(output_path),
+        "outputDir": str(selected_dir),
         "options": options,
     }
     with _LOCK:
@@ -129,8 +132,11 @@ def delete_job(job_id: str) -> bool:
     if job.get("input_path") and os.path.isfile(job["input_path"]):
         try: os.remove(job["input_path"])
         except OSError: pass
-    if job.get("output_path") and os.path.isfile(job["output_path"]):
-        try: os.remove(job["output_path"])
+    output = Path(str(job.get("output_path") or ""))
+    # A file explicitly saved outside the app workspace belongs to the user;
+    # deleting its queue row must not delete that published result.
+    if output.is_file() and output.parent == CLEANER_OUT_DIR:
+        try: output.unlink()
         except OSError: pass
     return True
 

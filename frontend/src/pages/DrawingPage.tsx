@@ -6,6 +6,7 @@ import './DrawingPage.css'
 type PreviewTab = 'preview' | 'line-map' | 'stroke-path'
 type Tool = 'pencil' | 'pen' | 'marker' | 'brush'
 type Preset = 'pencil' | 'ink' | 'whiteboard' | 'speed' | 'watercolor'
+type StrokeOrder = 'natural' | 'outline' | 'region' | 'reading' | 'center' | 'horizontal' | 'vertical'
 type DrawingJob = {
   id: string; filename?: string; status: 'queued' | 'processing' | 'done' | 'error' | 'cancelled'
   progress: number; step: string; error?: string
@@ -14,14 +15,15 @@ type DrawingJob = {
 type DrawingSettings = {
   preset: Preset; mode: 'drawing' | 'hand'; tool: Tool; duration: number
   detail: number; thickness: number; fps: 24 | 30 | 60
-  resolution: '720p' | '1080p' | '4k'; smartOrder: boolean; showOriginalEnd: boolean
+  resolution: '720p' | '1080p' | '4k'; strokeOrder: StrokeOrder; showOriginalEnd: boolean
 }
 
 const DRAWING_SETTINGS_KEY = 'zm-tool:drawing-settings:v1'
 const DRAWING_JOBS_KEY = 'zm-tool:drawing-job-ids:v1'
+const DRAWING_OUTPUT_DIR_KEY = 'zm-tool:drawing-output-dir:v1'
 const DEFAULT_SETTINGS: DrawingSettings = {
   preset: 'pencil', mode: 'drawing', tool: 'pencil', duration: 10, detail: 72,
-  thickness: 2, fps: 30, resolution: '1080p', smartOrder: true, showOriginalEnd: true,
+  thickness: 2, fps: 30, resolution: '1080p', strokeOrder: 'natural', showOriginalEnd: true,
 }
 
 function cachedSettings(): DrawingSettings {
@@ -38,7 +40,7 @@ function cachedSettings(): DrawingSettings {
       thickness: Number.isFinite(stored.thickness) ? Math.max(1, Math.min(8, Number(stored.thickness))) : DEFAULT_SETTINGS.thickness,
       fps: [24, 30, 60].includes(stored.fps ?? 0) ? stored.fps as 24 | 30 | 60 : DEFAULT_SETTINGS.fps,
       resolution: ['720p', '1080p', '4k'].includes(stored.resolution ?? '') ? stored.resolution as DrawingSettings['resolution'] : DEFAULT_SETTINGS.resolution,
-      smartOrder: typeof stored.smartOrder === 'boolean' ? stored.smartOrder : DEFAULT_SETTINGS.smartOrder,
+      strokeOrder: ['natural', 'outline', 'region', 'reading', 'center', 'horizontal', 'vertical'].includes(stored.strokeOrder ?? '') ? stored.strokeOrder as StrokeOrder : DEFAULT_SETTINGS.strokeOrder,
       showOriginalEnd: typeof stored.showOriginalEnd === 'boolean' ? stored.showOriginalEnd : DEFAULT_SETTINGS.showOriginalEnd,
     }
   } catch {
@@ -55,12 +57,12 @@ function cachedJobIds(): string[] {
   }
 }
 
-const PRESETS: Record<Preset, { duration: number; detail: number; thickness: number; tool: Tool; mode: 'drawing' | 'hand'; showOriginalEnd: boolean }> = {
-  pencil: { duration: 10, detail: 72, thickness: 2, tool: 'pencil', mode: 'drawing', showOriginalEnd: true },
-  ink: { duration: 8, detail: 84, thickness: 2, tool: 'pen', mode: 'drawing', showOriginalEnd: false },
-  whiteboard: { duration: 12, detail: 55, thickness: 3, tool: 'marker', mode: 'hand', showOriginalEnd: false },
-  speed: { duration: 5, detail: 68, thickness: 2, tool: 'pencil', mode: 'hand', showOriginalEnd: true },
-  watercolor: { duration: 14, detail: 60, thickness: 4, tool: 'brush', mode: 'hand', showOriginalEnd: true },
+const PRESETS: Record<Preset, { duration: number; detail: number; thickness: number; tool: Tool; mode: 'drawing' | 'hand'; strokeOrder: StrokeOrder; showOriginalEnd: boolean }> = {
+  pencil: { duration: 10, detail: 72, thickness: 2, tool: 'pencil', mode: 'drawing', strokeOrder: 'natural', showOriginalEnd: true },
+  ink: { duration: 8, detail: 84, thickness: 2, tool: 'pen', mode: 'drawing', strokeOrder: 'outline', showOriginalEnd: false },
+  whiteboard: { duration: 12, detail: 55, thickness: 3, tool: 'marker', mode: 'hand', strokeOrder: 'region', showOriginalEnd: false },
+  speed: { duration: 5, detail: 68, thickness: 2, tool: 'pencil', mode: 'hand', strokeOrder: 'horizontal', showOriginalEnd: true },
+  watercolor: { duration: 14, detail: 60, thickness: 4, tool: 'brush', mode: 'hand', strokeOrder: 'center', showOriginalEnd: true },
 }
 
 function artifact(job: DrawingJob | null, kind: 'input' | 'lineMap' | 'strokePath' | 'output') {
@@ -84,8 +86,10 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
   const [thickness, setThickness] = useState(saved.thickness)
   const [fps, setFps] = useState<24 | 30 | 60>(saved.fps)
   const [resolution, setResolution] = useState<'720p' | '1080p' | '4k'>(saved.resolution)
-  const [smartOrder, setSmartOrder] = useState(saved.smartOrder)
+  const [strokeOrder, setStrokeOrder] = useState<StrokeOrder>(saved.strokeOrder)
   const [showOriginalEnd, setShowOriginalEnd] = useState(saved.showOriginalEnd)
+  const [outputDir, setOutputDir] = useState(() => window.localStorage.getItem(DRAWING_OUTPUT_DIR_KEY) || '')
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
   const [job, setJob] = useState<DrawingJob | null>(null)
   const [batchJobs, setBatchJobs] = useState<DrawingJob[]>([])
   const [dragging, setDragging] = useState(false)
@@ -120,9 +124,11 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
     }).catch(() => undefined).finally(() => setJobsRestored(true))
   }, [])
   useEffect(() => {
-    const settings: DrawingSettings = { preset, mode, tool, duration, detail, thickness, fps, resolution, smartOrder, showOriginalEnd }
+    const settings: DrawingSettings = { preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd }
     window.localStorage.setItem(DRAWING_SETTINGS_KEY, JSON.stringify(settings))
-  }, [preset, mode, tool, duration, detail, thickness, fps, resolution, smartOrder, showOriginalEnd])
+  }, [preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd])
+  useEffect(() => { window.localStorage.setItem(DRAWING_OUTPUT_DIR_KEY, outputDir) }, [outputDir])
+  useEffect(() => { void fetch('/api/config').then(async (r) => r.ok && setIsDesktopApp(Boolean((await r.json() as { desktop?: boolean }).desktop))).catch(() => undefined) }, [])
   useEffect(() => {
     if (!jobsRestored) return
     const ids = [job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item)).map((item) => item.id)
@@ -160,7 +166,7 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
     try {
       const body = new FormData()
       accepted.forEach((item) => body.append('images', item))
-      body.append('options', JSON.stringify({ preset, mode, tool, duration, detail, thickness, fps, resolution, smartOrder, showOriginalEnd }))
+      body.append('options', JSON.stringify({ preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd, outputDir }))
       body.append('start_now', 'false')
       const response = await fetch('/api/drawing/jobs/batch', { method: 'POST', body })
       if (!response.ok) throw new Error(await response.text())
@@ -178,12 +184,12 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
   const applyPreset = (id: Preset) => {
     const value = PRESETS[id]
     setPreset(id); setDuration(value.duration); setDetail(value.detail); setThickness(value.thickness)
-    setTool(value.tool); setMode(value.mode); setShowOriginalEnd(value.showOriginalEnd)
+    setTool(value.tool); setMode(value.mode); setStrokeOrder(value.strokeOrder); setShowOriginalEnd(value.showOriginalEnd)
   }
   const generate = async () => {
     if (!queuedJobs.length || active || savingSource) return
     try {
-      const options = { preset, mode, tool, duration, detail, thickness, fps, resolution, smartOrder, showOriginalEnd }
+      const options = { preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd, outputDir }
       const updates = await Promise.all(queuedJobs.map(async (item) => {
         const response = await fetch(`/api/drawing/jobs/${item.id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options),
@@ -207,6 +213,12 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
     await fetch(`/api/drawing/jobs/${jobId}/cancel`, { method: 'POST' })
     setJob((current) => current?.id === jobId ? { ...current, status: 'cancelled' } : current)
     setBatchJobs((current) => current.map((item) => item.id === jobId ? { ...item, status: 'cancelled' } : item))
+  }
+  const pickOutputDir = async () => {
+    const response = await fetch('/api/system/pick-folder', { method: 'POST' })
+    if (!response.ok) throw new Error(await response.text())
+    const picked = await response.json() as { path?: string }
+    if (picked.path) setOutputDir(picked.path)
   }
   const statusText = job?.status === 'done' ? t('Video đã sẵn sàng', 'Video ready')
     : job?.status === 'error' ? t('Không thể tạo video', 'Could not create video')
@@ -239,7 +251,8 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
           <label className="drawing-field"><span>{t('Chế độ vẽ', 'Drawing mode')}</span><select value={mode} onChange={(event) => setMode(event.target.value as 'drawing' | 'hand')}><option value="drawing">{t('Vẽ nét liên tục', 'Continuous strokes')}</option><option value="hand">{t('Tay cầm bút vẽ nét', 'Hand drawing strokes')}</option></select></label>
           <span className="drawing-label">{t('Loại dụng cụ', 'Tool')}</span>
           <div className="drawing-tools">{(['pencil', 'pen', 'marker', 'brush'] as Tool[]).map((id) => <button key={id} type="button" className={tool === id ? 'is-active' : ''} onClick={() => setTool(id)}>{({ pencil: t('Chì', 'Pencil'), pen: t('Bút', 'Pen'), marker: 'Marker', brush: t('Cọ', 'Brush') })[id]}</button>)}</div>
-          <label className="drawing-toggle"><input type="checkbox" checked={smartOrder} onChange={(event) => setSmartOrder(event.target.checked)} /><span>{t('Thứ tự nét thông minh', 'Smart stroke order')}</span></label>
+          <label className="drawing-field"><span>{t('Đường đi nét', 'Stroke route')}</span><select value={strokeOrder} onChange={(event) => setStrokeOrder(event.target.value as StrokeOrder)}><option value="natural">{t('Tự nhiên theo đối tượng', 'Natural by object')}</option><option value="outline">{t('Theo viền thật', 'True outlines')}</option><option value="region">{t('Từng vùng hoàn chỉnh', 'Complete one region')}</option><option value="reading">{t('Theo chữ · trái sang phải', 'Text · left to right')}</option><option value="center">{t('Từ tâm lan ra', 'Centre outward')}</option><option value="horizontal">{t('Quét ngang', 'Horizontal sweep')}</option><option value="vertical">{t('Quét dọc', 'Vertical sweep')}</option></select></label>
+          {isDesktopApp && <label className="drawing-field drawing-output-field"><span>{t('Thư mục lưu', 'Save folder')}</span><div className="drawing-output-row"><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder={t('Mặc định: Downloads/drawing', 'Default: Downloads/drawing')} /><button type="button" onClick={() => void pickOutputDir().catch(() => undefined)}>{t('Chọn', 'Choose')}</button></div></label>}
           <label className="drawing-toggle"><input type="checkbox" checked={showOriginalEnd} onChange={(event) => setShowOriginalEnd(event.target.checked)} /><span>{t('Hiện ảnh gốc ở cuối', 'Reveal original at end')}</span></label>
         </section>
 

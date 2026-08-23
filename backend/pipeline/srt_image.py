@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.core.config import DATA
+from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
 from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
 
@@ -225,7 +226,7 @@ def create_job(
     output_target: Path | None = None,
 ) -> dict:
     job_id = uuid.uuid4().hex[:10]
-    output = output_target or ROOT / f"{Path(name).stem or 'ghep-anh-srt'}_{job_id}.mp4"
+    output = output_target or downloads_folder("subtitle-image") / f"{Path(name).stem or 'ghep-anh-srt'}_{job_id}.mp4"
     output.parent.mkdir(parents=True, exist_ok=True)
     job = {
         "id": job_id, "name": name, "status": "queued", "progress": 0,

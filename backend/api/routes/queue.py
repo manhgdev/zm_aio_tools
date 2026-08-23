@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import subprocess
+import sys
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from pipeline.core.config import DATA, safe_child
+from pipeline.core.output_paths import selected_or_default
 from pipeline.queue.engine import ArtifactBusyError, enqueue, get_engine, job_action, list_jobs
 from pipeline.queue.store import get as get_job, mutate
 
@@ -116,6 +119,32 @@ def api_queue_file(job_id: str, part: int | None = None, download: int = 0):
     if download:
         return FileResponse(path, filename=name, media_type="video/mp4")
     return FileResponse(path, media_type="video/mp4", content_disposition_type="inline")
+
+
+@router.post("/api/queue/{job_id}/reveal")
+def api_queue_reveal(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Không thấy job")
+    try:
+        path = resolve_job_file(job)
+        folder = path.parent
+    except HTTPException:
+        tab = "film" if str(job.get("type") or "") == "review" else "video-clone"
+        folder = selected_or_default(tab, str(job.get("outputDir") or ""))
+        path = None
+    try:
+        if sys.platform == "win32" and path:
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", str(folder)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)] if path else ["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+    except OSError as exc:
+        raise HTTPException(500, f"Không mở được thư mục: {exc}") from exc
+    return {"ok": True, "path": str(path or folder)}
 
 
 @router.delete("/api/queue/{job_id}/parts/{index}")

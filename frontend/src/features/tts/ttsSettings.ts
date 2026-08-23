@@ -3,7 +3,7 @@
 export const TTS_SETTINGS_KEY = 'video-clone:tts-settings:v1'
 export const DEFAULT_CAPCUT_VOICE = 'cc:BV074_streaming:7102355709945188865'
 
-export type TtsEngine = 'zmai' | 'vieneu' | 'clone' | 'capcut' | 'eleven' | 'system'
+export type TtsEngine = 'all' | 'zmai' | 'vieneu' | 'clone' | 'capcut' | 'eleven' | 'system'
 export type TtsOutputFormat = 'wav48' | 'wav16' | 'mp3'
 
 export type TtsSettings = {
@@ -27,7 +27,7 @@ export type TtsSettings = {
 
 export const defaultTtsSettings: TtsSettings = {
   lang: 'auto',
-  engine: 'capcut',
+  engine: 'all',
   voice: DEFAULT_CAPCUT_VOICE,
   style: 'tu_nhien',
   speed: 1,
@@ -44,7 +44,7 @@ export const defaultTtsSettings: TtsSettings = {
   outputFormat: 'wav48',
 }
 
-const ENGINES = new Set<TtsEngine>(['zmai', 'vieneu', 'clone', 'capcut', 'eleven', 'system'])
+const ENGINES = new Set<TtsEngine>(['all', 'zmai', 'vieneu', 'clone', 'capcut', 'eleven', 'system'])
 const STYLES = new Set(['tu_nhien', 'tin_tuc', 'doc_truyen'])
 const OUTPUTS = new Set<TtsOutputFormat>(['wav48', 'wav16', 'mp3'])
 const LANGS = new Set([
@@ -132,7 +132,7 @@ export function persistTtsSettings(s: TtsSettings): void {
 /** ponytail: self-check — serialize/validate falls back safely */
 export function __checkTtsSettings(): void {
   const base = parseTtsSettings(null)
-  if (base.engine !== 'capcut' || base.voice !== DEFAULT_CAPCUT_VOICE || base.speed !== 1) {
+  if (base.engine !== 'all' || base.voice !== DEFAULT_CAPCUT_VOICE || base.speed !== 1) {
     throw new Error('defaults mismatch')
   }
 
@@ -171,7 +171,7 @@ export function __checkTtsSettings(): void {
     outputFormat: 'flac',
     voice: 'x'.repeat(300),
   })
-  if (bad.engine !== 'capcut') throw new Error('bad engine must fallback')
+  if (bad.engine !== 'all') throw new Error('bad engine must fallback')
   if (bad.speed !== 2) throw new Error('out-of-range speed must clamp')
   if (bad.pitch !== 0) throw new Error('bad pitch must fallback')
   if (bad.gapMs !== 50) throw new Error('out-of-range gapMs must clamp')
@@ -187,7 +187,7 @@ export function __checkTtsSettings(): void {
   }
 
   const junk = parseTtsSettings('{not json')
-  if (junk.engine !== 'capcut' || junk.voice !== DEFAULT_CAPCUT_VOICE) {
+  if (junk.engine !== 'all' || junk.voice !== DEFAULT_CAPCUT_VOICE) {
     throw new Error('corrupt JSON must fallback')
   }
 }

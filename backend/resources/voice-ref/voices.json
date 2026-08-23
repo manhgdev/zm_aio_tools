@@ -1,8 +1,8 @@
 [
   {
     "id": "ngoc-huyen",
-    "name": "⭐Ngọc Huyền (Việt Nam)",
-    "label": "⭐Ngọc Huyền (Việt Nam)",
+    "name": "⭐ Ngọc Huyền (Việt Nam)",
+    "label": "⭐ Ngọc Huyền (Việt Nam)",
     "type": "zmAI",
     "engine": "vieneu",
     "mode": "reference",
@@ -14,12 +14,14 @@
     "source_file": "audio/ngochuyen_00008.wav",
     "hidden": false,
     "favorite": true,
-    "tags": []
+    "tags": [
+      "👩 Nữ"
+    ]
   },
   {
     "id": "adam",
-    "name": "⭐Adam (Việt Nam)",
-    "label": "⭐Adam (Việt Nam)",
+    "name": "⭐ Adam (Việt Nam)",
+    "label": "⭐ Adam (Việt Nam)",
     "type": "zmAI",
     "engine": "vieneu",
     "mode": "reference",
@@ -31,7 +33,9 @@
     "source_file": "adam-low-tone.wav",
     "hidden": false,
     "favorite": true,
-    "tags": []
+    "tags": [
+      "👨 Nam"
+    ]
   },
   {
     "id": "manh_dung",
@@ -77,8 +81,8 @@
   },
   {
     "id": "ngoc_huyen_24k",
-    "name": "⭐Ngọc Huyền 24k",
-    "label": "⭐Ngọc Huyền 24k",
+    "name": "⭐ Ngọc Huyền 24k",
+    "label": "⭐ Ngọc Huyền 24k",
     "type": "zmAI",
     "engine": "vieneu",
     "mode": "reference",
@@ -107,8 +111,8 @@
   },
   {
     "id": "Ngọc_Ngạn",
-    "name": "⭐Ngọc Ngạn - Truyện Ma",
-    "label": "⭐Ngọc Ngạn - Truyện Ma",
+    "name": "⭐ Ngọc Ngạn - Truyện Ma",
+    "label": "⭐ Ngọc Ngạn - Truyện Ma",
     "type": "zmAI",
     "engine": "vieneu",
     "mode": "reference",
@@ -233,8 +237,8 @@
       "⭐ Review"
     ],
     "id": "nu_rv_vip",
-    "name": "⭐Nữ RV VIP",
-    "label": "⭐Nữ RV VIP",
+    "name": "⭐ Nữ RV VIP",
+    "label": "⭐ Nữ RV VIP",
     "type": "zmAI",
     "engine": "vieneu",
     "mode": "reference",
@@ -249,8 +253,8 @@
       "⭐ Review"
     ],
     "id": "quoc_bao_triet_ly",
-    "name": "⭐Quốc Bảo Triết Lý",
-    "label": "⭐Quốc Bảo Triết Lý",
+    "name": "⭐ Quốc Bảo Triết Lý",
+    "label": "⭐ Quốc Bảo Triết Lý",
     "type": "zmAI",
     "engine": "vieneu",
     "mode": "reference",

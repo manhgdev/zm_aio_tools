@@ -6,6 +6,7 @@ import math
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import uuid
 from datetime import datetime
@@ -142,6 +143,49 @@ def _job_dir(job_id: str) -> Path:
     if path is None:
         raise HTTPException(400, "job_id không hợp lệ")
     return path
+
+
+def _tts_job_artifact(job_id: str, kind: str, style: str = "hard") -> Path:
+    """Build and return one TTS output artifact for desktop reveal actions."""
+    from pipeline.export.srt import SRT_STYLES
+    from pipeline.tts.studio import ensure_mp3, ensure_wav, ensure_zip, rebuild_srt
+
+    job_dir = _job_dir(job_id)
+    if kind == "wav":
+        return ensure_wav(job_id)
+    if kind == "mp3":
+        return ensure_mp3(job_id)
+    if style not in SRT_STYLES:
+        raise HTTPException(400, f"style phải là một trong: {', '.join(SRT_STYLES)}")
+    if kind == "srt":
+        return rebuild_srt(job_id, style)
+    if kind == "zip":
+        return ensure_zip(job_id, srt_style=style)
+    raise HTTPException(400, "Loại file TTS không hợp lệ")
+
+
+def _reveal_local_file(path: Path) -> None:
+    """Select the artifact in Finder/Explorer, or open its directory on Linux."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", f"/select,{path}"])
+        else:
+            subprocess.Popen(["xdg-open", str(path.parent)])
+    except OSError as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@router.post("/api/tts/studio/jobs/{job_id}/reveal/{kind}")
+def api_tts_studio_reveal(job_id: str, kind: str, style: str = "hard"):
+    """Desktop app: create the requested artifact then reveal it locally."""
+    try:
+        path = _tts_job_artifact(job_id, kind, style)
+    except FileNotFoundError:
+        raise HTTPException(404, "Không thấy kết quả TTS") from None
+    _reveal_local_file(path)
+    return {"ok": True, "path": str(path.resolve()), "kind": kind}
 
 
 @router.get("/api/tts/studio/jobs/{job_id}/audio.wav")

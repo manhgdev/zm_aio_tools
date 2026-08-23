@@ -29,7 +29,8 @@ def api_cleaner_list():
 async def api_cleaner_start(
     files: list[UploadFile] = File(...),
     method: str = Form(...),
-    options: str = Form(...)
+    options: str = Form(...),
+    output_dir: str = Form(""),
 ):
     if method not in {"metadata", "reencode", "optimize", "logo"}:
         raise HTTPException(400, "Phương pháp làm sạch không hợp lệ")
@@ -54,7 +55,8 @@ async def api_cleaner_start(
             filename=upload.filename,
             method=method,
             options=opts_dict,
-            input_path=str(temp_path)
+            input_path=str(temp_path),
+            output_dir=output_dir,
         )
         created_jobs.append(job)
         start_cleaner_job(job["id"])

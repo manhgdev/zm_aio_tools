@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -11,6 +13,7 @@ from pydantic import BaseModel
 from fastapi.responses import FileResponse
 
 from pipeline.drawing.jobs import artifact, cancel, create_job, get_job, list_jobs, remove, start, start_batch, update_options
+from pipeline.core.output_paths import downloads_folder
 
 router = APIRouter()
 ALLOWED = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -123,3 +126,24 @@ def drawing_artifact(job_id: str, kind: str):
         raise HTTPException(404, "Drawing artifact not ready")
     media = "video/mp4" if kind == "output" else "image/png"
     return FileResponse(path, media_type=media, filename=path.name)
+
+
+@router.post("/api/drawing/jobs/{job_id}/reveal")
+def drawing_reveal(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Không thấy job")
+    path = Path(str(job.get("publishedOutput") or job.get("output") or ""))
+    folder = path.parent if path.is_file() else downloads_folder("drawing")
+    try:
+        if sys.platform == "win32" and path.is_file():
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", str(folder)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)] if path.is_file() else ["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+    except OSError as exc:
+        raise HTTPException(500, f"Không mở được thư mục: {exc}") from exc
+    return {"ok": True, "path": str(path if path.is_file() else folder)}

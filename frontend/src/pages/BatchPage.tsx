@@ -17,10 +17,11 @@ type Props = {
   onOpenReviewProjects: () => void
 }
 
-type BatchTab = 'clone' | 'review' | 'drawing'
+type BatchTab = 'all' | 'clone' | 'review' | 'drawing'
 type DrawingJob = { id: string; filename: string; status: 'queued' | 'processing' | 'done' | 'error' | 'cancelled'; progress: number; error?: string; options?: Partial<DrawingBatchOptions> }
 type DrawingPreset = 'pencil' | 'ink' | 'whiteboard' | 'speed' | 'watercolor'
-type DrawingBatchOptions = { preset: DrawingPreset; duration: number; detail: number; thickness: number; fps: 24 | 30 | 60; resolution: '720p' | '1080p' | '4k'; mode: 'drawing' | 'hand'; tool: 'pencil' | 'pen' | 'marker' | 'brush'; smartOrder: boolean; showOriginalEnd: boolean }
+type DrawingStrokeOrder = 'natural' | 'outline' | 'region' | 'reading' | 'center' | 'horizontal' | 'vertical'
+type DrawingBatchOptions = { preset: DrawingPreset; duration: number; detail: number; thickness: number; fps: 24 | 30 | 60; resolution: '720p' | '1080p' | '4k'; mode: 'drawing' | 'hand'; tool: 'pencil' | 'pen' | 'marker' | 'brush'; strokeOrder: DrawingStrokeOrder; showOriginalEnd: boolean }
 const BATCH_TAB_LS = 'videoclone.batchTab'
 const BATCH_CLONE_SETTINGS_LS = 'videoclone.batchCloneSettings'
 const BATCH_CLONE_SETTINGS_VERSION_LS = 'videoclone.batchCloneSettingsVersion'
@@ -31,14 +32,14 @@ const BATCH_DRAWING_SETTINGS_LS = 'videoclone.batchDrawingSettings'
 function loadBatchTab(): BatchTab {
   try {
     const saved = localStorage.getItem(BATCH_TAB_LS)
-    return saved === 'review' || saved === 'drawing' ? saved : 'clone'
+    return saved === 'all' || saved === 'review' || saved === 'drawing' ? saved : 'clone'
   } catch {
     return 'clone'
   }
 }
 
 function loadDrawingBatchSettings(): DrawingBatchOptions {
-  const fallback: DrawingBatchOptions = { preset: 'pencil', duration: 10, detail: 72, thickness: 2, fps: 30, resolution: '1080p', mode: 'drawing', tool: 'pencil', smartOrder: true, showOriginalEnd: true }
+  const fallback: DrawingBatchOptions = { preset: 'pencil', duration: 10, detail: 72, thickness: 2, fps: 30, resolution: '1080p', mode: 'drawing', tool: 'pencil', strokeOrder: 'natural', showOriginalEnd: true }
   try {
     const saved = JSON.parse(localStorage.getItem(BATCH_DRAWING_SETTINGS_LS) || '{}') as Partial<DrawingBatchOptions>
     return { ...fallback, ...saved }
@@ -113,9 +114,10 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
   const [jobs, setJobs] = useState<QueueJob[]>([])
   const [pauseAll, setPauseAll] = useState(false)
   const [error, setError] = useState('')
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
   const cloneVoices = useVoices(cloneSettings.targetLang === 'none' ? 'vi' : cloneSettings.targetLang)
   const voices = useVoices(reviewSettings.language)
-  const tabJobs = jobs.filter((job) => job.type === tab)
+  const tabJobs = tab === 'all' ? jobs : jobs.filter((job) => job.type === tab)
   const readyQueueJobs = tabJobs.filter((job) => job.status === 'paused')
   const readyDrawingJobs = drawingJobs.filter((job) => job.status === 'queued')
   const hasActiveJobs = jobs.some((job) => job.status === 'running' || job.status === 'queued') || drawingJobs.some((job) => job.status === 'queued' || job.status === 'processing')
@@ -161,6 +163,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
     const timer = window.setInterval(() => void refresh().catch(() => undefined), 3000)
     return () => window.clearInterval(timer)
   }, [hasActiveJobs])
+  useEffect(() => { void fetch('/api/config').then(async (response) => response.ok && setIsDesktopApp(Boolean((await response.json() as { desktop?: boolean }).desktop))).catch(() => undefined) }, [])
 
   useEffect(() => {
     if (!cloneVoices.length || cloneVoices.some((voice) => voice.id === cloneSettings.defaultVoice)) return
@@ -342,11 +345,11 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
 
   function applyDrawingPreset(preset: DrawingPreset) {
     const next: Record<DrawingPreset, Partial<DrawingBatchOptions>> = {
-      pencil: { duration: 10, detail: 72, thickness: 2, fps: 30, mode: 'drawing', tool: 'pencil', showOriginalEnd: true },
-      ink: { duration: 8, detail: 84, thickness: 2, fps: 30, mode: 'drawing', tool: 'pen', showOriginalEnd: false },
-      whiteboard: { duration: 12, detail: 55, thickness: 3, fps: 30, mode: 'hand', tool: 'marker', showOriginalEnd: false },
-      speed: { duration: 5, detail: 68, thickness: 2, fps: 60, mode: 'hand', tool: 'pencil', showOriginalEnd: true },
-      watercolor: { duration: 14, detail: 60, thickness: 4, fps: 30, mode: 'hand', tool: 'brush', showOriginalEnd: true },
+      pencil: { duration: 10, detail: 72, thickness: 2, fps: 30, mode: 'drawing', tool: 'pencil', strokeOrder: 'natural', showOriginalEnd: true },
+      ink: { duration: 8, detail: 84, thickness: 2, fps: 30, mode: 'drawing', tool: 'pen', strokeOrder: 'outline', showOriginalEnd: false },
+      whiteboard: { duration: 12, detail: 55, thickness: 3, fps: 30, mode: 'hand', tool: 'marker', strokeOrder: 'region', showOriginalEnd: false },
+      speed: { duration: 5, detail: 68, thickness: 2, fps: 60, mode: 'hand', tool: 'pencil', strokeOrder: 'horizontal', showOriginalEnd: true },
+      watercolor: { duration: 14, detail: 60, thickness: 4, fps: 30, mode: 'hand', tool: 'brush', strokeOrder: 'center', showOriginalEnd: true },
     }
     setDrawingSettings((current) => ({ ...current, ...next[preset], preset }))
   }
@@ -366,12 +369,28 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
           <button type="button" onClick={() => void studioApi.globalAction('clear_completed').then(refresh)}>{t('Xóa đã xong', 'Clear completed')}</button>
         </div> : null}
       </header>
-      <div className="studio-tabs">
+      <div className="studio-tabs" role="tablist" aria-label={t('Loại hàng loạt', 'Batch type')}>
+        <button type="button" role="tab" aria-selected={tab === 'all'} className={tab === 'all' ? 'active' : undefined} onClick={() => selectTab('all')}>{t('Tất cả', 'All')}</button>
         <button type="button" className={tab === 'clone' ? 'active' : undefined} onClick={() => selectTab('clone')}>{t('Clone hàng loạt', 'Clone batch')}</button>
         <button type="button" className={tab === 'review' ? 'active' : undefined} onClick={() => selectTab('review')}>{t('Review hàng loạt', 'Review batch')}</button>
         <button type="button" className={tab === 'drawing' ? 'active' : undefined} onClick={() => selectTab('drawing')}>{t('Vẽ tay hàng loạt', 'Drawing batch')}</button>
       </div>
-      {tab === 'drawing' ? <>
+      {tab === 'all' ? <>
+        <section className="studio-card">
+          <div className="studio-card-heading">
+            <div><h2>{t('Tất cả hàng đợi', 'All queues')}</h2><p className="muted">{t('Clone, Review và Vẽ tay trong một danh sách.', 'Clone, Review, and Drawing in one list.')}</p></div>
+            <span className="drawing-queue-count">{jobs.length + drawingJobs.length}</span>
+          </div>
+          <table className="studio-table studio-queue-table">
+            <thead><tr><th>{t('Loại', 'Type')}</th><th>{t('Ảnh xem trước', 'Thumbnail')}</th><th>{t('Nguồn', 'Source')}</th><th>{t('Trạng thái', 'Status')}</th><th>{t('Tiến độ', 'Progress')}</th><th className="studio-queue-actions-heading">{t('Thao tác', 'Actions')}</th></tr></thead>
+            <tbody>
+              {jobs.map((job) => <tr key={job.id}><td>{job.type === 'review' ? t('Review', 'Review') : t('Clone', 'Clone')}</td><td><div className="queue-thumbnail">{job.status === 'done' ? <video muted preload="metadata" src={studioApi.fileUrl(job.id)} /> : <span>▶</span>}</div></td><td title={job.source}>{job.source.split(/[/\\]/).pop()}</td><td>{job.status} · {job.stage}</td><td>{Math.round((job.progress || 0) * 100)}%</td><td className="studio-job-actions">{job.status === 'running' || job.status === 'queued' ? <><button type="button" onClick={() => void studioApi.jobAction(job.id, 'pause').then(refresh)}>{t('Dừng', 'Pause')}</button><button type="button" onClick={() => void studioApi.jobAction(job.id, 'cancel').then(refresh)}>{t('Hủy', 'Cancel')}</button></> : null}{job.status === 'paused' || job.status === 'interrupted' ? <button type="button" onClick={() => void studioApi.jobAction(job.id, 'resume').then(refresh)}>{t('Tiếp tục', 'Resume')}</button> : null}{job.status === 'failed' || job.status === 'cancelled' ? <button type="button" onClick={() => void studioApi.jobAction(job.id, 'retry').then(refresh)}>{t('Thử lại', 'Retry')}</button> : null}{job.status !== 'running' && job.status !== 'done' ? <button type="button" onClick={() => void editQueueJob(job)}>{t('Sửa', 'Edit')}</button> : null}{job.status === 'done' ? <><button type="button" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button>{isDesktopApp ? <button type="button" onClick={() => void studioApi.revealJob(job.id).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : <a href={studioApi.fileUrl(job.id, { download: true })} download>{t('Tải xuống', 'Download')}</a>}{job.projectId && onOpenEditor ? <button type="button" onClick={() => onOpenEditor(job.projectId!)}>{t('Mở Editor', 'Open Editor')}</button> : null}</> : null}<button type="button" className="studio-job-delete" onClick={() => void deleteQueueJob(job.id)}>{t('Xóa', 'Delete')}</button></td></tr>)}
+              {drawingJobs.map((job) => <tr key={job.id}><td>{t('Vẽ tay', 'Drawing')}</td><td><button type="button" className="queue-thumbnail" onClick={() => setDrawingPreview(job)}><img loading="lazy" src={`/api/drawing/jobs/${job.id}/input`} alt={t(`Ảnh nguồn ${job.filename}`, `Source image ${job.filename}`)} /></button></td><td title={job.filename}>{job.filename}</td><td>{job.status}</td><td>{job.progress}%</td><td className="studio-job-actions"><button type="button" onClick={() => setDrawingPreview(job)}>{t('Xem trước', 'Preview')}</button>{job.status === 'queued' ? <button type="button" onClick={() => editDrawingJob(job)}>{t('Sửa', 'Edit')}</button> : null}{job.status === 'done' ? <>{isDesktopApp ? <button type="button" onClick={() => void fetch(`/api/drawing/jobs/${job.id}/reveal`, { method: 'POST' }).then(async (r) => { if (!r.ok) throw new Error(await r.text()) }).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : null}<a href={`/api/drawing/jobs/${job.id}/output`} download>{t('Tải MP4', 'Download MP4')}</a></> : null}{job.status === 'queued' || job.status === 'processing' ? <button type="button" className="danger" onClick={() => void cancelDrawingJob(job.id)}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="studio-job-delete" onClick={() => void deleteDrawingJob(job.id)}>{t('Xóa', 'Delete')}</button></td></tr>)}
+            </tbody>
+          </table>
+          {!jobs.length && !drawingJobs.length ? <p className="muted">{t('Chưa có job.', 'No jobs yet.')}</p> : null}
+        </section>
+      </> : tab === 'drawing' ? <>
         <section className="studio-card drawing-batch-setup">
           <div className="drawing-batch-title"><div><h2>{editingDrawingJobId ? t('Sửa job Vẽ tay', 'Edit Drawing job') : t('Vẽ tay hàng loạt', 'Drawing batch')}</h2><p>{editingDrawingJobId ? t('Chỉnh cấu hình rồi lưu trước khi job bắt đầu.', 'Update settings and save before this job starts.') : t('Mỗi ảnh được chọn sẽ thành một job ngay trong hàng đợi. Chỉ chạy sau khi bấm Chạy.', 'Each selected image becomes a job in the queue immediately. It only runs after you press Run.')}</p></div><span>{editingDrawingJobId ? t('Đang sửa', 'Editing') : t(`${drawingJobs.length} job`, `${drawingJobs.length} jobs`)}</span></div>
           <input ref={drawingInputRef} type="file" className="drawing-visually-hidden" multiple accept="image/jpeg,image/png,image/webp,image/bmp" onChange={(event) => { const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith('image/')); event.currentTarget.value = ''; void enqueueDrawingFiles(files) }} />
@@ -383,12 +402,12 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
             <button type="button" className={`studio-settings-toggle${drawingSettingsOpen ? ' open' : ''}`} aria-expanded={drawingSettingsOpen} aria-controls="drawing-batch-settings" onClick={() => setDrawingSettingsOpen((open) => !open)}><IconGear size={15} />{t('Cài đặt vẽ tay', 'Drawing settings')}<IconArrowRight size={15} className="studio-settings-chevron" /></button>
             {editingDrawingJobId ? <button type="button" className="primary drawing-run-action" onClick={() => void saveDrawingJob()}>{t('Lưu chỉnh sửa', 'Save changes')}</button> : <button type="button" className="primary drawing-run-action" disabled={!readyDrawingJobs.length} onClick={() => void runDrawingJobs()}>{t(`Chạy ${readyDrawingJobs.length} job`, `Run ${readyDrawingJobs.length} jobs`)}</button>}
           </div>
-          {drawingSettingsOpen ? <section id="drawing-batch-settings" className="drawing-batch-settings"><div className="drawing-batch-settings-heading"><div><h3>{t('Cài đặt áp dụng cho cả lô', 'Settings applied to the entire batch')}</h3><p>{t('Thay đổi sẽ áp dụng cho các job tạo sau khi bấm Chạy.', 'Changes apply to jobs created when you press Run.')}</p></div><button type="button" onClick={() => applyDrawingPreset('pencil')}>{t('Đặt lại', 'Reset')}</button></div><div className="drawing-batch-settings-grid"><label><span>Preset</span><select value={drawingSettings.preset} onChange={(event) => applyDrawingPreset(event.target.value as DrawingPreset)}><option value="pencil">{t('Chì chân dung', 'Portrait pencil')}</option><option value="ink">{t('Nét mực', 'Ink line art')}</option><option value="whiteboard">Whiteboard</option><option value="speed">{t('Vẽ nhanh', 'Speed drawing')}</option><option value="watercolor">{t('Lộ màu nước', 'Watercolor reveal')}</option></select></label><label><span>{t('Dụng cụ', 'Tool')}</span><select value={drawingSettings.tool} onChange={(event) => setDrawingSettings((current) => ({ ...current, tool: event.target.value as DrawingBatchOptions['tool'] }))}><option value="pencil">{t('Chì', 'Pencil')}</option><option value="pen">{t('Bút', 'Pen')}</option><option value="marker">Marker</option><option value="brush">{t('Cọ', 'Brush')}</option></select></label><label><span>{t('FPS', 'FPS')}</span><select value={drawingSettings.fps} onChange={(event) => setDrawingSettings((current) => ({ ...current, fps: Number(event.target.value) as DrawingBatchOptions['fps'] }))}><option value="24">24 FPS</option><option value="30">30 FPS</option><option value="60">60 FPS</option></select></label><label><span>{t('Độ chi tiết', 'Detail')} · {drawingSettings.detail}%</span><input type="range" min="10" max="100" value={drawingSettings.detail} onChange={(event) => setDrawingSettings((current) => ({ ...current, detail: Number(event.target.value) }))} /></label><label><span>{t('Độ dày nét', 'Stroke thickness')} · {drawingSettings.thickness}px</span><input type="range" min="1" max="8" value={drawingSettings.thickness} onChange={(event) => setDrawingSettings((current) => ({ ...current, thickness: Number(event.target.value) }))} /></label></div><div className="drawing-batch-checks"><label className="check"><input type="checkbox" checked={drawingSettings.smartOrder} onChange={(event) => setDrawingSettings((current) => ({ ...current, smartOrder: event.target.checked }))} />{t('Thứ tự nét thông minh', 'Smart stroke order')}</label><label className="check"><input type="checkbox" checked={drawingSettings.showOriginalEnd} onChange={(event) => setDrawingSettings((current) => ({ ...current, showOriginalEnd: event.target.checked }))} />{t('Hiện ảnh gốc ở cuối', 'Reveal original at end')}</label></div></section> : null}
+          {drawingSettingsOpen ? <section id="drawing-batch-settings" className="drawing-batch-settings"><div className="drawing-batch-settings-heading"><div><h3>{t('Cài đặt áp dụng cho cả lô', 'Settings applied to the entire batch')}</h3><p>{t('Thay đổi sẽ áp dụng cho các job tạo sau khi bấm Chạy.', 'Changes apply to jobs created when you press Run.')}</p></div><button type="button" onClick={() => applyDrawingPreset('pencil')}>{t('Đặt lại', 'Reset')}</button></div><div className="drawing-batch-settings-grid"><label><span>Preset</span><select value={drawingSettings.preset} onChange={(event) => applyDrawingPreset(event.target.value as DrawingPreset)}><option value="pencil">{t('Chì chân dung', 'Portrait pencil')}</option><option value="ink">{t('Nét mực', 'Ink line art')}</option><option value="whiteboard">Whiteboard</option><option value="speed">{t('Vẽ nhanh', 'Speed drawing')}</option><option value="watercolor">{t('Lộ màu nước', 'Watercolor reveal')}</option></select></label><label><span>{t('Dụng cụ', 'Tool')}</span><select value={drawingSettings.tool} onChange={(event) => setDrawingSettings((current) => ({ ...current, tool: event.target.value as DrawingBatchOptions['tool'] }))}><option value="pencil">{t('Chì', 'Pencil')}</option><option value="pen">{t('Bút', 'Pen')}</option><option value="marker">Marker</option><option value="brush">{t('Cọ', 'Brush')}</option></select></label><label><span>{t('Đường đi nét', 'Stroke route')}</span><select value={drawingSettings.strokeOrder} onChange={(event) => setDrawingSettings((current) => ({ ...current, strokeOrder: event.target.value as DrawingStrokeOrder }))}><option value="natural">{t('Tự nhiên theo đối tượng', 'Natural by object')}</option><option value="outline">{t('Theo viền thật', 'True outlines')}</option><option value="region">{t('Từng vùng hoàn chỉnh', 'Complete one region')}</option><option value="reading">{t('Theo chữ · trái sang phải', 'Text · left to right')}</option><option value="center">{t('Từ tâm lan ra', 'Centre outward')}</option><option value="horizontal">{t('Quét ngang', 'Horizontal sweep')}</option><option value="vertical">{t('Quét dọc', 'Vertical sweep')}</option></select></label><label><span>{t('FPS', 'FPS')}</span><select value={drawingSettings.fps} onChange={(event) => setDrawingSettings((current) => ({ ...current, fps: Number(event.target.value) as DrawingBatchOptions['fps'] }))}><option value="24">24 FPS</option><option value="30">30 FPS</option><option value="60">60 FPS</option></select></label><label><span>{t('Độ chi tiết', 'Detail')} · {drawingSettings.detail}%</span><input type="range" min="10" max="100" value={drawingSettings.detail} onChange={(event) => setDrawingSettings((current) => ({ ...current, detail: Number(event.target.value) }))} /></label><label><span>{t('Độ dày nét', 'Stroke thickness')} · {drawingSettings.thickness}px</span><input type="range" min="1" max="8" value={drawingSettings.thickness} onChange={(event) => setDrawingSettings((current) => ({ ...current, thickness: Number(event.target.value) }))} /></label></div><div className="drawing-batch-checks"><label className="check"><input type="checkbox" checked={drawingSettings.showOriginalEnd} onChange={(event) => setDrawingSettings((current) => ({ ...current, showOriginalEnd: event.target.checked }))} />{t('Hiện ảnh gốc ở cuối', 'Reveal original at end')}</label></div></section> : null}
           {error ? <p className="studio-error">{error}</p> : null}
         </section>
         <section className="studio-card drawing-batch-queue">
           <div className="studio-card-heading"><div><h2>{t('Hàng đợi Vẽ tay', 'Drawing queue')}</h2><p className="muted">{t('Xem trước ảnh nguồn khi chờ, hoặc video sau khi hoàn thành.', 'Preview the source while queued, or the video after it finishes.')}</p></div><span className="drawing-queue-count">{drawingJobs.length}</span></div>
-          <div className="drawing-job-list">{drawingJobs.map((item) => <article className={`drawing-job drawing-job--${item.status}`} key={item.id}><button type="button" className="drawing-job-thumb" onClick={() => setDrawingPreview(item)} aria-label={t(`Xem trước ${item.filename}`, `Preview ${item.filename}`)}><img loading="lazy" src={`/api/drawing/jobs/${item.id}/input`} alt="" /></button><div className="drawing-job-main"><strong title={item.filename}>{item.filename}</strong><div className="drawing-job-meta"><span>{item.status === 'done' ? t('Hoàn thành', 'Completed') : item.status === 'queued' ? t('Đang chờ', 'Queued') : item.status === 'processing' ? t('Đang vẽ', 'Drawing') : item.status === 'cancelled' ? t('Đã hủy', 'Cancelled') : t('Lỗi', 'Error')}</span><b>{item.progress}%</b></div><div className="drawing-job-progress"><i style={{ width: `${item.progress}%` }} /></div>{item.error ? <small>{item.error}</small> : null}</div><div className="drawing-job-actions"><button type="button" onClick={() => setDrawingPreview(item)}>{t('Xem trước', 'Preview')}</button>{item.status === 'queued' ? <button type="button" onClick={() => editDrawingJob(item)}>{t('Sửa', 'Edit')}</button> : null}{item.status === 'done' ? <a href={`/api/drawing/jobs/${item.id}/output`} download>{t('Tải MP4', 'Download MP4')}</a> : null}{item.status === 'queued' || item.status === 'processing' ? <button type="button" className="danger" onClick={() => void cancelDrawingJob(item.id)}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => void deleteDrawingJob(item.id)}>{t('Xóa', 'Delete')}</button></div></article>)}</div>
+          <div className="drawing-job-list">{drawingJobs.map((item) => <article className={`drawing-job drawing-job--${item.status}`} key={item.id}><button type="button" className="drawing-job-thumb" onClick={() => setDrawingPreview(item)} aria-label={t(`Xem trước ${item.filename}`, `Preview ${item.filename}`)}><img loading="lazy" src={`/api/drawing/jobs/${item.id}/input`} alt="" /></button><div className="drawing-job-main"><strong title={item.filename}>{item.filename}</strong><div className="drawing-job-meta"><span>{item.status === 'done' ? t('Hoàn thành', 'Completed') : item.status === 'queued' ? t('Đang chờ', 'Queued') : item.status === 'processing' ? t('Đang vẽ', 'Drawing') : item.status === 'cancelled' ? t('Đã hủy', 'Cancelled') : t('Lỗi', 'Error')}</span><b>{item.progress}%</b></div><div className="drawing-job-progress"><i style={{ width: `${item.progress}%` }} /></div>{item.error ? <small>{item.error}</small> : null}</div><div className="drawing-job-actions"><button type="button" onClick={() => setDrawingPreview(item)}>{t('Xem trước', 'Preview')}</button>{item.status === 'queued' ? <button type="button" onClick={() => editDrawingJob(item)}>{t('Sửa', 'Edit')}</button> : null}{item.status === 'done' ? <>{isDesktopApp ? <button type="button" onClick={() => void fetch(`/api/drawing/jobs/${item.id}/reveal`, { method: 'POST' }).then(async (r) => { if (!r.ok) throw new Error(await r.text()) }).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : null}<a href={`/api/drawing/jobs/${item.id}/output`} download>{t('Tải MP4', 'Download MP4')}</a></> : null}{item.status === 'queued' || item.status === 'processing' ? <button type="button" className="danger" onClick={() => void cancelDrawingJob(item.id)}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => void deleteDrawingJob(item.id)}>{t('Xóa', 'Delete')}</button></div></article>)}</div>
           {!drawingJobs.length ? <div className="drawing-empty-queue">{t('Chưa có job. Thêm ảnh để đưa ngay vào hàng đợi.', 'No jobs yet. Add images to place them in the queue immediately.')}</div> : null}
         </section>
       </> : <>
@@ -502,9 +521,8 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                   {job.status !== 'running' && job.status !== 'done' ? (
                     <button type="button" onClick={() => void editQueueJob(job)}>{t('Sửa', 'Edit')}</button>
                   ) : null}
-                  {job.status === 'done' ? (
-                    <button type="button" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button>
-                  ) : null}
+                  {job.status === 'done' ? <button type="button" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button> : null}
+                  {job.status === 'done' ? (isDesktopApp ? <button type="button" onClick={() => void studioApi.revealJob(job.id).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : <a href={studioApi.fileUrl(job.id, { download: true })} download>{t('Tải xuống', 'Download')}</a>) : null}
                   {job.status === 'done' && job.projectId && onOpenEditor ? (
                     <button type="button" onClick={() => onOpenEditor(job.projectId!)}>{t('Mở Editor', 'Open Editor')}</button>
                   ) : null}

@@ -7,6 +7,7 @@ from typing import Any
 
 from pipeline.clone_run.open_source import open_local_video
 from pipeline.core.jobs import check_cancel
+from pipeline.core.output_paths import selected_or_default
 from pipeline.core.project import load_meta, out_final, save_meta, set_status
 from pipeline.orchestrate.asr_translate import run_pipeline
 from pipeline.orchestrate.export_job import run_export
@@ -39,7 +40,12 @@ def run_clone_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_existing_project_clone_job(job: dict[str, Any]) -> dict[str, Any]:
-    """Run an editor project through the unified queue without re-importing it."""
+    """Translate an existing Clone Video project without publishing it.
+
+    Interactive Clone Video's “Translate” action prepares an editable script.
+    Rendering belongs exclusively to the explicit Publish action in the editor.
+    Batch clone jobs still use :func:`run_clone_job` and export by design.
+    """
     job_id = str(job["id"])
     project_id = str(job.get("projectId") or "")
     if not project_id or not load_meta(project_id):
@@ -57,10 +63,12 @@ def run_existing_project_clone_job(job: dict[str, Any]) -> dict[str, Any]:
     set_status(project_id, step="asr", progress=1, message="Clone đang chờ trong hàng đợi…", running=True)
     run_pipeline(project_id, settings)
     check_cancel(job_id)
-    output = run_export(project_id, nested=True)
-    if output is None or not Path(output).is_file():
-        raise RuntimeError("Export không tạo file đầu ra")
-    return {"output": str(output), "projectId": project_id, "cacheRefs": {"projectId": project_id}}
+    return {
+        "output": "",
+        "projectId": project_id,
+        "cacheRefs": {"projectId": project_id},
+        "stage": "translated",
+    }
 
 
 def _copy_output(produced: Path | None, src: str, settings: dict[str, Any], job: dict[str, Any]) -> str:
@@ -69,8 +77,8 @@ def _copy_output(produced: Path | None, src: str, settings: dict[str, Any], job:
     produced = Path(produced)
     if not produced.is_file():
         raise RuntimeError(f"Export không tạo file đầu ra: {produced}")
-    dest_dir = Path(str(settings.get("outputDir") or produced.parent)).expanduser()
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    tab = "film" if str(job.get("type") or "") == "review" else "video-clone"
+    dest_dir = selected_or_default(tab, str(settings.get("outputDir") or ""))
     name = job.get("outputName") or output_name(Path(src), str(settings.get("naming") or "{name}_clone"), settings)
     dest = dest_dir / name
     policy = str(settings.get("overwrite") or "rename")

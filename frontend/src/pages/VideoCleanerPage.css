@@ -258,6 +258,11 @@
 :root.dark .vc-tip, .dark .vc-tip { background: color-mix(in srgb, #166534 12%, var(--card)); border-color: color-mix(in srgb, #16a34a 20%, var(--border)); color: #86efac; }
 :root.dark .vc-badge, .dark .vc-badge { background: color-mix(in srgb, var(--border) 50%, var(--card)); }
 :root.dark .vc-dropzone, .dark .vc-dropzone { background: var(--card); }
+.vc-output-row { display: flex; gap: 6px; align-items: stretch; margin-top: 6px; }
+.vc-output-row input { min-width: 0; flex: 1; height: 38px; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--border, #e2e8f0); border-radius: 9px; background: var(--card, #fff); color: var(--ink, #334155); font: 500 .86rem/1.2 inherit; }
+.vc-output-row input:focus { outline: 2px solid color-mix(in srgb, var(--primary, #2563eb) 35%, transparent); border-color: var(--primary, #2563eb); }
+.vc-output-choose { min-height: 38px; padding: 9px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 9px; background: var(--card, #fff); color: var(--ink, #334155); font: 600 .84rem/1 inherit; cursor: pointer; }
+.vc-output-choose:hover { background: color-mix(in srgb, var(--primary, #2563eb) 5%, var(--card, #fff)); border-color: color-mix(in srgb, var(--primary, #2563eb) 30%, var(--border, #e2e8f0)); }
 
 /* ── Responsive ── */
 @media (max-width: 960px) {

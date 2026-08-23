@@ -59,6 +59,7 @@ export const studioApi = {
       headers: json,
       body: JSON.stringify({ op }),
     }),
+  revealJob: (jobId: string) => fetchJson<{ ok: boolean; path: string }>(`/api/queue/${jobId}/reveal`, { method: 'POST' }),
   updateJobSettings: (jobId: string, settings: Record<string, unknown>) =>
     fetchJson<QueueSnapshot>(`/api/queue/${jobId}/settings`, {
       method: 'PATCH',

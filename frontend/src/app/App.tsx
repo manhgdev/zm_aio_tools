@@ -895,6 +895,7 @@ export default function App() {
             const l = lang || (settings.targetLang === 'none' ? 'vi' : settings.targetLang)
             void api.voices(l).then(setVoices).catch(() => {})
           }}
+          isDesktopApp={isDesktopApp}
         />
       ) : appMode === 'license' && !licenseBlocked ? (
         <LicensePage status={licenseStatus || EMPTY_LICENSE} onStatusChange={setLicenseStatus} />

@@ -87,12 +87,17 @@ def _capcut_transcript(source: Path, *, job_id: str | None, source_lang: str, ta
     from pipeline.capcut_stt import transcribe_and_translate
 
     note("Transcript: đang gửi video cho CapCut…")
-    rows, _translated = transcribe_and_translate(
+    rows, translated = transcribe_and_translate(
         source, source_lang or "auto", target_lang or "vi", require_translation=False,
         cancelled=(lambda: _check_review_cancel(job_id)), progress=note,
     )
-    note(f"Transcript: CapCut hoàn tất · {len(rows)} câu")
-    return rows
+    # CapCut returns both the source ASR and its timed target-language text.
+    # Review's script, visual evidence and narration all run in ``target_lang``;
+    # feeding them the untranslated ASR makes the fallback discard most cues
+    # and can silently produce only a few seconds of video.
+    result = translated or rows
+    note(f"Transcript: CapCut hoàn tất · {len(result)} câu")
+    return result
 
 
 def _check_review_cancel(job_id: str | None) -> bool:

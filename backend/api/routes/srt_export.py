@@ -37,6 +37,7 @@ async def create(
     ollama_model: str = Form("minimax-m3:cloud"),
     ollama_local_tier: str = Form("balanced"),
     recognition_engine: str = Form("whisper"),
+    output_dir: str = Form(""),
 ):
     kind = source_kind if source_kind in {"media", "caption", "manual", "url"} else "media"
     if kind == "manual":
@@ -65,6 +66,7 @@ async def create(
         "ollamaMode": ollama_mode, "ollamaModel": ollama_model,
         "ollamaLocalTier": ollama_local_tier,
         "recognitionEngine": recognition_engine if recognition_engine in {"whisper", "capcut"} else "whisper",
+        "outputDir": output_dir.strip(),
     }
     if kind == "url":
         job = create_job(filename, None, "platform", source_url=source_url.strip(), options=options)

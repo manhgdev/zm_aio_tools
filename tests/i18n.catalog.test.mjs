@@ -58,6 +58,25 @@ test('English catalog covers interrupted TTS and Log UI text', () => {
   }
 })
 
+test('TTS Engine filter includes a bilingual All option', async () => {
+  const source = await readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8')
+  assert.match(source, /<option value="all">\{t\('Tất cả', 'All'\)\}<\/option>/)
+})
+
+test('TTS voice list pagination is bilingual', async () => {
+  const source = await readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8')
+  assert.match(source, /t\('Mỗi trang', 'Per page'\)/)
+  assert.match(source, /t\('Phân trang danh sách giọng', 'Voice list pagination'\)/)
+  assert.match(source, /t\('Trước', 'Previous'\)/)
+  assert.match(source, /t\('Sau', 'Next'\)/)
+})
+
+test('TTS output actions distinguish desktop open from web download', async () => {
+  const source = await readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8')
+  assert.match(source, /t\('Mở thư mục audio \(WAV\)', 'Open audio folder \(WAV\)'\)/)
+  assert.match(source, /t\('Tải audio \(WAV\)', 'Download audio \(WAV\)'\)/)
+})
+
 test('English catalog covers Review Phim and Batch queue', () => {
   const expected = {
     'Review Phim': 'Movie Review',
@@ -132,6 +151,12 @@ test('Review CapCut recognition UI is bilingual', () => {
   for (const [vietnamese, english] of Object.entries(expected)) assert.equal(catalog[vietnamese], english, vietnamese)
 })
 
+test('CapCut pipeline progress logs are localized to English', async () => {
+  const source = await readFile(new URL('../frontend/src/app/i18n.tsx', import.meta.url), 'utf8')
+  assert.match(source, /recognizing and translating · \$1%/)
+  assert.match(source, /CapCut: completed · \$1%/)
+})
+
 test('Clone CapCut recognition and translation UI is bilingual', () => {
   const expected = {
     'Giọng nói (CapCut cloud)': 'Speech (CapCut cloud)',
@@ -146,14 +171,41 @@ test('Drawing tab uses bilingual localized UI', async () => {
   assert.match(source, /localize\(locale,/)
   assert.match(source, /Image → Drawing Video/)
   assert.match(source, /Tạo video vẽ tay/)
+  assert.match(source, /Đường đi nét/)
+  assert.match(source, /Stroke route/)
+  assert.match(source, /Từ tâm lan ra/)
+  assert.match(source, /Centre outward/)
+  assert.match(source, /Thư mục lưu/)
+  assert.match(source, /Save folder/)
+})
+
+test('Tools output folders use bilingual labels', async () => {
+  const [cleaner, exporter] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/VideoCleanerPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/SrtExportPage.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(cleaner, /t\('Thư mục lưu', 'Save folder'\)/)
+  assert.match(exporter, /t\('Thư mục lưu', 'Save folder'\)/)
+})
+
+test('Download Video distinguishes browser Downloads from desktop folders', async () => {
+  const source = await readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8')
+  assert.match(source, /isDesktopApp/)
+  assert.match(source, /browser’s Downloads folder/)
+  assert.match(source, /Tải xuống/, 'web result provides browser download action')
 })
 
 test('Batch Drawing queue uses bilingual localized UI', async () => {
   const source = await readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /Tất cả/)
+  assert.match(source, /All queues/)
+  assert.match(source, /Clone, Review, and Drawing in one list/)
   assert.match(source, /Vẽ tay hàng loạt/)
   assert.match(source, /Drawing batch/)
   assert.match(source, /Xem trước/)
   assert.match(source, /Preview/)
+  assert.match(source, /Đường đi nét/)
+  assert.match(source, /Stroke route/)
 })
 
 test('Batch file selection creates localized queue jobs immediately', async () => {
