@@ -20,6 +20,7 @@ from api.routes import srt_export
 from api.routes import tts_preview
 from api.routes import tts_studio
 from api.routes import tts_voices
+from api.routes import drawing
 
 router = APIRouter()
 router.include_router(queue.router)
@@ -39,6 +40,7 @@ router.include_router(srt_export.router)
 router.include_router(tts_preview.router)
 router.include_router(tts_studio.router)
 router.include_router(tts_voices.router)
+router.include_router(drawing.router)
 
 # Legacy schema re-exports
 from api.deps import ExportPayload, SegmentIn, Settings, TextOverlayIn  # noqa: E402,F401

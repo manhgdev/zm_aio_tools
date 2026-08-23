@@ -20,6 +20,7 @@ class EnqueueIn(BaseModel):
     sources: list[str] = []
     settings: dict[str, Any] = {}
     recursive: bool = True
+    start_now: bool = True
 
 
 class QueueActionIn(BaseModel):
@@ -94,7 +95,7 @@ def api_queue_enqueue(body: EnqueueIn):
         raise HTTPException(422, "type phải là clone hoặc review")
     if not body.sources:
         raise HTTPException(422, "Thiếu nguồn video")
-    jobs = enqueue(body.type, body.sources, body.settings, recursive=body.recursive)
+    jobs = enqueue(body.type, body.sources, body.settings, recursive=body.recursive, start_now=body.start_now)
     return {"ok": True, "jobs": jobs}
 
 
@@ -159,7 +160,7 @@ def api_queue_settings(job_id: str, body: JobSettingsIn):
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, "Không thấy job")
-    if job.get("status") in {"running", "queued"}:
+    if job.get("status") == "running":
         raise HTTPException(422, "Không thể đổi cài đặt khi job đang chạy")
     settings = dict(body.settings)
     source = str(settings.get("source") or job.get("source") or "").strip()

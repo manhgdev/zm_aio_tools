@@ -9,6 +9,7 @@ export type QueueJob = {
   stage: string
   progress: number
   output?: string
+  outputDir?: string
   runId?: string
   projectId?: string | null
   error?: string | null
@@ -46,11 +47,11 @@ const json = { 'Content-Type': 'application/json' }
 
 export const studioApi = {
   queue: () => fetchJson<QueueSnapshot>('/api/queue', undefined, 15_000),
-  enqueue: (type: 'clone' | 'review', sources: string[], settings: Record<string, unknown>, recursive = true) =>
+  enqueue: (type: 'clone' | 'review', sources: string[], settings: Record<string, unknown>, recursive = true, startNow = true) =>
     fetchJson<{ ok: boolean; jobs: QueueJob[] }>('/api/queue', {
       method: 'POST',
       headers: json,
-      body: JSON.stringify({ type, sources, settings, recursive }),
+      body: JSON.stringify({ type, sources, settings, recursive, start_now: startNow }),
     }, 30_000),
   jobAction: (jobId: string, op: string) =>
     fetchJson<QueueSnapshot>(`/api/queue/${jobId}/action`, {

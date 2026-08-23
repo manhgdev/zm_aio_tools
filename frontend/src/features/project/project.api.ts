@@ -510,7 +510,7 @@ export const api = {
   },
 
   run: (projectId: string, settings: ProjectSettings) =>
-    fetchJson<{ ok: boolean }>(`${base}/projects/${projectId}/run`, {
+    fetchJson<{ ok: boolean; jobId?: string }>(`${base}/projects/${projectId}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),

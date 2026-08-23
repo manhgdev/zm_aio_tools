@@ -129,12 +129,20 @@ def api_run(project_id: str, settings: Settings):
 
     ensure_project_initial_playback_rate(meta, dumped)
     save_meta(project_id, meta)
+    # Interactive Clone is a real queue job too.  This makes it visible in
+    # Batch, shares the same device scheduler and lets one Cancel stop it.
+    from pipeline.core.jobs import share_cancel
+    from pipeline.queue.engine import enqueue_project_clone
+
     arm_job(project_id)
-    hint = f"Preview {run_sec}s…" if run_sec > 0 else "Dịch cả video (full)…"
-    set_status(project_id, step="asr", progress=1, message=hint, running=True, error=None)
-    # Pipeline nhận previewSec = cửa sổ chạy
-    _spawn(run_pipeline, project_id, {**dumped, "previewSec": run_sec})
-    return {"ok": True}
+    source = str(meta.get("videoPath") or "")
+    if not source:
+        raise HTTPException(422, "Project không có video nguồn")
+    job = enqueue_project_clone(project_id, source, {**dumped, "previewSec": run_sec})
+    share_cancel(str(job["id"]), project_id)
+    hint = f"Đã xếp hàng Preview {run_sec}s" if run_sec > 0 else "Đã xếp hàng dịch cả video"
+    set_status(project_id, step="queued", progress=0, message=hint, running=True, error=None)
+    return {"ok": True, "jobId": job["id"]}
 
 
 @router.post("/api/projects/{project_id}/ocr-translate")

@@ -16,7 +16,7 @@ import {
 import './Header.css'
 import { translate, type AppLocale } from '@/app/i18n'
 
-export type AppMode = 'clone' | 'live-preview' | 'tts' | 'download' | 'film' | 'batch' | 'renders' | 'cleaner' | 'srt-image' | 'srt-export' | 'license'
+export type AppMode = 'clone' | 'live-preview' | 'tts' | 'download' | 'film' | 'batch' | 'renders' | 'cleaner' | 'srt-image' | 'srt-export' | 'drawing' | 'license'
 
 function IconSun({ size = 16 }: { size?: number }) {
   return (
@@ -193,7 +193,7 @@ export default function Header({
               <div key={item.id} className="nav-tools" ref={toolsRef}>
                 <button
                   type="button"
-                  className={mode === 'download' || mode === 'cleaner' || mode === 'srt-image' || mode === 'srt-export'
+                  className={mode === 'download' || mode === 'cleaner' || mode === 'srt-image' || mode === 'srt-export' || mode === 'drawing'
                     ? 'active'
                     : undefined}
                   aria-haspopup="menu"
@@ -252,6 +252,15 @@ export default function Header({
                     >
                       <IconBook size={16} />
                       <span>{t('tools.exportSubtitles')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={mode === 'drawing' ? 'active' : undefined}
+                      onClick={() => { setOpenMenu(null); onModeChange?.('drawing') }}
+                    >
+                      <IconWand size={16} />
+                      <span>{t('tools.drawing')}</span>
                     </button>
                   </div>
                 ) : null}

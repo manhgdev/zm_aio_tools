@@ -26,6 +26,7 @@ import RendersPage from '@/pages/RendersPage'
 import VideoCleanerPage from '@/pages/VideoCleanerPage'
 import SrtImagePage from '@/pages/SrtImagePage'
 import SrtExportPage from '@/pages/SrtExportPage'
+import DrawingPage from '@/pages/DrawingPage'
 import LicensePage from '@/features/license/LicensePage'
 import { licenseApi, readCachedStatus, type LicenseStatus } from '@/features/license/license.api'
 import { ExportSuccessModal } from '@/features/editor/ExportSuccessModal'
@@ -930,6 +931,8 @@ export default function App() {
         <SrtImagePage onBack={goBackTab} />
       ) : appMode === 'srt-export' ? (
         <SrtExportPage onBack={goBackTab} />
+      ) : appMode === 'drawing' ? (
+        <DrawingPage onBack={goBackTab} />
       ) : appMode === 'renders' ? (
         <RendersPage onBack={goBackTab} onEdit={editRenderedProject} />
       ) : editorOpen ? (

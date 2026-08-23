@@ -48,6 +48,7 @@ const MESSAGES = {
   'tools.cleanVideo': { vi: 'Làm sạch video', en: 'Clean video' },
   'tools.srtImage': { vi: 'Ghép ảnh/video SRT', en: 'Create SRT image/video' },
   'tools.exportSubtitles': { vi: 'Xuất phụ đề', en: 'Export subtitles' },
+  'tools.drawing': { vi: 'Vẽ tay', en: 'Drawing' },
   'header.openTtsMenu': { vi: 'Mở menu TTS', en: 'Open TTS menu' },
   'header.closeTtsMenu': { vi: 'Đóng menu TTS', en: 'Close TTS menu' },
   'header.interfaceLanguage': { vi: 'Ngôn ngữ giao diện', en: 'Interface language' },

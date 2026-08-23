@@ -77,6 +77,7 @@ test('English catalog covers Review Phim and Batch queue', () => {
     'Mỗi tab hiển thị hàng đợi riêng.': 'Each tab shows its own queue.',
     'Hàng đợi Clone hàng loạt': 'Clone batch queue',
     'Hàng đợi Review hàng loạt': 'Review batch queue',
+    'Thao tác': 'Operation',
     'Mở Editor': 'Open Editor',
     'Xóa logo / watermark': 'Remove logo / watermark',
     'Tự nhận diện logo/watermark chữ': 'Automatic text-logo detection',
@@ -125,4 +126,26 @@ test('Clone CapCut recognition and translation UI is bilingual', () => {
     'CapCut nhận dạng cloud — chạy Dịch toàn bộ': 'CapCut cloud recognition — run Full Translation',
   }
   for (const [vietnamese, english] of Object.entries(expected)) assert.equal(catalog[vietnamese], english, vietnamese)
+})
+
+test('Drawing tab uses bilingual localized UI', async () => {
+  const source = await readFile(new URL('../frontend/src/pages/DrawingPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /localize\(locale,/)
+  assert.match(source, /Image → Drawing Video/)
+  assert.match(source, /Tạo video vẽ tay/)
+})
+
+test('Batch Drawing queue uses bilingual localized UI', async () => {
+  const source = await readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /Vẽ tay hàng loạt/)
+  assert.match(source, /Drawing batch/)
+  assert.match(source, /Xem trước/)
+  assert.match(source, /Preview/)
+})
+
+test('Batch file selection creates localized queue jobs immediately', async () => {
+  const source = await readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /create jobs in the queue below, then press Run/)
+  assert.match(source, /It only runs after you press Run/)
+  assert.match(source, /Run \$\{readyQueueJobs\.length\} jobs/)
 })

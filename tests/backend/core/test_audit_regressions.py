@@ -148,4 +148,6 @@ def test_desktop_supervisor_shows_copyable_crash() -> None:
     assert "last_crash.txt" in src
     assert "Zone.Identifier" in src
     assert "Python.Runtime.dll" in src
+    assert "webview/lib" in src
+    assert "*.pyd" in src
     assert "prepare_pythonnet" in src

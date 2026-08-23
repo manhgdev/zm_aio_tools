@@ -159,6 +159,7 @@ class QueueEngine:
         sources: list[str],
         settings: dict[str, Any],
         recursive: bool = True,
+        start_now: bool = True,
     ) -> list[dict[str, Any]]:
         files = scan_videos(sources, recursive=recursive)
         created: list[dict[str, Any]] = []
@@ -172,8 +173,10 @@ class QueueEngine:
                 "mode": "batch",
                 "source": src,
                 "settings_snapshot": dict(settings),
-                "status": "queued",
-                "stage": "queued",
+                # Batch selection creates an editable job first.  It only
+                # consumes CPU/GPU after the user explicitly starts the batch.
+                "status": "queued" if start_now else "paused",
+                "stage": "queued" if start_now else "ready",
                 "progress": 0.0,
                 "checkpoints": [],
                 "cacheRefs": {},
@@ -189,8 +192,34 @@ class QueueEngine:
             }
             store.insert(job)
             created.append(job)
-        self.kick()
+        if start_now:
+            self.kick()
         return created
+
+    def enqueue_project_clone(self, *, project_id: str, source: str, settings: dict[str, Any]) -> dict[str, Any]:
+        """Put an existing editor project on the same durable queue as Batch.
+
+        Interactive Clone used to spawn a private thread, so it was invisible
+        in the Batch page and could compete with queued work.  This row keeps
+        the project identity while using the unified scheduler/cancellation.
+        """
+        for existing in store.load_all():
+            if existing.get("mode") == "project" and existing.get("projectId") == project_id and existing.get("status") in {"queued", "running"}:
+                store.mutate(existing["id"], {"settings_snapshot": dict(settings), "source": source})
+                return store.get(existing["id"]) or existing
+        now = time.time()
+        job = {
+            "id": uuid.uuid4().hex[:12], "type": "clone", "mode": "project",
+            "source": source, "projectId": project_id,
+            "settings_snapshot": dict(settings), "status": "queued", "stage": "queued", "progress": 0.0,
+            "checkpoints": [], "cacheRefs": {"projectId": project_id}, "output": "",
+            "outputName": output_name(Path(source), "{name}_clone", settings),
+            "outputDir": "", "error": None, "errorType": None, "log": [],
+            "createdAt": now, "updatedAt": now,
+        }
+        store.insert(job)
+        self.kick()
+        return job
 
     def action(self, job_id: str, op: str) -> dict[str, Any]:
         job = store.get(job_id)
@@ -349,6 +378,9 @@ class QueueEngine:
             if job.get("type") == "review":
                 from pipeline.review.run import run_review_job
                 result = run_review_job(job)
+            elif job.get("mode") == "project":
+                from pipeline.clone_run.headless import run_existing_project_clone_job
+                result = run_existing_project_clone_job(job)
             else:
                 from pipeline.clone_run.headless import run_clone_job
                 result = run_clone_job(job)
@@ -402,8 +434,24 @@ def get_engine() -> QueueEngine:
         return _engine
 
 
-def enqueue(job_type: str, sources: list[str], settings: dict[str, Any], recursive: bool = True) -> list[dict[str, Any]]:
-    return get_engine().enqueue_many(job_type=job_type, sources=sources, settings=settings, recursive=recursive)
+def enqueue(
+    job_type: str,
+    sources: list[str],
+    settings: dict[str, Any],
+    recursive: bool = True,
+    start_now: bool = True,
+) -> list[dict[str, Any]]:
+    return get_engine().enqueue_many(
+        job_type=job_type,
+        sources=sources,
+        settings=settings,
+        recursive=recursive,
+        start_now=start_now,
+    )
+
+
+def enqueue_project_clone(project_id: str, source: str, settings: dict[str, Any]) -> dict[str, Any]:
+    return get_engine().enqueue_project_clone(project_id=project_id, source=source, settings=settings)
 
 
 def list_jobs() -> dict[str, Any]:

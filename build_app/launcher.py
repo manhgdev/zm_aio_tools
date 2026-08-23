@@ -34,23 +34,28 @@ def _unblock_zone_identifier(path: Path) -> bool:
 
 
 def unblock_windows_motw(root: Path) -> int:
-    """Gỡ MOTW trên pythonnet/clr_loader — thiếu bước này thì webview.start crash exit 1."""
+    """Remove MOTW from every native library before Python.NET/WebView2 loads.
+
+    Explorer can propagate the download zone from a GitHub ZIP to every DLL
+    inside ``_internal``.  Unblocking only Python.Runtime.dll is insufficient:
+    WebView2's Core/WinForms DLLs fail with the same 0x80131515 error.
+    """
     if sys.platform != "win32" or not root.is_dir():
         return 0
     n = 0
-    for sub in (root / "pythonnet", root / "clr_loader"):
-        if not sub.is_dir():
+    # PyInstaller's one-dir bundle contains native libraries in package
+    # folders such as webview/lib, pythonnet/runtime and clr_loader.  .pyd
+    # modules are native DLLs too and can carry Zone.Identifier.
+    for pattern in ("*.dll", "*.pyd"):
+        try:
+            libraries = root.rglob(pattern)
+            for library in libraries:
+                if _unblock_zone_identifier(library):
+                    n += 1
+        except OSError:
+            # A broken optional package must not prevent the desktop launcher
+            # from continuing to its normal dependency/fallback diagnostics.
             continue
-        for dll in sub.rglob("*.dll"):
-            if _unblock_zone_identifier(dll):
-                n += 1
-    runtime = root / "pythonnet" / "runtime" / "Python.Runtime.dll"
-    if runtime.is_file() and _unblock_zone_identifier(runtime):
-        n += 1
-    for name in ("python312.dll", "python3.dll"):
-        p = root / name
-        if p.is_file() and _unblock_zone_identifier(p):
-            n += 1
     return n
 
 
@@ -298,7 +303,9 @@ if ocr_site.is_dir():
 bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 os.environ["PATH"] = os.pathsep.join((str(bundle), os.environ.get("PATH", "")))
 if sys.platform == "win32":
-    unblock_windows_motw(bundle)
+    _motw_removed = unblock_windows_motw(bundle)
+    if _motw_removed:
+        print(f"[desktop] removed MOTW from {_motw_removed} native library file(s)", flush=True)
 
 # Chocolatey ShimGen copy vào _internal trỏ `..\lib\ffmpeg\...` → exit 4294967295.
 # Đưa thư mục ffmpeg thật (ngoài bundle) lên trước để bare `ffmpeg` không dính shim.

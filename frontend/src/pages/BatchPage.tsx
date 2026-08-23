@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { applyEngineProfile, defaultSettings } from '@/app/appSettings'
 import { localize, useLocale } from '@/app/i18n'
 import type { ProjectSettings } from '@/features/project/project.types'
@@ -17,18 +17,33 @@ type Props = {
   onOpenReviewProjects: () => void
 }
 
-type BatchTab = 'clone' | 'review'
+type BatchTab = 'clone' | 'review' | 'drawing'
+type DrawingJob = { id: string; filename: string; status: 'queued' | 'processing' | 'done' | 'error' | 'cancelled'; progress: number; error?: string; options?: Partial<DrawingBatchOptions> }
+type DrawingPreset = 'pencil' | 'ink' | 'whiteboard' | 'speed' | 'watercolor'
+type DrawingBatchOptions = { preset: DrawingPreset; duration: number; detail: number; thickness: number; fps: 24 | 30 | 60; resolution: '720p' | '1080p' | '4k'; mode: 'drawing' | 'hand'; tool: 'pencil' | 'pen' | 'marker' | 'brush'; smartOrder: boolean; showOriginalEnd: boolean }
 const BATCH_TAB_LS = 'videoclone.batchTab'
 const BATCH_CLONE_SETTINGS_LS = 'videoclone.batchCloneSettings'
 const BATCH_CLONE_SETTINGS_VERSION_LS = 'videoclone.batchCloneSettingsVersion'
 const BATCH_CLONE_SETTINGS_VERSION = '3'
 const BATCH_REVIEW_SETTINGS_LS = 'videoclone.batchReviewSettings'
+const BATCH_DRAWING_SETTINGS_LS = 'videoclone.batchDrawingSettings'
 
 function loadBatchTab(): BatchTab {
   try {
-    return localStorage.getItem(BATCH_TAB_LS) === 'review' ? 'review' : 'clone'
+    const saved = localStorage.getItem(BATCH_TAB_LS)
+    return saved === 'review' || saved === 'drawing' ? saved : 'clone'
   } catch {
     return 'clone'
+  }
+}
+
+function loadDrawingBatchSettings(): DrawingBatchOptions {
+  const fallback: DrawingBatchOptions = { preset: 'pencil', duration: 10, detail: 72, thickness: 2, fps: 30, resolution: '1080p', mode: 'drawing', tool: 'pencil', smartOrder: true, showOriginalEnd: true }
+  try {
+    const saved = JSON.parse(localStorage.getItem(BATCH_DRAWING_SETTINGS_LS) || '{}') as Partial<DrawingBatchOptions>
+    return { ...fallback, ...saved }
+  } catch {
+    return fallback
   }
 }
 
@@ -87,19 +102,30 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [cloneSettings, setCloneSettings] = useState<ProjectSettings>(loadBatchCloneSettings)
   const [reviewSettings, setReviewSettings] = useState<ReviewSettings>(loadBatchReviewSettings)
+  const [drawingSettings, setDrawingSettings] = useState<DrawingBatchOptions>(loadDrawingBatchSettings)
+  const [drawingJobs, setDrawingJobs] = useState<DrawingJob[]>([])
+  const [drawingPreview, setDrawingPreview] = useState<DrawingJob | null>(null)
+  const [queuePreview, setQueuePreview] = useState<QueueJob | null>(null)
+  const [drawingSettingsOpen, setDrawingSettingsOpen] = useState(false)
+  const [editingDrawingJobId, setEditingDrawingJobId] = useState<string | null>(null)
+  const [editingQueueJob, setEditingQueueJob] = useState<QueueJob | null>(null)
+  const drawingInputRef = useRef<HTMLInputElement>(null)
   const [jobs, setJobs] = useState<QueueJob[]>([])
   const [pauseAll, setPauseAll] = useState(false)
   const [error, setError] = useState('')
   const cloneVoices = useVoices(cloneSettings.targetLang === 'none' ? 'vi' : cloneSettings.targetLang)
   const voices = useVoices(reviewSettings.language)
   const tabJobs = jobs.filter((job) => job.type === tab)
-  const hasActiveJobs = jobs.some((job) => job.status === 'running' || job.status === 'queued')
+  const readyQueueJobs = tabJobs.filter((job) => job.status === 'paused')
+  const readyDrawingJobs = drawingJobs.filter((job) => job.status === 'queued')
+  const hasActiveJobs = jobs.some((job) => job.status === 'running' || job.status === 'queued') || drawingJobs.some((job) => job.status === 'queued' || job.status === 'processing')
 
   const setReview = (patch: Partial<ReviewSettings>) => setReviewSettings((cur) => ({ ...cur, ...patch }))
   const setClone = (next: ProjectSettings) => setCloneSettings(next)
   const selectTab = (next: BatchTab) => {
     setTab(next)
     setSettingsOpen(false)
+    setDrawingSettingsOpen(false)
   }
 
   useEffect(() => {
@@ -117,10 +143,16 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
     } catch {}
   }, [cloneSettings])
 
+  useEffect(() => {
+    try { localStorage.setItem(BATCH_DRAWING_SETTINGS_LS, JSON.stringify(drawingSettings)) } catch {}
+  }, [drawingSettings])
+
   async function refresh() {
     const snap = await studioApi.queue()
     setJobs(snap.jobs || [])
     setPauseAll(Boolean(snap.pauseAll))
+    const drawing = await fetch('/api/drawing/jobs').then(async (response) => response.ok ? await response.json() as DrawingJob[] : []).catch(() => [] as DrawingJob[])
+    setDrawingJobs(drawing)
   }
 
   useEffect(() => {
@@ -135,59 +167,188 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
     setClone({ ...cloneSettings, defaultVoice: cloneVoices[0].id })
   }, [cloneVoices])
 
+  function queueSettings() {
+    return tab === 'review'
+      ? {
+        outputDir, overwrite, naming: '{name}_review',
+        style: STYLE_TO_PIPE[reviewSettings.scriptStyle],
+        durationSec: reviewSettings.chunkMinutes * 60,
+        buildMode: reviewSettings.buildMode,
+        chunkMinutes: reviewSettings.chunkMinutes,
+        keepSec: reviewSettings.keepSec,
+        skipSec: reviewSettings.skipSec,
+        originalAudioPct: reviewSettings.originalAudioPct,
+        voice: reviewSettings.voice,
+        genre: reviewSettings.genre,
+        notes: reviewSettings.notes,
+        reviewMode: reviewSettings.reviewMode,
+        reviewModel: reviewSettings.reviewModel,
+        narration: reviewSettings.narration,
+        pausePace: reviewSettings.pausePace,
+        captionMode: reviewSettings.captionMode,
+        ratio: '16:9', language: reviewSettings.language, sourceLang: reviewSettings.sourceLang, recognitionEngine: reviewSettings.recognitionEngine, spoiler: 'none',
+        subtitle: true, headless: true,
+      }
+      : {
+        ...cloneSettings,
+        engine: cloneSettings.engine === 'subtitle' ? 'whisper' : cloneSettings.engine,
+        previewSec: 0,
+        runPreviewSec: 0,
+        subtitleSource: undefined,
+        exportOutputDir: undefined,
+        lutAssetId: '',
+        hiddenLogoTexts: [],
+        outputDir,
+        overwrite,
+        naming: '{name}_{type}',
+      }
+  }
+
+  async function enqueueSources(selectedSources: string[]) {
+    if (!selectedSources.length) return
+    setError('')
+    try {
+      await studioApi.enqueue(tab === 'review' ? 'review' : 'clone', selectedSources, queueSettings(), recursive, false)
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function addFiles() {
     const res = await studioApi.pickVideos()
-    setSources((cur) => [...new Set([...cur, ...(res.paths || [])])])
+    const selected = [...new Set(res.paths || [])]
+    if (editingQueueJob) setSources(selected)
+    else await enqueueSources(selected)
   }
 
   async function addFolder() {
     const res = await studioApi.pickFolder()
-    if (res.path) setSources((cur) => [...new Set([...cur, res.path])])
+    if (!res.path) return
+    if (editingQueueJob) setSources([res.path])
+    else await enqueueSources([res.path])
   }
 
   async function addToQueue() {
     setError('')
     try {
-      const settings = tab === 'review'
-        ? {
-          outputDir, overwrite, naming: '{name}_review',
-          style: STYLE_TO_PIPE[reviewSettings.scriptStyle],
-          durationSec: reviewSettings.chunkMinutes * 60,
-          buildMode: reviewSettings.buildMode,
-          chunkMinutes: reviewSettings.chunkMinutes,
-          keepSec: reviewSettings.keepSec,
-          skipSec: reviewSettings.skipSec,
-          originalAudioPct: reviewSettings.originalAudioPct,
-          voice: reviewSettings.voice,
-          genre: reviewSettings.genre,
-          notes: reviewSettings.notes,
-          reviewMode: reviewSettings.reviewMode,
-          reviewModel: reviewSettings.reviewModel,
-          narration: reviewSettings.narration,
-          pausePace: reviewSettings.pausePace,
-          captionMode: reviewSettings.captionMode,
-          ratio: '16:9', language: reviewSettings.language, sourceLang: reviewSettings.sourceLang, recognitionEngine: reviewSettings.recognitionEngine, spoiler: 'none',
-          subtitle: true, headless: true,
-        }
-        : {
-          ...cloneSettings,
-          engine: cloneSettings.engine === 'subtitle' ? 'whisper' : cloneSettings.engine,
-          previewSec: 0,
-          runPreviewSec: 0,
-          subtitleSource: undefined,
-          exportOutputDir: undefined,
-          lutAssetId: '',
-          hiddenLogoTexts: [],
-          outputDir,
-          overwrite,
-          naming: '{name}_{type}',
-        }
-      await studioApi.enqueue(tab, sources, settings, recursive)
-      setSources([])
+      const settings = queueSettings()
+      if (editingQueueJob) {
+        await studioApi.updateJobSettings(editingQueueJob.id, { ...settings, source: editingQueueJob.source })
+        setEditingQueueJob(null)
+      } else await enqueueSources(sources)
       await refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  async function enqueueDrawingFiles(files: File[]) {
+    if (!files.length) return
+    setError('')
+    try {
+      const body = new FormData()
+      files.forEach((file) => body.append('images', file))
+      body.append('options', JSON.stringify(drawingSettings))
+      body.append('start_now', 'false')
+      const response = await fetch('/api/drawing/jobs/batch', { method: 'POST', body })
+      if (!response.ok) throw new Error(await response.text())
+      const result = await response.json() as { jobs: DrawingJob[] }
+      setDrawingJobs((current) => [...result.jobs, ...current])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function saveDrawingJob() {
+    if (!editingDrawingJobId) return
+    setError('')
+    try {
+      const response = await fetch(`/api/drawing/jobs/${editingDrawingJobId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(drawingSettings) })
+      if (!response.ok) throw new Error(await response.text())
+      const updated = await response.json() as DrawingJob
+      setDrawingJobs((current) => current.map((item) => item.id === updated.id ? updated : item))
+      setEditingDrawingJobId(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function runQueueJobs() {
+    if (!readyQueueJobs.length) return
+    setError('')
+    try {
+      await Promise.all(readyQueueJobs.map((job) => studioApi.jobAction(job.id, 'resume')))
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function runDrawingJobs() {
+    if (!readyDrawingJobs.length) return
+    setError('')
+    try {
+      const response = await fetch('/api/drawing/jobs/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: readyDrawingJobs.map((job) => job.id) }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function cancelDrawingJob(jobId: string) {
+    await fetch(`/api/drawing/jobs/${jobId}/cancel`, { method: 'POST' })
+    await refresh()
+  }
+
+  async function deleteDrawingJob(jobId: string) {
+    setError('')
+    const response = await fetch(`/api/drawing/jobs/${jobId}`, { method: 'DELETE' })
+    if (!response.ok) {
+      setError(await response.text())
+      await refresh()
+      return
+    }
+    setDrawingPreview((current) => current?.id === jobId ? null : current)
+    setDrawingJobs((current) => current.filter((item) => item.id !== jobId))
+  }
+
+  async function deleteQueueJob(jobId: string) {
+    await studioApi.jobAction(jobId, 'remove')
+    if (editingQueueJob?.id === jobId) setEditingQueueJob(null)
+    await refresh()
+  }
+
+  async function editQueueJob(job: QueueJob) {
+    if (job.status === 'queued') await studioApi.jobAction(job.id, 'pause')
+    setEditingQueueJob(job)
+    setSources([job.source])
+    setOutputDir(String(job.settings_snapshot?.outputDir || job.outputDir || ''))
+    if (job.type === 'review') setReviewSettings((current) => ({ ...current, ...(job.settings_snapshot || {}) as Partial<ReviewSettings> }))
+    else setCloneSettings((current) => ({ ...current, ...(job.settings_snapshot || {}) as Partial<ProjectSettings> }))
+    setSettingsOpen(true)
+  }
+
+  function editDrawingJob(job: DrawingJob) {
+    if (job.status !== 'queued') return
+    setDrawingSettings((current) => ({ ...current, ...(job.options || {}) }))
+    setEditingDrawingJobId(job.id)
+    setDrawingSettingsOpen(true)
+  }
+
+  function applyDrawingPreset(preset: DrawingPreset) {
+    const next: Record<DrawingPreset, Partial<DrawingBatchOptions>> = {
+      pencil: { duration: 10, detail: 72, thickness: 2, fps: 30, mode: 'drawing', tool: 'pencil', showOriginalEnd: true },
+      ink: { duration: 8, detail: 84, thickness: 2, fps: 30, mode: 'drawing', tool: 'pen', showOriginalEnd: false },
+      whiteboard: { duration: 12, detail: 55, thickness: 3, fps: 30, mode: 'hand', tool: 'marker', showOriginalEnd: false },
+      speed: { duration: 5, detail: 68, thickness: 2, fps: 60, mode: 'hand', tool: 'pencil', showOriginalEnd: true },
+      watercolor: { duration: 14, detail: 60, thickness: 4, fps: 30, mode: 'hand', tool: 'brush', showOriginalEnd: true },
+    }
+    setDrawingSettings((current) => ({ ...current, ...next[preset], preset }))
   }
 
   return (
@@ -197,22 +358,45 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
           <BackTitle onBack={onBack}>{t('Hàng loạt', 'Batch')}</BackTitle>
           <p>{t('Mỗi tab hiển thị hàng đợi riêng.', 'Each tab shows its own queue.')}</p>
         </div>
-        <div className="studio-actions">
+        {tab !== 'drawing' ? <div className="studio-actions">
           <button type="button" onClick={() => void studioApi.globalAction(pauseAll ? 'resume_all' : 'pause_all').then(refresh)}>
             {pauseAll ? t('Tiếp tục tất cả', 'Resume all') : t('Tạm dừng tất cả', 'Pause all')}
           </button>
           <button type="button" onClick={() => void studioApi.globalAction('retry_failed').then(refresh)}>{t('Thử lại lỗi', 'Retry failed')}</button>
           <button type="button" onClick={() => void studioApi.globalAction('clear_completed').then(refresh)}>{t('Xóa đã xong', 'Clear completed')}</button>
-        </div>
+        </div> : null}
       </header>
       <div className="studio-tabs">
         <button type="button" className={tab === 'clone' ? 'active' : undefined} onClick={() => selectTab('clone')}>{t('Clone hàng loạt', 'Clone batch')}</button>
         <button type="button" className={tab === 'review' ? 'active' : undefined} onClick={() => selectTab('review')}>{t('Review hàng loạt', 'Review batch')}</button>
+        <button type="button" className={tab === 'drawing' ? 'active' : undefined} onClick={() => selectTab('drawing')}>{t('Vẽ tay hàng loạt', 'Drawing batch')}</button>
       </div>
+      {tab === 'drawing' ? <>
+        <section className="studio-card drawing-batch-setup">
+          <div className="drawing-batch-title"><div><h2>{editingDrawingJobId ? t('Sửa job Vẽ tay', 'Edit Drawing job') : t('Vẽ tay hàng loạt', 'Drawing batch')}</h2><p>{editingDrawingJobId ? t('Chỉnh cấu hình rồi lưu trước khi job bắt đầu.', 'Update settings and save before this job starts.') : t('Mỗi ảnh được chọn sẽ thành một job ngay trong hàng đợi. Chỉ chạy sau khi bấm Chạy.', 'Each selected image becomes a job in the queue immediately. It only runs after you press Run.')}</p></div><span>{editingDrawingJobId ? t('Đang sửa', 'Editing') : t(`${drawingJobs.length} job`, `${drawingJobs.length} jobs`)}</span></div>
+          <input ref={drawingInputRef} type="file" className="drawing-visually-hidden" multiple accept="image/jpeg,image/png,image/webp,image/bmp" onChange={(event) => { const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith('image/')); event.currentTarget.value = ''; void enqueueDrawingFiles(files) }} />
+          <div className="drawing-batch-controls">
+            <button type="button" className="drawing-upload-action" onClick={() => drawingInputRef.current?.click()}>{t('＋ Thêm ảnh', '+ Add images')}</button>
+            <label><span>{t('Thời lượng', 'Duration')}</span><select value={drawingSettings.duration} onChange={(event) => setDrawingSettings((current) => ({ ...current, duration: Number(event.target.value) }))}><option value="5">5s</option><option value="10">10s</option><option value="20">20s</option><option value="30">30s</option></select></label>
+            <label><span>{t('Độ phân giải', 'Resolution')}</span><select value={drawingSettings.resolution} onChange={(event) => setDrawingSettings((current) => ({ ...current, resolution: event.target.value as DrawingBatchOptions['resolution'] }))}><option value="720p">720p</option><option value="1080p">1080p</option><option value="4k">4K</option></select></label>
+            <label><span>{t('Kiểu vẽ', 'Drawing style')}</span><select value={drawingSettings.mode} onChange={(event) => setDrawingSettings((current) => ({ ...current, mode: event.target.value as DrawingBatchOptions['mode'] }))}><option value="drawing">{t('Vẽ nét', 'Strokes')}</option><option value="hand">{t('Tay + bút', 'Hand + pen')}</option></select></label>
+            <button type="button" className={`studio-settings-toggle${drawingSettingsOpen ? ' open' : ''}`} aria-expanded={drawingSettingsOpen} aria-controls="drawing-batch-settings" onClick={() => setDrawingSettingsOpen((open) => !open)}><IconGear size={15} />{t('Cài đặt vẽ tay', 'Drawing settings')}<IconArrowRight size={15} className="studio-settings-chevron" /></button>
+            {editingDrawingJobId ? <button type="button" className="primary drawing-run-action" onClick={() => void saveDrawingJob()}>{t('Lưu chỉnh sửa', 'Save changes')}</button> : <button type="button" className="primary drawing-run-action" disabled={!readyDrawingJobs.length} onClick={() => void runDrawingJobs()}>{t(`Chạy ${readyDrawingJobs.length} job`, `Run ${readyDrawingJobs.length} jobs`)}</button>}
+          </div>
+          {drawingSettingsOpen ? <section id="drawing-batch-settings" className="drawing-batch-settings"><div className="drawing-batch-settings-heading"><div><h3>{t('Cài đặt áp dụng cho cả lô', 'Settings applied to the entire batch')}</h3><p>{t('Thay đổi sẽ áp dụng cho các job tạo sau khi bấm Chạy.', 'Changes apply to jobs created when you press Run.')}</p></div><button type="button" onClick={() => applyDrawingPreset('pencil')}>{t('Đặt lại', 'Reset')}</button></div><div className="drawing-batch-settings-grid"><label><span>Preset</span><select value={drawingSettings.preset} onChange={(event) => applyDrawingPreset(event.target.value as DrawingPreset)}><option value="pencil">{t('Chì chân dung', 'Portrait pencil')}</option><option value="ink">{t('Nét mực', 'Ink line art')}</option><option value="whiteboard">Whiteboard</option><option value="speed">{t('Vẽ nhanh', 'Speed drawing')}</option><option value="watercolor">{t('Lộ màu nước', 'Watercolor reveal')}</option></select></label><label><span>{t('Dụng cụ', 'Tool')}</span><select value={drawingSettings.tool} onChange={(event) => setDrawingSettings((current) => ({ ...current, tool: event.target.value as DrawingBatchOptions['tool'] }))}><option value="pencil">{t('Chì', 'Pencil')}</option><option value="pen">{t('Bút', 'Pen')}</option><option value="marker">Marker</option><option value="brush">{t('Cọ', 'Brush')}</option></select></label><label><span>{t('FPS', 'FPS')}</span><select value={drawingSettings.fps} onChange={(event) => setDrawingSettings((current) => ({ ...current, fps: Number(event.target.value) as DrawingBatchOptions['fps'] }))}><option value="24">24 FPS</option><option value="30">30 FPS</option><option value="60">60 FPS</option></select></label><label><span>{t('Độ chi tiết', 'Detail')} · {drawingSettings.detail}%</span><input type="range" min="10" max="100" value={drawingSettings.detail} onChange={(event) => setDrawingSettings((current) => ({ ...current, detail: Number(event.target.value) }))} /></label><label><span>{t('Độ dày nét', 'Stroke thickness')} · {drawingSettings.thickness}px</span><input type="range" min="1" max="8" value={drawingSettings.thickness} onChange={(event) => setDrawingSettings((current) => ({ ...current, thickness: Number(event.target.value) }))} /></label></div><div className="drawing-batch-checks"><label className="check"><input type="checkbox" checked={drawingSettings.smartOrder} onChange={(event) => setDrawingSettings((current) => ({ ...current, smartOrder: event.target.checked }))} />{t('Thứ tự nét thông minh', 'Smart stroke order')}</label><label className="check"><input type="checkbox" checked={drawingSettings.showOriginalEnd} onChange={(event) => setDrawingSettings((current) => ({ ...current, showOriginalEnd: event.target.checked }))} />{t('Hiện ảnh gốc ở cuối', 'Reveal original at end')}</label></div></section> : null}
+          {error ? <p className="studio-error">{error}</p> : null}
+        </section>
+        <section className="studio-card drawing-batch-queue">
+          <div className="studio-card-heading"><div><h2>{t('Hàng đợi Vẽ tay', 'Drawing queue')}</h2><p className="muted">{t('Xem trước ảnh nguồn khi chờ, hoặc video sau khi hoàn thành.', 'Preview the source while queued, or the video after it finishes.')}</p></div><span className="drawing-queue-count">{drawingJobs.length}</span></div>
+          <div className="drawing-job-list">{drawingJobs.map((item) => <article className={`drawing-job drawing-job--${item.status}`} key={item.id}><button type="button" className="drawing-job-thumb" onClick={() => setDrawingPreview(item)} aria-label={t(`Xem trước ${item.filename}`, `Preview ${item.filename}`)}><img loading="lazy" src={`/api/drawing/jobs/${item.id}/input`} alt="" /></button><div className="drawing-job-main"><strong title={item.filename}>{item.filename}</strong><div className="drawing-job-meta"><span>{item.status === 'done' ? t('Hoàn thành', 'Completed') : item.status === 'queued' ? t('Đang chờ', 'Queued') : item.status === 'processing' ? t('Đang vẽ', 'Drawing') : item.status === 'cancelled' ? t('Đã hủy', 'Cancelled') : t('Lỗi', 'Error')}</span><b>{item.progress}%</b></div><div className="drawing-job-progress"><i style={{ width: `${item.progress}%` }} /></div>{item.error ? <small>{item.error}</small> : null}</div><div className="drawing-job-actions"><button type="button" onClick={() => setDrawingPreview(item)}>{t('Xem trước', 'Preview')}</button>{item.status === 'queued' ? <button type="button" onClick={() => editDrawingJob(item)}>{t('Sửa', 'Edit')}</button> : null}{item.status === 'done' ? <a href={`/api/drawing/jobs/${item.id}/output`} download>{t('Tải MP4', 'Download MP4')}</a> : null}{item.status === 'queued' || item.status === 'processing' ? <button type="button" className="danger" onClick={() => void cancelDrawingJob(item.id)}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => void deleteDrawingJob(item.id)}>{t('Xóa', 'Delete')}</button></div></article>)}</div>
+          {!drawingJobs.length ? <div className="drawing-empty-queue">{t('Chưa có job. Thêm ảnh để đưa ngay vào hàng đợi.', 'No jobs yet. Add images to place them in the queue immediately.')}</div> : null}
+        </section>
+      </> : <>
       <section className="studio-card">
         <div className="studio-actions">
           <button type="button" onClick={() => void addFiles()}>{t('Thêm file', 'Add files')}</button>
           <button type="button" onClick={() => void addFolder()}>{t('Thêm thư mục', 'Add folder')}</button>
+          <button type="button" className="primary" disabled={!readyQueueJobs.length} onClick={() => void runQueueJobs()}>{t(`Chạy ${readyQueueJobs.length} job`, `Run ${readyQueueJobs.length} jobs`)}</button>
           <button
             type="button"
             className={`studio-settings-toggle${settingsOpen ? ' open' : ''}`}
@@ -226,9 +410,10 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
               : t('Cài đặt Clone hàng loạt', 'Clone batch settings')}
             <IconArrowRight size={15} className="studio-settings-chevron" />
           </button>
-          <button type="button" className="primary" disabled={!sources.length} onClick={() => void addToQueue()}>{t('Thêm vào hàng đợi', 'Add to queue')}</button>
+          {editingQueueJob ? <button type="button" className="primary" onClick={() => void addToQueue()}>{t('Lưu chỉnh sửa', 'Save changes')}</button> : null}
+          {editingQueueJob ? <button type="button" onClick={() => setEditingQueueJob(null)}>{t('Hủy sửa', 'Cancel edit')}</button> : null}
         </div>
-        <p className="muted">{outputDir || t('Xuất mặc định vào project', 'Default output is the project folder')} · {sources.length} {t('nguồn', 'sources')}</p>
+        <p className="muted">{editingQueueJob ? `${outputDir || t('Xuất mặc định vào project', 'Default output is the project folder')} · ${sources.length} ${t('nguồn', 'sources')}` : t('Chọn file hoặc thư mục để tạo job ngay trong hàng đợi bên dưới, rồi bấm Chạy.', 'Choose files or a folder to create jobs in the queue below, then press Run.')}</p>
         {sources.length ? <ul className="studio-files">{sources.map((s) => <li key={s}>{s}</li>)}</ul> : null}
         {error ? <p className="studio-error">{error}</p> : null}
       </section>
@@ -280,13 +465,19 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
             </button>
           ) : null}
         </div>
-        <table className="studio-table">
+        <table className="studio-table studio-queue-table">
+          <colgroup>
+            <col className="studio-queue-source-column" />
+            <col className="studio-queue-status-column" />
+            <col className="studio-queue-progress-column" />
+            <col className="studio-queue-actions-column" />
+          </colgroup>
           <thead>
             <tr>
               <th>{t('Nguồn', 'Source')}</th>
               <th>{t('Trạng thái', 'Status')}</th>
               <th>{t('Tiến độ', 'Progress')}</th>
-              <th />
+              <th className="studio-queue-actions-heading">{t('Thao tác', 'Actions')}</th>
             </tr>
           </thead>
           <tbody>
@@ -308,9 +499,16 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                   {job.status === 'failed' || job.status === 'cancelled' ? (
                     <button type="button" onClick={() => void studioApi.jobAction(job.id, 'retry').then(refresh)}>{t('Thử lại', 'Retry')}</button>
                   ) : null}
+                  {job.status !== 'running' && job.status !== 'done' ? (
+                    <button type="button" onClick={() => void editQueueJob(job)}>{t('Sửa', 'Edit')}</button>
+                  ) : null}
+                  {job.status === 'done' ? (
+                    <button type="button" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button>
+                  ) : null}
                   {job.status === 'done' && job.projectId && onOpenEditor ? (
                     <button type="button" onClick={() => onOpenEditor(job.projectId!)}>{t('Mở Editor', 'Open Editor')}</button>
                   ) : null}
+                  <button type="button" className="studio-job-delete" onClick={() => void deleteQueueJob(job.id)}>{t('Xóa', 'Delete')}</button>
                 </td>
               </tr>
             ))}
@@ -318,6 +516,9 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
         </table>
         {!tabJobs.length ? <p className="muted">{t('Chưa có job.', 'No jobs yet.')}</p> : null}
       </section>
+      </>}
+      {drawingPreview ? <div className="drawing-preview-modal" role="presentation" onMouseDown={() => setDrawingPreview(null)}><section role="dialog" aria-modal="true" aria-labelledby="drawing-preview-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="drawing-preview-title">{drawingPreview.filename}</h2><p>{drawingPreview.status === 'done' ? t('Video vẽ tay đã xuất', 'Rendered drawing video') : t('Ảnh nguồn của job đang chọn', 'Source image for the selected job')}</p></div><button type="button" onClick={() => setDrawingPreview(null)} aria-label={t('Đóng xem trước', 'Close preview')}>×</button></header>{drawingPreview.status === 'done' ? <video controls autoPlay src={`/api/drawing/jobs/${drawingPreview.id}/output`} /> : <img src={`/api/drawing/jobs/${drawingPreview.id}/input`} alt={drawingPreview.filename} />}</section></div> : null}
+      {queuePreview ? <div className="drawing-preview-modal" role="presentation" onMouseDown={() => setQueuePreview(null)}><section role="dialog" aria-modal="true" aria-labelledby="queue-preview-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="queue-preview-title">{queuePreview.source.split(/[/\\]/).pop()}</h2><p>{queuePreview.type === 'review' ? t('Video Review đã xuất', 'Rendered Review video') : t('Video Clone đã xuất', 'Rendered Clone video')}</p></div><button type="button" onClick={() => setQueuePreview(null)} aria-label={t('Đóng xem trước', 'Close preview')}>×</button></header><video controls autoPlay src={studioApi.fileUrl(queuePreview.id)} /></section></div> : null}
     </div>
   )
 }
