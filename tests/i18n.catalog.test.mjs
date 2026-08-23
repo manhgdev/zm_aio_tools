@@ -149,3 +149,15 @@ test('Batch file selection creates localized queue jobs immediately', async () =
   assert.match(source, /It only runs after you press Run/)
   assert.match(source, /Run \$\{readyQueueJobs\.length\} jobs/)
 })
+
+test('License gate is bilingual and accepts keyboard focus', async () => {
+  const [license, app] = await Promise.all([
+    readFile(new URL('../frontend/src/features/license/LicensePage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/app/App.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(license, /localize\(locale,/)
+  assert.match(license, /autoFocus/)
+  assert.match(license, /inputRef\.current\?\.focus/)
+  assert.match(app, /app-license-gate/)
+  assert.match(app, /appMode === 'license' && !licenseBlocked/)
+})

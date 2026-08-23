@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { licenseApi, type LicenseStatus } from './license.api'
 import { localize, useLocale } from '@/app/i18n'
 import './LicensePage.css'
@@ -26,6 +26,13 @@ export default function LicensePage({ status, gate = false, embedded = false, on
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (busy) return
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 80)
+    return () => window.clearTimeout(timer)
+  }, [busy, gate])
 
   async function activate() {
     if (!key.trim() || busy) return
@@ -57,9 +64,9 @@ export default function LicensePage({ status, gate = false, embedded = false, on
   }
 
   const expiry = status.expiresAt
-    ? new Date(status.expiresAt).toLocaleString('vi-VN')
-    : status.remainingDay === -1 ? 'Không giới hạn' : '—'
-  const stateTitle = status.valid ? 'Đã kích hoạt' : 'Chưa kích hoạt'
+    ? new Date(status.expiresAt).toLocaleString(locale === 'vi' ? 'vi-VN' : 'en-US')
+    : status.remainingDay === -1 ? t('Không giới hạn', 'Unlimited') : '—'
+  const stateTitle = status.valid ? t('Đã kích hoạt', 'Activated') : t('Chưa kích hoạt', 'Not activated')
   const stateMessage = status.message.trim() === stateTitle ? '' : status.message.trim()
 
   return (
@@ -67,7 +74,7 @@ export default function LicensePage({ status, gate = false, embedded = false, on
       <section className="license-card">
         <div className="license-brand">
           <strong>ZM TOOL</strong>
-          <span>Kích hoạt bản quyền sử dụng</span>
+          <span>{t('Kích hoạt bản quyền sử dụng', 'Activate your license')}</span>
         </div>
         <div className={`license-state${status.valid ? ' is-valid' : ' is-invalid'}`}>
           <strong>{stateTitle}</strong>
@@ -76,26 +83,29 @@ export default function LicensePage({ status, gate = false, embedded = false, on
         {status.configured && (
           <dl className="license-details">
             <div><dt>Key</dt><dd>{status.keyMasked}</dd></div>
-            <div><dt>Thời hạn</dt><dd>{status.remainingDay === -1 ? 'Không giới hạn' : `Còn ${status.remainingDay} ngày`}</dd></div>
-            <div><dt>Hết hạn</dt><dd>{expiry}</dd></div>
-            <div><dt>Lượt kích hoạt còn lại</dt><dd>{status.activationLimit}</dd></div>
+            <div><dt>{t('Thời hạn', 'Term')}</dt><dd>{status.remainingDay === -1 ? t('Không giới hạn', 'Unlimited') : t(`Còn ${status.remainingDay} ngày`, `${status.remainingDay} days remaining`)}</dd></div>
+            <div><dt>{t('Hết hạn', 'Expires')}</dt><dd>{expiry}</dd></div>
+            <div><dt>{t('Lượt kích hoạt còn lại', 'Activations remaining')}</dt><dd>{status.activationLimit}</dd></div>
           </dl>
         )}
         <label className="license-input-label" htmlFor="license-key">
-          {status.valid ? 'Nhập key khác' : 'Nhập key ZM Tool để tiếp tục'}
+          {status.valid ? t('Nhập key khác', 'Enter another key') : t('Nhập key ZM Tool để tiếp tục', 'Enter your ZM Tool key to continue')}
         </label>
         <div className="license-form">
           <input
             id="license-key"
+            ref={inputRef}
             value={key}
             onChange={(event) => setKey(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') void activate() }}
-            placeholder="Nhập key kích hoạt"
+            placeholder={t('Nhập key kích hoạt', 'Enter activation key')}
             autoComplete="off"
+            autoFocus
+            tabIndex={0}
             disabled={busy}
           />
           <button type="button" onClick={() => void activate()} disabled={busy || !key.trim()}>
-            {busy ? 'Đang kiểm tra…' : 'Kích hoạt'}
+            {busy ? t('Đang kiểm tra…', 'Checking…') : t('Kích hoạt', 'Activate')}
           </button>
         </div>
         {status.configured && (

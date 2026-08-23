@@ -804,7 +804,7 @@ export default function App() {
   return (
     <LocaleContext.Provider value={{ locale, setLocale }}>
     <LocaleTextSync />
-    <div className="app">
+    <div className={`app${licenseBlocked ? ' app-license-gate' : ''}`}>
       {!appUsable ? (
         <p className="cfg-boot-msg">
           {setupChecked
@@ -877,7 +877,7 @@ export default function App() {
             void api.voices(l).then(setVoices).catch(() => {})
           }}
         />
-      ) : appMode === 'license' ? (
+      ) : appMode === 'license' && !licenseBlocked ? (
         <LicensePage status={licenseStatus || EMPTY_LICENSE} onStatusChange={setLicenseStatus} />
       ) : appMode === 'download' ? (
         <DownloadPage
