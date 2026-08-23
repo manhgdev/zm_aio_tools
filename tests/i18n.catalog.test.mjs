@@ -26,7 +26,6 @@ test('English catalog covers Configuration labels', () => {
     assert.equal(catalog[vietnamese], english, vietnamese)
   }
 })
-
 test('English catalog has no empty entries', () => {
   const missing = Object.entries(catalog).filter(([, english]) => !String(english).trim())
   assert.deepEqual(missing, [])

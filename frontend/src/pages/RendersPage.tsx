@@ -175,9 +175,9 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
                 ) : (
                   <a href={item.downloadUrl} download={`video-clone-${item.renderId}.mp4`}><IconDownload size={14} /> Tải xuống</a>
                 )}
-                <button type="button" disabled={openingId === item.renderId} onClick={() => void editRender(item)}>
+                {item.projectId !== 'srt' && <button type="button" disabled={openingId === item.renderId} onClick={() => void editRender(item)}>
                   {openingId === item.renderId ? 'Đang mở…' : 'Sửa'}
-                </button>
+                </button>}
                 <button type="button" className="render-delete" onClick={() => void deleteRender(item)}>Xóa</button>
               </div>
             </article>

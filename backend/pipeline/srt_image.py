@@ -11,13 +11,15 @@ import sys
 import threading
 import time
 import uuid
+import shutil
 from pathlib import Path
 from typing import Any
 
-from pipeline.core.config import DATA
+from pipeline.core.config import DATA, PUBLIC_DATA
 from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
 from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
+from pipeline.drawing.jobs import create_job as create_drawing_job, get_job as get_drawing_job, start as start_drawing_job
 
 ROOT = DATA / "srt_image"
 ROOT.mkdir(parents=True, exist_ok=True)
@@ -266,6 +268,19 @@ def _log(job_id: str, message: str) -> None:
         logs = job.setdefault("logs", [])
         logs.append(f"[{time.strftime('%H:%M:%S')}] {message}")
         del logs[:-200]
+
+
+def _publish_render(job_id: str, source: Path, name: str) -> Path:
+    """Expose a completed SRT render in the shared Rendered tab catalogue."""
+    exports = PUBLIC_DATA / "exports"
+    exports.mkdir(parents=True, exist_ok=True)
+    published = exports / f"srt-{job_id}.mp4"
+    shutil.copy2(source, published)
+    published.with_suffix(".json").write_text(
+        json.dumps({"name": Path(name).stem or "Ghép ảnh/video SRT", "projectId": "srt"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return published
 
 
 def output_path(job_id: str) -> Path | None:
@@ -565,6 +580,37 @@ def _motion_filter(
     )
 
 
+def _drawing_video_sources(job_id: str, media: list[Path], durations: list[float], options: dict, work: Path) -> list[Path]:
+    drawing = options.get("drawing") if isinstance(options.get("drawing"), dict) else {}
+    if not drawing.get("enabled"):
+        return media
+    rendered: list[Path] = []
+    for index, (source, duration) in enumerate(zip(media, durations), start=1):
+        if is_video(source):
+            rendered.append(source)
+            continue
+        _log(job_id, f"Đang vẽ ảnh {index}/{len(durations)}: {source.name}")
+        drawing_job = create_drawing_job(source.name, source, {
+            "duration": max(2, min(60, duration)), "fps": int(options.get("fps", 30)),
+            "resolution": drawing.get("resolution", "1080p"), "mode": drawing.get("mode", "hand"),
+            "tool": drawing.get("tool", "pencil"), "detail": drawing.get("detail", 72),
+            "thickness": drawing.get("thickness", 2), "strokeOrder": drawing.get("strokeOrder", "natural"),
+        })
+        start_drawing_job(drawing_job["id"])
+        while True:
+            state = get_drawing_job(drawing_job["id"])
+            if not state or state.get("status") in {"done", "error", "cancelled"}:
+                break
+            time.sleep(.25)
+        if not state or state.get("status") != "done":
+            raise RuntimeError(f"Không vẽ được ảnh {source.name}: {(state or {}).get('error') or 'job bị hủy'}")
+        target = work / f"drawing_{index:05d}.mp4"
+        shutil.copy2(state["output"], target)
+        rendered.append(target)
+        _update(job_id, status="processing", progress=round(index / len(durations) * 30, 1))
+    return rendered
+
+
 def run(job_id: str) -> None:
     job = get_job(job_id)
     if not job:
@@ -580,6 +626,8 @@ def run(job_id: str) -> None:
             for i, (start, end) in enumerate(cues)
         ]
         opts = job["options"]
+        work = Path(job["work"])
+        media = _drawing_video_sources(job_id, media, durations, opts, work)
         resolution = str(opts.get("resolution", "auto"))
         width, height = image_resolution(media[0]) if resolution == "auto" else (
             int(value) for value in resolution.split("x", 1)
@@ -593,7 +641,6 @@ def run(job_id: str) -> None:
             f"Đầu vào: {len(media)} media · {len(cues)} cảnh · {width}x{height} · {fps} FPS",
         )
         _log(job_id, f"Encoder: {gpu_encoder or 'CPU libx264'} · quality {crf}")
-        work = Path(job["work"])
         zoom_mode = str(opts.get("zoom", "off"))
         # ponytail: delogo — xóa watermark AI trước scale/zoom, tính trên frame gốc
         delogo_prefix = ""
@@ -759,8 +806,9 @@ def run(job_id: str) -> None:
             detail = "\n".join(stderr_tail[-12:])
             raise RuntimeError(f"FFmpeg kết thúc với mã {code}\n{detail}")
         path = Path(job["output"])
+        published = _publish_render(job_id, path, str(job.get("name") or ""))
         _update(job_id, status="done", progress=100, outputSize=path.stat().st_size)
-        _log(job_id, f"Hoàn thành: {path} ({path.stat().st_size / 1_048_576:.1f} MB)")
+        _log(job_id, f"Hoàn thành: {path} ({path.stat().st_size / 1_048_576:.1f} MB) · Đã thêm: {published.name}")
     except Exception as exc:
         with _LOCK:
             _PROCS.pop(job_id, None)

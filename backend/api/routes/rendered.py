@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from pipeline.core.config import PUBLIC_DATA
 from pipeline.core.media import ffprobe_duration, video_size
+from pipeline.core.output_paths import downloads_folder
 
 router = APIRouter()
 _RENDER_ID = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -27,7 +28,7 @@ class RenderRenameIn(BaseModel):
 
 
 def _export_mp4_paths() -> list[Path]:
-    """Mọi video đã xuất: exports/ phẳng (cũ) + <project_id>/exports/ (hiện tại).
+    """Mọi video đã xuất từ Clone, Ghép SRT và Vẽ tay.
 
     ponytail: render_id = tên file. Hai project đặt trùng tên render → bản mới
     nhất thắng; nâng cấp thì đổi id thành '<project>__<name>' ở cả 3 chỗ dùng.
@@ -43,6 +44,10 @@ def _export_mp4_paths() -> list[Path]:
             sub = project_dir / "exports"
             if sub.is_dir():
                 paths.extend(sub.glob("*.mp4"))
+    # Các tool độc lập không có project nên xuất mặc định vào Downloads.
+    # Include chúng để các bản render cũ cũng xuất hiện, không chỉ job mới.
+    for folder in (downloads_folder("subtitle-image"), downloads_folder("drawing")):
+        paths.extend(folder.glob("*.mp4"))
     uniq = [p for p in paths if _RENDER_ID.fullmatch(p.stem)]
     uniq.sort(key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True)
     return uniq
