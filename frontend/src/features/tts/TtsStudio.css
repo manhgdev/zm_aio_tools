@@ -1831,8 +1831,15 @@ html.dark .tts-wave-box {
 
 /* History */
 .tts-history-wrap {
-  overflow-x: auto;
+  /* The action download menu needs to layer over the pager below it. */
+  overflow: visible;
   flex: 0 0 auto;
+  position: relative;
+  z-index: 0;
+}
+
+.tts-history-wrap:has(.tts-dl-wrap.is-open) {
+  z-index: 20;
 }
 
 /* Lịch sử: ôm nội dung, không đệm trắng phía dưới */
@@ -1931,11 +1938,15 @@ html.dark .tts-wave-box {
   position: relative;
 }
 
+.tts-dl-wrap.is-open {
+  z-index: 30;
+}
+
 .tts-dl-menu {
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
-  z-index: 40;
+  z-index: 30;
   min-width: 148px;
   padding: 4px;
   border-radius: 10px;
@@ -2005,6 +2016,8 @@ html.dark .tts-wave-box {
 }
 
 .tts-pager {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2013,6 +2026,13 @@ html.dark .tts-wave-box {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--tts-line);
+}
+
+@media (max-width: 900px) {
+  .tts-history-wrap {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
 }
 
 .tts-pager-info {

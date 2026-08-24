@@ -566,6 +566,17 @@ test('Flow default account selection updates the account cards immediately', asy
   assert.match(source, /onClick=\{\(\) => void setDefaultAccount\(account\.id\)\}/)
 })
 
+test('TTS history action menu layers above its pager', async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/features/tts/TtsHistoryPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/tts/TtsStudio.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(panel, /tts-dl-wrap\$\{downloadMenuId === h\.id \? ' is-open' : ''\}/)
+  assert.match(styles, /\.tts-history-wrap:has\(\.tts-dl-wrap\.is-open\)\s*\{\s*z-index: 20;/s)
+  assert.match(styles, /\.tts-dl-wrap\.is-open\s*\{\s*z-index: 30;/s)
+  assert.match(styles, /\.tts-pager\s*\{\s*position: relative;\s*z-index: 1;/s)
+})
+
 test('Flow manual prompt provides bilingual paste and clear actions', async () => {
   const [source, styles] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),

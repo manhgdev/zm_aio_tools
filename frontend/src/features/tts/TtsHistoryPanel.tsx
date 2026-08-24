@@ -116,7 +116,7 @@ export default function TtsHistoryPanel({
                       </button>
                     )}
                     {h.audioUrl && (
-                      <div className="tts-dl-wrap">
+                      <div className={`tts-dl-wrap${downloadMenuId === h.id ? ' is-open' : ''}`}>
                         <button
                           type="button"
                           title={isDesktopApp
