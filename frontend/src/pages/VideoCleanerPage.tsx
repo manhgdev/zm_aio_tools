@@ -392,7 +392,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                   </div>
                 </div>
               )}
-              <div style={{ marginTop: 14 }}><OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? () => pickOutputDir().catch((error) => alert(error instanceof Error ? error.message : String(error))) : undefined} onSave={() => localStorage.setItem(LS_VC_OUTPUT_DIR, outputDir)} defaultPath={t('Mặc định: Downloads/ZM_AIO_TOOL/cleaner', 'Default: Downloads/ZM_AIO_TOOL/cleaner')} /></div>
+              <div style={{ marginTop: 14 }}><OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? () => pickOutputDir().catch((error) => alert(error instanceof Error ? error.message : String(error))) : undefined} onSave={() => localStorage.setItem(LS_VC_OUTPUT_DIR, outputDir)} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder="cleaner" /></div>
             </div>
 
             {/* Card 2 — Phương pháp */}

@@ -595,7 +595,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                 </label>
               </div>
 
-              <OutputFolderField isDesktopApp={isDesktopApp} value={savePath} onChange={(value) => { setSavePath(value); setPathMsg('') }} onChoose={isDesktopApp ? onPickFolder : undefined} onSave={applySavePath} defaultPath={t('Mặc định: Downloads/ZM_AIO_TOOL/download-video', 'Default: Downloads/ZM_AIO_TOOL/download-video')} disabled={pathBusy} />
+              <OutputFolderField isDesktopApp={isDesktopApp} value={savePath} onChange={(value) => { setSavePath(value); setPathMsg('') }} onChoose={isDesktopApp ? onPickFolder : undefined} onSave={applySavePath} defaultPath={t('Ví dụ: kenh-a hoặc video-01.mp4', 'Example: channel-a or video-01.mp4')} appFolder="download-video" disabled={pathBusy} />
               {pathMsg && <span className="dl-path-msg">{pathMsg}</span>}
 
               <div className="dl-checks">

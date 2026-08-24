@@ -210,12 +210,14 @@ test('Drawing tab uses bilingual localized UI', async () => {
   assert.match(source, /Từ tâm lan ra/)
   assert.match(source, /Centre outward/)
   assert.match(source, /OutputFolderField/)
-  assert.match(source, /Downloads\/ZM_AIO_TOOL\/drawing/)
+  assert.match(source, /appFolder="drawing"/)
 })
 
 test('APP outputs share one documented root with feature subfolders', async () => {
-  const [paths, flow, drawing, batch, cleaner, subtitles, review, tts, download] = await Promise.all([
+  const [paths, config, field, flow, drawing, batch, cleaner, subtitles, review, tts, download] = await Promise.all([
     readFile(new URL('../backend/pipeline/core/output_paths.py', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/core/app_config.py', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/DrawingPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8'),
@@ -226,8 +228,12 @@ test('APP outputs share one documented root with feature subfolders', async () =
     readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8'),
   ])
   assert.match(paths, /APP_OUTPUT_ROOT_NAME = "ZM_AIO_TOOL"/)
+  assert.match(config, /"desktopOutputRoot"/)
+  assert.match(field, /output-folder-prefix/)
+  assert.match(field, /appFolder: string/)
+  assert.match(field, /Nhập tên thư mục con hoặc tên file; phần đường dẫn đầu là cố định/)
   for (const source of [flow, drawing, batch, cleaner, subtitles, review, tts, download]) {
-    assert.match(source, /Downloads\/ZM_AIO_TOOL/)
+    assert.match(source, /appFolder=/)
   }
 })
 

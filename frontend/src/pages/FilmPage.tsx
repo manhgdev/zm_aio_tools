@@ -658,7 +658,7 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
             </div>
           </label>
           <ReviewLangFields settings={draft} onChange={set} />
-          <OutputFolderField isDesktopApp={isDesktopApp} value={draft.outputDir} onChange={(outputDir) => set({ outputDir })} onChoose={isDesktopApp ? pickOut : undefined} onSave={() => localStorage.setItem(DRAFT_LS, JSON.stringify(draft))} defaultPath={t('Mặc định: Downloads/ZM_AIO_TOOL/review', 'Default: Downloads/ZM_AIO_TOOL/review')} label={t('Thư mục lưu video', 'Video output folder')} />
+          <OutputFolderField isDesktopApp={isDesktopApp} value={draft.outputDir} onChange={(outputDir) => set({ outputDir })} onChoose={isDesktopApp ? pickOut : undefined} onSave={() => localStorage.setItem(DRAFT_LS, JSON.stringify(draft))} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder="review" label={t('Thư mục lưu video', 'Video output folder')} />
 
           <ReviewLeftPanel settings={draft} onChange={set} />
           <AudioSlider value={draft.originalAudioPct} onChange={(v) => set({ originalAudioPct: v })} />

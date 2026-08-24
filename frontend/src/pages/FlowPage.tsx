@@ -1592,7 +1592,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                 </div>
               )}
               <div className="flow-output-row">
-                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? () => void pickOutputFolder() : undefined} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t("Mặc định: Downloads/ZM_AIO_TOOL/flow", "Default: Downloads/ZM_AIO_TOOL/flow")} label={t("3. Thư mục kết quả", "3. Output folder")} />
+                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? () => void pickOutputFolder() : undefined} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')} appFolder="flow" label={t("3. Thư mục kết quả", "3. Output folder")} />
                 {!isDesktopApp && (
                   <label className="flow-check">
                     <input

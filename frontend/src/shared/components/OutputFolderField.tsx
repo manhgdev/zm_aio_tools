@@ -1,6 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { localize, useLocale } from '@/app/i18n'
 import './OutputFolderField.css'
+
+let desktopOutputRootRequest: Promise<string> | undefined
+
+function loadDesktopOutputRoot() {
+  if (!desktopOutputRootRequest) {
+    desktopOutputRootRequest = fetch('/api/config')
+      .then(async (response) => response.ok ? response.json() as Promise<{ desktopOutputRoot?: string }> : null)
+      .then((config) => String(config?.desktopOutputRoot || ''))
+      .catch(() => '')
+  }
+  return desktopOutputRootRequest
+}
 
 type Props = {
   isDesktopApp: boolean
@@ -9,6 +21,7 @@ type Props = {
   onChoose?: () => void | Promise<void>
   onSave?: () => void | Promise<void>
   defaultPath: string
+  appFolder: string
   label?: string
   disabled?: boolean
   selectedRootName?: string
@@ -22,6 +35,7 @@ export function OutputFolderField({
   onChoose,
   onSave,
   defaultPath,
+  appFolder,
   label,
   disabled = false,
   selectedRootName = '',
@@ -30,7 +44,36 @@ export function OutputFolderField({
   const { locale } = useLocale()
   const t = (vi: string, en: string) => localize(locale, vi, en)
   const [message, setMessage] = useState('')
+  const [desktopOutputRoot, setDesktopOutputRoot] = useState('')
   useEffect(() => setMessage(''), [value])
+  useEffect(() => {
+    if (!isDesktopApp) return
+    let active = true
+    void loadDesktopOutputRoot()
+      .then((outputRoot) => {
+        if (active && outputRoot) setDesktopOutputRoot(outputRoot)
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [isDesktopApp])
+
+  const appPath = useMemo(() => {
+    const fallbackRoot = `Downloads/ZM_AIO_TOOL/${appFolder}`
+    const defaultRoot = `${desktopOutputRoot || fallbackRoot}`.replace(/[\\/]+$/, '')
+    const entered = value.trim()
+    if (!entered || !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(entered)) {
+      return { prefix: `${defaultRoot}/`, suffix: value }
+    }
+    const normalized = entered.replace(/[\\/]+$/, '')
+    const separatorIndex = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
+    if (separatorIndex < 0) return { prefix: `${defaultRoot}/`, suffix: value }
+    return { prefix: `${normalized.slice(0, separatorIndex + 1)}`, suffix: normalized.slice(separatorIndex + 1) }
+  }, [appFolder, desktopOutputRoot, value])
+
+  function changeAppSuffix(nextSuffix: string) {
+    const suffix = nextSuffix.trimStart()
+    onChange(suffix ? `${appPath.prefix}${suffix}` : '')
+  }
 
   async function save() {
     await onSave?.()
@@ -48,23 +91,39 @@ export function OutputFolderField({
         <small>{isDesktopApp ? 'APP' : 'WEB'}</small>
       </span>
       <div className={`output-folder-row ${isDesktopApp ? 'is-app' : 'is-web-editable'} ${onChoose ? 'has-choose' : ''}`}>
-        <input
-          type="text"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={isDesktopApp
-            ? defaultPath
-            : webFolderOnly
+        {isDesktopApp ? (
+          <div className="output-folder-app-path">
+            <span className="output-folder-prefix" title={appPath.prefix}>
+              <small>{t('Cố định', 'Fixed')}</small>
+              <span>{appPath.prefix}</span>
+            </span>
+            <input
+              aria-label={t('Tên thư mục hoặc tệp đầu ra', 'Output subfolder or file name')}
+              className="output-folder-suffix"
+              type="text"
+              value={appPath.suffix}
+              onChange={(event) => changeAppSuffix(event.target.value)}
+              placeholder={defaultPath}
+              title={t('Nhập tên thư mục con hoặc tên file; phần đường dẫn đầu là cố định.', 'Enter a subfolder or file name; the base path is fixed.')}
+              disabled={disabled}
+              spellCheck={false}
+            />
+          </div>
+        ) : (
+          <input
+            type="text"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={webFolderOnly
               ? t('Ví dụ: du-an-01', 'Example: project-01')
               : t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')}
-          title={isDesktopApp
-            ? t('Đường dẫn đầy đủ trên máy chạy APP', 'Full path on the computer running the app')
-            : webFolderOnly
+            title={webFolderOnly
               ? t('Tên thư mục con chứa kết quả', 'Result subfolder name')
               : t('Tên thư mục con hoặc tên file đầu ra', 'Output subfolder or file name')}
-          disabled={disabled}
-          spellCheck={false}
-        />
+            disabled={disabled}
+            spellCheck={false}
+          />
+        )}
         {isDesktopApp ? (
           <>
             <button type="button" disabled={disabled || !onChoose} onClick={() => void onChoose?.()} title={t('Chọn thư mục', 'Choose folder')}>
@@ -93,7 +152,7 @@ export function OutputFolderField({
         {message || (!isDesktopApp && selectedRootName
           ? t(`Sẽ lưu vào ${selectedRootName}/${value || 'flow'}.`, `Will save to ${selectedRootName}/${value || 'flow'}.`)
           : isDesktopApp
-          ? t('Video, ảnh và file đầu ra sẽ được lưu tại đường dẫn này.', 'Videos, images, and output files will be saved to this path.')
+            ? t('Phần đầu là thư mục mặc định của APP; chỉ sửa tên thư mục hoặc tệp phía sau.', 'The APP base folder is fixed; edit only the subfolder or file name after it.')
           : t(
               webFolderOnly
                 ? 'Nhập tên thư mục con; ảnh và video sẽ được lưu bên trong.'

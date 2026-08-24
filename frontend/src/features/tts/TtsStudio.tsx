@@ -1825,7 +1825,8 @@ export default function TtsStudio({
                   if (result.path) setOutputDir(result.path)
                 } : undefined}
                 onSave={() => localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)}
-                defaultPath={t('Mặc định: Downloads/ZM_AIO_TOOL/text-to-speech', 'Default: Downloads/ZM_AIO_TOOL/text-to-speech')}
+                defaultPath={t('Ví dụ: du-an-01 hoặc giong-doc.mp3', 'Example: project-01 or narration.mp3')}
+                appFolder="text-to-speech"
                 label={t('Thư mục đầu ra', 'Output folder')}
                 disabled={busy}
               />

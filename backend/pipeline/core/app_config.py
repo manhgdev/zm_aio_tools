@@ -189,6 +189,7 @@ def save_app_config(patch: dict[str, Any]) -> dict[str, Any]:
 def public_app_config() -> dict[str, Any]:
     """Keys masked for UI."""
     cfg = load_app_config()
+    is_desktop = os.environ.get("VIDEO_CLONE_DESKTOP") == "1"
     out_cloud: dict[str, Any] = {}
     for pid, meta in PROVIDERS.items():
         b = cfg["cloud"][pid]
@@ -222,7 +223,11 @@ def public_app_config() -> dict[str, Any]:
             }
         },
         # Bản đóng gói / launcher — file đã trên máy, không cần «Tải xuống»
-        "desktop": os.environ.get("VIDEO_CLONE_DESKTOP") == "1",
+        "desktop": is_desktop,
+        # The desktop UI uses this to show the real, read-only root before the
+        # user-editable feature subfolder.  Keep output locations discoverable
+        # without hard-coding a specific account's home directory in the web UI.
+        "desktopOutputRoot": str(Path.home() / "Downloads" / "ZM_AIO_TOOL") if is_desktop else "",
     }
 
 
