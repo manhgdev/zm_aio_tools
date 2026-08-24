@@ -231,6 +231,25 @@ test('APP outputs share one documented root with feature subfolders', async () =
   }
 })
 
+test('output-folder pickers are APP-only across every tab', async () => {
+  const files = [
+    '../frontend/src/pages/FlowPage.tsx',
+    '../frontend/src/pages/DrawingPage.tsx',
+    '../frontend/src/pages/BatchPage.tsx',
+    '../frontend/src/pages/VideoCleanerPage.tsx',
+    '../frontend/src/pages/SrtExportPage.tsx',
+    '../frontend/src/pages/FilmPage.tsx',
+    '../frontend/src/features/editor/ExportModal.tsx',
+    '../frontend/src/features/download/DownloadStudio.tsx',
+    '../frontend/src/features/tts/TtsStudio.tsx',
+  ]
+  const sources = await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), 'utf8')))
+  for (const source of sources) {
+    assert.match(source, /<OutputFolderField/)
+    assert.match(source, /onChoose=\{isDesktopApp \?/)
+  }
+})
+
 test('Flow/Veo backend workspace uses bilingual localized UI', async () => {
   const [source, styles] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),

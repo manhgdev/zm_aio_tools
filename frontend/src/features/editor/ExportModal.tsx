@@ -347,7 +347,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               />
             </div>
 
-            <OutputFolderField isDesktopApp={isDesktopApp} value={exportDir} onChange={setExportDir} onChoose={pickFolder} onSave={() => localStorage.setItem('exportOutputDir', exportDir)} defaultPath={t('Mặc định: Thư mục dự án', 'Default: Project folder')} label={t('Xuất sang', 'Export to')} />
+            <OutputFolderField isDesktopApp={isDesktopApp} value={exportDir} onChange={setExportDir} onChoose={isDesktopApp ? pickFolder : undefined} onSave={() => localStorage.setItem('exportOutputDir', exportDir)} defaultPath={t('Mặc định: Thư mục dự án', 'Default: Project folder')} label={t('Xuất sang', 'Export to')} />
 
             {/* ── 1. Group Video ── */}
 

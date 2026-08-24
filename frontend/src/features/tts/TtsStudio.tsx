@@ -1820,10 +1820,10 @@ export default function TtsStudio({
                 isDesktopApp={isDesktopApp}
                 value={outputDir}
                 onChange={setOutputDir}
-                onChoose={async () => {
+                onChoose={isDesktopApp ? async () => {
                   const result = await studioApi.pickFolder()
                   if (result.path) setOutputDir(result.path)
-                }}
+                } : undefined}
                 onSave={() => localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)}
                 defaultPath={t('Mặc định: Downloads/ZM_AIO_TOOL/text-to-speech', 'Default: Downloads/ZM_AIO_TOOL/text-to-speech')}
                 label={t('Thư mục đầu ra', 'Output folder')}
