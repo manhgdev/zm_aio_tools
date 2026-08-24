@@ -149,12 +149,11 @@ def _release_asset(release: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _release_checksum_asset(release: dict[str, Any], asset_name: str) -> dict[str, Any] | None:
-    expected_name = f"{asset_name}.sha256"
-    for asset in release.get("assets") or []:
-        if isinstance(asset, dict) and str(asset.get("name") or "") == expected_name:
-            return asset
-    return None
+def _release_checksum(asset: dict[str, Any] | None) -> str | None:
+    """GitHub supplies an immutable sha256 digest for each release asset."""
+    digest = str((asset or {}).get("digest") or "")
+    match = re.fullmatch(r"sha256:([a-fA-F0-9]{64})", digest)
+    return match.group(1).lower() if match else None
 
 
 def _update_supported() -> bool:
@@ -172,24 +171,11 @@ def _set_update_state(**values: Any) -> None:
         _UPDATE_STATE.update(values)
 
 
-def _read_checksum(asset: dict[str, Any]) -> str:
-    url = str(asset.get("browser_download_url") or "")
-    if not url:
-        raise RuntimeError("Release thiếu file checksum")
-    with urllib.request.urlopen(url, timeout=30) as response:
-        text = response.read().decode("utf-8", "replace")
-    match = re.search(r"\b([a-fA-F0-9]{64})\b", text)
-    if not match:
-        raise RuntimeError("Checksum release không hợp lệ")
-    return match.group(1).lower()
-
-
-def _download_update(asset: dict[str, Any], checksum_asset: dict[str, Any], updates: Path, version: str) -> Path:
+def _download_update(asset: dict[str, Any], expected: str, updates: Path, version: str) -> Path:
     name = str(asset.get("name") or "")
     url = str(asset.get("browser_download_url") or "")
     if not name or not url:
         raise RuntimeError("Release không có gói cài đặt phù hợp")
-    expected = _read_checksum(checksum_asset)
     target = updates / name
     partial = target.with_suffix(target.suffix + ".part")
     digest = hashlib.sha256()
@@ -674,7 +660,7 @@ def api_update_check():
         release = _latest_release()
         tag = str(release.get("tag_name") or "")
         asset = _release_asset(release)
-        checksum = _release_checksum_asset(release, str(asset.get("name") or "")) if asset else None
+        checksum = _release_checksum(asset)
         return {
             "desktop": True,
             "supported": _update_supported(),
@@ -706,7 +692,7 @@ def api_update_install():
             release = _latest_release()
             tag = str(release.get("tag_name") or "")
             asset = _release_asset(release)
-            checksum = _release_checksum_asset(release, str(asset.get("name") or "")) if asset else None
+            checksum = _release_checksum(asset)
             if not asset or not checksum or _version_key(tag) <= _version_key(_desktop_version()):
                 _set_update_state(phase="complete", progress=100, message="Đã là phiên bản mới nhất")
                 return

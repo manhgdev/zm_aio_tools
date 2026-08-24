@@ -51,6 +51,7 @@ test('desktop update check uses bilingual in-app dialog and verified updater API
   assert.match(system, /\/api\/system\/update\/check/)
   assert.match(system, /\/api\/system\/update\/install/)
   assert.match(system, /\/api\/system\/update\/status/)
+  assert.match(system, /_release_checksum/)
   assert.match(system, /Checksum gói cập nhật không khớp/)
 })
 

@@ -11,15 +11,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14
-            asset_arch: arm64
-          - runner: macos-13
-            asset_arch: x64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v6
@@ -71,13 +63,10 @@ jobs:
           }
           version="$(basename "$app" | sed -E 's/^ZM_AIO_TOOL_v|\.app$//g')"
           codesign --force --deep --sign - "$app"
-          pkg="build_app/release/ZM_AIO_TOOL_v${version}-macos-${{ matrix.asset_arch }}.pkg"
+          pkg="build_app/release/ZM_AIO_TOOL_v${version}-macos-arm64.pkg"
           pkgbuild --component "$app" --install-location /Applications "$pkg"
-          checksum="${pkg}.sha256"
-          printf '%s  %s\n' "$(shasum -a 256 "$pkg" | awk '{print $1}')" "$(basename "$pkg")" > "$checksum"
           echo "app=$app" >> "$GITHUB_OUTPUT"
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
-          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -85,13 +74,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           PKG: ${{ steps.package.outputs.pkg }}
-          CHECKSUM: ${{ steps.package.outputs.checksum }}
         shell: bash
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$PKG" "$CHECKSUM" --clobber
-          elif ! gh release create "$TAG" "$PKG" "$CHECKSUM" --generate-notes --title "ZM AIO TOOL $TAG"; then
+            gh release upload "$TAG" "$PKG" --clobber
+          elif ! gh release create "$TAG" "$PKG" --generate-notes --title "ZM AIO TOOL $TAG"; then
             sleep 5
-            gh release upload "$TAG" "$PKG" "$CHECKSUM" --clobber
+            gh release upload "$TAG" "$PKG" --clobber
           fi

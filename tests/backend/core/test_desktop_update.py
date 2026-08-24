@@ -13,18 +13,17 @@ def test_update_selects_only_matching_macos_architecture():
     )
     assert system._desktop_platform_asset_suffix("darwin", "arm64") == "-macos-arm64.pkg"
     assert system._desktop_platform_asset_suffix("darwin", "x86_64") == "-macos-x64.pkg"
-    assert system._release_checksum_asset(release, "missing.pkg") is None
+    assert system._release_checksum(None) is None
 
 
 def test_windows_asset_and_checksum_are_paired(monkeypatch):
     release = _release(
-        {"name": "ZM_AIO_TOOL_v3.5.7-windows-x64.zip"},
-        {"name": "ZM_AIO_TOOL_v3.5.7-windows-x64.zip.sha256"},
+        {"name": "ZM_AIO_TOOL_v3.5.7-windows-x64.zip", "digest": "sha256:" + "a" * 64},
     )
     monkeypatch.setattr(system.sys, "platform", "win32")
     asset = system._release_asset(release)
     assert asset and asset["name"].endswith("-windows-x64.zip")
-    assert system._release_checksum_asset(release, asset["name"])["name"].endswith(".sha256")
+    assert system._release_checksum(asset) == "a" * 64
 
 
 def test_update_rejects_asset_with_a_different_version(monkeypatch):
@@ -58,11 +57,10 @@ def test_download_update_rejects_bad_checksum(monkeypatch, tmp_path):
         def __exit__(self, *_args):
             return False
 
-    monkeypatch.setattr(system, "_read_checksum", lambda _asset: "0" * 64)
     monkeypatch.setattr(system.urllib.request, "urlopen", lambda *_args, **_kwargs: Response(payload))
     asset = {"name": "app.zip", "browser_download_url": "https://example.invalid/app.zip"}
     try:
-        system._download_update(asset, {}, tmp_path, "3.5.7")
+        system._download_update(asset, "0" * 64, tmp_path, "3.5.7")
     except RuntimeError as exc:
         assert "Checksum" in str(exc)
     else:
