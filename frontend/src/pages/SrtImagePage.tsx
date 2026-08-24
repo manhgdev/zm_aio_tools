@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import './SrtImagePage.css'
 import { localize, useLocale } from '../app/i18n'
 import { BackTitle } from '../shared/components/BackTitle'
+import { copyText } from '../shared/lib/clipboard'
 import { CAPTION_FONT_PRESETS, captionChromeStyle, captionFontCss } from '../features/editor/lib/previewStyles'
 
 type Job = {
@@ -420,7 +421,7 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
                 <label>File xuất <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('output') }}>i</span></label>
                 <div className="siv-input siv-output-path"><span title={outputDirectory}>{outputDirectory}</span><input value={outputName.replace(/\.mp4$/i, '')} onChange={(e) => renameOutput(e.target.value)} /><b>.mp4</b></div>
                 <button onClick={chooseOutput}>Chọn</button>
-                <button onClick={() => { setOutputPath(''); setOutputName('output.mp4') }}>Xóa</button>
+                <button onClick={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...cachedSettings(), outputName, outputPath }))}>{localize(locale, 'Lưu', 'Save')}</button>
               </div>
               <div className="siv-row">
                 <label>File phụ đề <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('subtitles') }}>i</span></label>
@@ -592,7 +593,7 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
               <header>
                 <strong>Log chi tiết</strong>
                 <div>
-                  <button type="button" onClick={() => navigator.clipboard.writeText(logText)}>Copy</button>
+                  <button type="button" onClick={() => void copyText(logText)}>Copy</button>
                   <button type="button" onClick={() => setLogStart(job?.logs?.length || 0)}>Xóa</button>
                 </div>
               </header>

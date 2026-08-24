@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import hashlib
 import subprocess
 import sys
 import uuid
@@ -28,11 +29,7 @@ class RenderRenameIn(BaseModel):
 
 
 def _export_mp4_paths() -> list[Path]:
-    """Mọi video đã xuất từ Clone, Ghép SRT và Vẽ tay.
-
-    ponytail: render_id = tên file. Hai project đặt trùng tên render → bản mới
-    nhất thắng; nâng cấp thì đổi id thành '<project>__<name>' ở cả 3 chỗ dùng.
-    """
+    """All known completed Clone, Review and standalone-tool videos."""
     paths: list[Path] = []
     flat = PUBLIC_DATA / "exports"
     if flat.is_dir():
@@ -46,17 +43,59 @@ def _export_mp4_paths() -> list[Path]:
                 paths.extend(sub.glob("*.mp4"))
     # Các tool độc lập không có project nên xuất mặc định vào Downloads.
     # Include chúng để các bản render cũ cũng xuất hiện, không chỉ job mới.
-    for folder in (downloads_folder("subtitle-image"), downloads_folder("drawing")):
+    for folder in (
+        downloads_folder("video-clone"),
+        downloads_folder("film"),
+        downloads_folder("subtitle-image"),
+        downloads_folder("drawing"),
+    ):
         paths.extend(folder.glob("*.mp4"))
-    uniq = [p for p in paths if _RENDER_ID.fullmatch(p.stem)]
+    # User-facing filenames may contain spaces, Unicode or share a basename in
+    # different output folders. Deduplicate by absolute path, not by filename.
+    seen: set[str] = set()
+    uniq: list[Path] = []
+    for candidate in paths:
+        if not candidate.is_file():
+            continue
+        key = str(candidate.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(candidate)
     uniq.sort(key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True)
     return uniq
+
+
+def _render_id(output: Path, paths: list[Path]) -> str:
+    """Keep legacy IDs when unique; hash path for unsafe/duplicate filenames."""
+    stem = output.stem
+    duplicates = sum(path.stem == stem for path in paths) > 1
+    if _RENDER_ID.fullmatch(stem) and not duplicates:
+        return stem
+    digest = hashlib.sha256(str(output.resolve()).encode("utf-8")).hexdigest()[:16]
+    return f"media-{digest}"
 
 
 def _render_path(render_id: str) -> Path | None:
     if not _RENDER_ID.fullmatch(render_id):
         return None
-    return next((p for p in _export_mp4_paths() if p.stem == render_id and p.is_file()), None)
+    paths = _export_mp4_paths()
+    return next((path for path in paths if _render_id(path, paths) == render_id), None)
+
+
+def _project_id(output: Path, saved: dict[str, Any]) -> str:
+    explicit = str(saved.get("projectId") or "").strip()
+    if explicit:
+        return explicit
+    if output.parent == PUBLIC_DATA / "exports":
+        return output.stem.split("-", 1)[0]
+    try:
+        relative = output.resolve().relative_to(PUBLIC_DATA.resolve())
+    except ValueError:
+        return ""
+    if len(relative.parts) >= 3 and relative.parts[1] == "exports":
+        return relative.parts[0]
+    return ""
 
 
 def list_rendered_videos() -> list[dict[str, Any]]:
@@ -66,14 +105,14 @@ def list_rendered_videos() -> list[dict[str, Any]]:
     archived_projects = {path.stem.split("-", 1)[0] for path in paths if "-" in path.stem}
     items: list[dict[str, Any]] = []
     for output in paths:
-        render_id = output.stem
+        render_id = _render_id(output, paths)
         try:
             sidecar = output.with_suffix(".json")
             saved = json.loads(sidecar.read_text(encoding="utf-8")) if sidecar.is_file() else {}
-            project_id = saved.get("projectId") or render_id.split("-", 1)[0]
-            if render_id == project_id and project_id in archived_projects:
+            project_id = _project_id(output, saved)
+            if output.stem == project_id and project_id in archived_projects:
                 continue
-            name = str(saved.get("name") or "").strip() or f"Render {project_id}"
+            name = str(saved.get("name") or "").strip() or output.stem
             width, height = video_size(output)
             duration = ffprobe_duration(output)
             stat = output.stat()
@@ -84,6 +123,7 @@ def list_rendered_videos() -> list[dict[str, Any]]:
         items.append({
             "renderId": render_id,
             "projectId": project_id,
+            "canEdit": bool(project_id),
             "name": name,
             "createdAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
             "sizeBytes": stat.st_size,
@@ -176,7 +216,7 @@ def api_render_video(render_id: str, download: bool = False):
     if path is None:
         raise HTTPException(404)
     if download:
-        return FileResponse(path, filename=f"video-clone-{render_id}.mp4", media_type="video/mp4")
+        return FileResponse(path, filename=path.name, media_type="video/mp4")
     return FileResponse(path, media_type="video/mp4", content_disposition_type="inline")
 
 

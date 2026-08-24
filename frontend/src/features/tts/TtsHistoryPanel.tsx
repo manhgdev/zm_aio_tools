@@ -1,11 +1,12 @@
 /** Bảng «Lịch sử tạo giọng»: phân trang + menu tải WAV/MP3/SRT/ZIP. */
 import { useEffect, useMemo, type Dispatch, type SetStateAction } from 'react'
+import { localize, useLocale } from '@/app/i18n'
 import type { HistoryItem, Voice } from './tts.types'
 import { engineLabel, voiceDisplayName } from './lib/voiceDisplay'
 import { HISTORY_MAX, HISTORY_PAGE_SIZE, fmtDur } from './lib/format'
 import { SRT_STYLE_OPTIONS } from './lib/srt'
 import { historyDownloadUrl } from './lib/download'
-import { IconDownload, IconPlay, IconTrash } from './TtsIcons'
+import { IconDownload, IconFile, IconPlay, IconTrash } from './TtsIcons'
 
 type Props = {
   history: HistoryItem[]
@@ -19,6 +20,9 @@ type Props = {
   onToggleSrtMenu: (id: string) => void
   onPlay: (h: HistoryItem) => void
   onDelete: (h: HistoryItem) => void
+  isDesktopApp?: boolean
+  /** APP mở file local trong Finder/Explorer; WEB mới tải qua trình duyệt. */
+  onReveal: (jobId: string, kind: 'wav' | 'mp3' | 'srt' | 'zip', style?: string) => void
   /** Tải file + đóng mọi menu (triggerDownload của TtsStudio). */
   onDownload: (url: string | undefined, filename: string) => void
 }
@@ -34,8 +38,12 @@ export default function TtsHistoryPanel({
   onToggleSrtMenu,
   onPlay,
   onDelete,
+  isDesktopApp = false,
+  onReveal,
   onDownload,
 }: Props) {
+  const { locale } = useLocale()
+  const t = (vietnamese: string, english: string) => localize(locale, vietnamese, english)
   const historyCapped = useMemo(() => history.slice(0, HISTORY_MAX), [history])
   const totalPages = Math.max(1, Math.ceil(historyCapped.length / HISTORY_PAGE_SIZE) || 1)
   const pageSafe = Math.min(Math.max(1, page), totalPages)
@@ -111,38 +119,40 @@ export default function TtsHistoryPanel({
                       <div className="tts-dl-wrap">
                         <button
                           type="button"
-                          title="Tải xuống — chọn định dạng"
+                          title={isDesktopApp
+                            ? t('Mở kết quả — chọn định dạng', 'Open output — choose format')
+                            : t('Tải xuống — chọn định dạng', 'Download — choose format')}
                           className={downloadMenuId === h.id ? 'is-open' : undefined}
                           onClick={(e) => {
                             e.stopPropagation()
                             onToggleDownloadMenu(h.id)
                           }}
                         >
-                          <IconDownload size={12} />
+                          {isDesktopApp ? <IconFile size={12} /> : <IconDownload size={12} />}
                         </button>
                         {downloadMenuId === h.id && (
                           <div className="tts-dl-menu" role="menu">
                             <button
                               type="button"
                               role="menuitem"
-                              onClick={() =>
-                                onDownload(
-                                  historyDownloadUrl(h, 'wav'),
-                                  `${(h.title || h.id).slice(0, 40)}.wav`,
-                                )
-                              }
+                              onClick={() => isDesktopApp
+                                ? onReveal(h.id, 'wav')
+                                : onDownload(
+                                    historyDownloadUrl(h, 'wav'),
+                                    `${(h.title || h.id).slice(0, 40)}.wav`,
+                                  )}
                             >
                               WAV
                             </button>
                             <button
                               type="button"
                               role="menuitem"
-                              onClick={() =>
-                                onDownload(
-                                  historyDownloadUrl(h, 'mp3'),
-                                  `${(h.title || h.id).slice(0, 40)}.mp3`,
-                                )
-                              }
+                              onClick={() => isDesktopApp
+                                ? onReveal(h.id, 'mp3')
+                                : onDownload(
+                                    historyDownloadUrl(h, 'mp3'),
+                                    `${(h.title || h.id).slice(0, 40)}.mp3`,
+                                  )}
                             >
                               MP3
                             </button>
@@ -166,12 +176,12 @@ export default function TtsHistoryPanel({
                                       key={opt.id}
                                       type="button"
                                       role="menuitem"
-                                      onClick={() =>
-                                        onDownload(
-                                          historyDownloadUrl(h, 'srt', opt.id),
-                                          `${(h.title || h.id).slice(0, 40)}-${opt.id}.srt`,
-                                        )
-                                      }
+                                      onClick={() => isDesktopApp
+                                        ? onReveal(h.id, 'srt', opt.id)
+                                        : onDownload(
+                                            historyDownloadUrl(h, 'srt', opt.id),
+                                            `${(h.title || h.id).slice(0, 40)}-${opt.id}.srt`,
+                                          )}
                                     >
                                       {opt.label}
                                     </button>
@@ -182,12 +192,12 @@ export default function TtsHistoryPanel({
                             <button
                               type="button"
                               role="menuitem"
-                              onClick={() =>
-                                onDownload(
-                                  historyDownloadUrl(h, 'zip'),
-                                  `${(h.title || h.id).slice(0, 40)}.zip`,
-                                )
-                              }
+                              onClick={() => isDesktopApp
+                                ? onReveal(h.id, 'zip')
+                                : onDownload(
+                                    historyDownloadUrl(h, 'zip'),
+                                    `${(h.title || h.id).slice(0, 40)}.zip`,
+                                  )}
                             >
                               ZIP (Audio + SRT)
                             </button>

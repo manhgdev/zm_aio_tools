@@ -22,6 +22,7 @@ const TtsPage = lazy(() => import('@/pages/TtsPage'))
 import DownloadPage from '@/pages/DownloadPage'
 import FilmPage from '@/pages/FilmPage'
 import BatchPage from '@/pages/BatchPage'
+import FlowPage from '@/pages/FlowPage'
 import RendersPage from '@/pages/RendersPage'
 import VideoCleanerPage from '@/pages/VideoCleanerPage'
 import SrtImagePage from '@/pages/SrtImagePage'
@@ -945,6 +946,8 @@ export default function App() {
           onOpenEditor={editRenderedProject}
           onOpenReviewProjects={() => navigateToMode('film')}
         />
+      ) : appMode === 'flow' ? (
+        <FlowPage onBack={goBackTab} />
       ) : appMode === 'cleaner' ? (
         <VideoCleanerPage onBack={goBackTab} />
       ) : appMode === 'srt-image' ? (

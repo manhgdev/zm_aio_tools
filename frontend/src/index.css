@@ -224,6 +224,8 @@ html.dark .panel {
     -webkit-font-smoothing: antialiased;
     font-size: 13px;
     overscroll-behavior-x: contain;
+    user-select: text;
+    -webkit-user-select: text;
   }
   button, select, input, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; }

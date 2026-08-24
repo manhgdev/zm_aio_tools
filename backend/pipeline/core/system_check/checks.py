@@ -99,19 +99,36 @@ def _install_from_plan(plan: dict[str, Any], item_id: str) -> tuple[str, str, st
     return value, label, hint
 
 
-def _ollama_executable() -> str | None:
-    """PATH của process có thể cũ nếu Ollama được cài sau khi VideoClone mở."""
-    found = _which("ollama")
-    if found:
-        return found
+def _ollama_candidates() -> tuple[Path, ...]:
+    """Known install locations when a GUI-launched APP has a minimal PATH."""
     if sys.platform == "win32":
-        for path in (
+        return (
             Path.home() / "AppData/Local/Programs/Ollama/ollama.exe",
             Path.home() / "AppData/Local/Ollama/ollama.exe",
             Path("C:/Program Files/Ollama/ollama.exe"),
-        ):
-            if path.is_file():
-                return str(path)
+        )
+    if sys.platform == "darwin":
+        return (
+            Path("/Applications/Ollama.app/Contents/Resources/ollama"),
+            Path.home() / "Applications/Ollama.app/Contents/Resources/ollama",
+            Path("/opt/homebrew/bin/ollama"),
+            Path("/usr/local/bin/ollama"),
+        )
+    return (
+        Path("/usr/local/bin/ollama"),
+        Path("/usr/bin/ollama"),
+        Path("/snap/bin/ollama"),
+    )
+
+
+def _ollama_executable() -> str | None:
+    """Find Ollama even when Finder/Explorer did not inherit the shell PATH."""
+    found = _which("ollama")
+    if found:
+        return found
+    for path in _ollama_candidates():
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
     return None
 
 

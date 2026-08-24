@@ -72,8 +72,12 @@ test('TTS voice list pagination is bilingual', async () => {
 
 test('TTS output actions distinguish desktop open from web download', async () => {
   const source = await readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8')
+  const historySource = await readFile(new URL('../frontend/src/features/tts/TtsHistoryPanel.tsx', import.meta.url), 'utf8')
   assert.match(source, /t\('Mở thư mục audio \(WAV\)', 'Open audio folder \(WAV\)'\)/)
   assert.match(source, /t\('Tải audio \(WAV\)', 'Download audio \(WAV\)'\)/)
+  assert.match(historySource, /isDesktopApp\s*\? onReveal\(h\.id, 'wav'\)/)
+  assert.match(historySource, /t\('Mở kết quả — chọn định dạng', 'Open output — choose format'\)/)
+  assert.match(historySource, /t\('Tải xuống — chọn định dạng', 'Download — choose format'\)/)
 })
 
 test('English catalog covers Review Phim and Batch queue', () => {
@@ -117,6 +121,17 @@ test('English catalog covers Review Phim and Batch queue', () => {
   for (const [vietnamese, english] of Object.entries(expected)) {
     assert.equal(catalog[vietnamese], english, vietnamese)
   }
+})
+
+test('Render list is bilingual and covers Clone plus Review', async () => {
+  const [page, messages] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/RendersPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/app/i18n.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /List render/)
+  assert.match(page, /Render list/)
+  assert.match(page, /All media exported from Clone, Review, and tools/)
+  assert.match(messages, /'nav\.renders': \{ vi: 'List render', en: 'Render list' \}/)
 })
 
 test('English catalog covers Live Preview empty page', () => {
@@ -194,23 +209,103 @@ test('Drawing tab uses bilingual localized UI', async () => {
   assert.match(source, /Stroke route/)
   assert.match(source, /Từ tâm lan ra/)
   assert.match(source, /Centre outward/)
-  assert.match(source, /Thư mục lưu/)
-  assert.match(source, /Save folder/)
+  assert.match(source, /OutputFolderField/)
+  assert.match(source, /Downloads\/drawing/)
+})
+
+test('Flow/Veo backend workspace uses bilingual localized UI', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(source, /localize\(locale,/)
+  assert.match(source, /Tạo video/, 'Vietnamese create-video label is present')
+  assert.match(source, /Create video/, 'English create-video label is present')
+  assert.match(source, /Tạo ảnh/, 'Vietnamese create-image label is present')
+  assert.match(source, /Create image/, 'English create-image label is present')
+  assert.match(source, /Nhập TXT \/ CSV \/ JSON/)
+  assert.match(source, /Import TXT \/ CSV \/ JSON/)
+  assert.match(source, /Gửi qua Chrome profile của tài khoản đã chọn/)
+  assert.match(source, /Sent through the selected account Chrome profile/)
+  assert.match(source, /Tài khoản Google Flow/)
+  assert.match(source, /Google Flow accounts/)
+  assert.match(source, /Thêm tài khoản/)
+  assert.match(source, /Add account/)
+  assert.match(source, /Ảnh → Ảnh/)
+  assert.match(source, /Image → Image/)
+  assert.match(source, /Tham chiếu → Ảnh/)
+  assert.match(source, /Reference → Image/)
+  assert.match(source, /Mức bám ảnh tham chiếu/)
+  assert.match(source, /Reference strength/)
+  assert.match(source, /Tiền tố tên file/)
+  assert.match(source, /Filename prefix/)
+  assert.match(source, /3\. Thư mục kết quả/)
+  assert.match(source, /3\. Output folder/)
+  assert.match(source, /OutputFolderField/)
+  assert.match(styles, /\.flow-check input[\s\S]*width: 16px/)
+  assert.match(source, /Sửa tài khoản/)
+  assert.match(source, /Edit account/)
+  assert.match(source, /Chạy lại/)
+  assert.match(source, /Retry/)
+  assert.match(source, /Xóa job này khỏi danh sách/)
+  assert.match(source, /Delete this job from the list/)
+  assert.match(source, /Tự động tải về khi hoàn thành/)
+  assert.match(source, /Auto-download when completed/)
+  assert.match(source, /Log hoạt động Flow/)
+  assert.match(source, /Flow activity logs/)
+  assert.match(source, /Xóa toàn bộ log Flow/)
+  assert.match(source, /Clear all Flow logs/)
+  assert.match(source, /Sao chép log/)
+  assert.match(source, /Copy logs/)
+  assert.match(source, /Đã sao chép/)
+  assert.match(source, /Copied/)
+  assert.match(source, /Job gặp lỗi/)
+  assert.match(source, /Job failed/)
+  assert.doesNotMatch(source, /setInterval\(\(\) => void refresh\(\), 2500\)/, 'Flow must not poll every endpoint while idle')
+  assert.match(source, /hasActiveFlowJobs/)
+  assert.match(source, /setInterval\(refreshJobs, 5000\)/)
+  assert.match(source, /tab !== "logs"/)
+  assert.match(source, /setInterval\(refreshLogs, 10000\)/)
+  assert.match(source, /readText\(RAIL_KEY, "1"\) === "1"/)
 })
 
 test('Tools output folders use bilingual labels', async () => {
-  const [cleaner, exporter] = await Promise.all([
+  const [field, cleaner, exporter, drawing, flow, review, batch, editor] = await Promise.all([
+    readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/VideoCleanerPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/SrtExportPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/DrawingPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FilmPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/editor/ExportModal.tsx', import.meta.url), 'utf8'),
   ])
-  assert.match(cleaner, /t\('Thư mục lưu', 'Save folder'\)/)
-  assert.match(exporter, /t\('Thư mục lưu', 'Save folder'\)/)
+  assert.match(field, /t\('Thư mục lưu', 'Save folder'\)/)
+  assert.match(field, /t\('Chọn', 'Choose'\)/)
+  assert.match(field, /t\('Lưu', 'Save'\)/)
+  assert.match(field, /isDesktopApp \? 'APP' : 'WEB'/)
+  for (const source of [cleaner, exporter, drawing, flow, review, batch, editor]) {
+    assert.match(source, /OutputFolderField/)
+  }
 })
 
-test('Download Video distinguishes browser Downloads from desktop folders', async () => {
-  const source = await readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8')
+test('Download Video uses editable WEB output names without legacy Chrome copy', async () => {
+  const [source, field] = await Promise.all([
+    readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
+  ])
   assert.match(source, /isDesktopApp/)
-  assert.match(source, /browser’s Downloads folder/)
+  assert.match(source, /OutputFolderField/)
+  assert.match(field, /Nhập thư mục con hoặc tên file đầu ra do bạn muốn/)
+  assert.match(field, /Enter your preferred output subfolder or file name/)
+  assert.match(field, /Ví dụ: du-an-01 hoặc video-01\.mp4/)
+  assert.doesNotMatch(field, /Theo cài đặt tải xuống của/)
+  assert.doesNotMatch(source, /Theo cài đặt tải xuống của Chrome/)
+  assert.doesNotMatch(source, /Vị trí thực tế do Chrome quản lý/)
+  assert.doesNotMatch(source, /Downloads của trình duyệt/)
+  assert.doesNotMatch(source, /browser Downloads folder/)
+  assert.doesNotMatch(field, /readOnly/)
+  assert.doesNotMatch(field, /\/Downloads\//, 'web UI must not invent a browser download path')
   assert.match(source, /Tải xuống/, 'web result provides browser download action')
 })
 
@@ -225,6 +320,21 @@ test('Batch Drawing queue uses bilingual localized UI', async () => {
   assert.match(source, /Preview/)
   assert.match(source, /Đường đi nét/)
   assert.match(source, /Stroke route/)
+})
+
+test('Batch navigation uses Flow-inspired color states', async () => {
+  const [batch, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/StudioPages.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(batch, /batch-tab--clone/)
+  assert.match(batch, /aria-selected=\{tab === 'clone'\}/)
+  assert.match(batch, /batch-action--resume/)
+  assert.match(batch, /batch-action--danger/)
+  assert.match(batch, /studio-settings-chevron[\s\S]*runQueueJobs\(\)/)
+  assert.match(styles, /--batch-flow-start/)
+  assert.match(styles, /batch-action--view/)
+  assert.match(styles, /prefers-reduced-motion/)
 })
 
 test('Batch file selection creates localized queue jobs immediately', async () => {
@@ -256,4 +366,58 @@ test('ZM AIO TOOL branding keeps the SRT logo label bilingual', async () => {
   assert.match(license, /ZM AIO TOOL/)
   assert.match(srt, /Logo \/ Watermark ZM AIO TOOL/)
   assert.match(srt, /ZM AIO TOOL logo \/ watermark/)
+})
+
+test('TTS exposes a bilingual APP/WEB output folder selector', async () => {
+  const source = await readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8')
+  assert.match(source, /OutputFolderField/)
+  assert.match(source, /Thư mục đầu ra/)
+  assert.match(source, /Output folder/)
+  assert.match(source, /publishOutput: isDesktopApp/)
+  assert.match(source, /webOutputStem/)
+})
+
+test('macOS form controls preserve each feature compact size', async () => {
+  const [styles, headerStyles, main] = await Promise.all([
+    readFile(new URL('../frontend/src/index.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/shared/components/Header.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/main.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(styles, /html\.platform-macos select:not\(\[multiple\]\)/)
+  assert.doesNotMatch(styles, /min-height: 38px !important/)
+  assert.match(headerStyles, /html\.platform-macos select\.locale-select:not\(\[multiple\]\)/)
+  assert.match(headerStyles, /width: 58px !important/)
+  assert.match(headerStyles, /min-height: 28px !important/)
+  assert.match(headerStyles, /appearance: none/)
+  assert.match(main, /navigator\.platform/)
+  assert.match(main, /userAgentData\?\.platform/)
+})
+
+test('quick settings keep paired controls at equal widths', async () => {
+  const styles = await readFile(new URL('../frontend/src/features/project/ProjectSidebar.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.locate-logo-filter\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/s)
+  assert.match(styles, /\.workers-setting\s*\{\s*flex: 1 1 0;/)
+  assert.match(styles, /\.preview-len\s*\{\s*flex: 1 1 0;\s*max-width: none;/)
+  assert.match(styles, /\.platform-macos \.sidebar \.field select[\s\S]*height: 35px/)
+  assert.match(styles, /calc\(100% - 16px\) 50%/)
+  assert.doesNotMatch(styles, /\.audio-filter-toggle[\s\S]*height: 44px/)
+})
+
+test('Flow output options render as separate parent rows', async () => {
+  const styles = await readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.flow-output-row\s*\{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);/s)
+  assert.match(styles, /\.flow-output-row > label:first-child\s*\{[^}]*width: 100%;/s)
+})
+
+test('desktop APP and detailed logs allow selecting and copying text', async () => {
+  const [launcher, styles, clipboard, srtImage] = await Promise.all([
+    readFile(new URL('../build_app/launcher.py', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/index.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/shared/lib/clipboard.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/SrtImagePage.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(launcher, /text_select=True/)
+  assert.match(styles, /-webkit-user-select: text/)
+  assert.match(clipboard, /document\.execCommand\('copy'\)/)
+  assert.match(srtImage, /copyText\(logText\)/)
 })

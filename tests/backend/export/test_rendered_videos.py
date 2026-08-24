@@ -9,6 +9,7 @@ from api.routes import rendered
 
 def test_render_list_keeps_versions_and_thumbnail_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(rendered, "PUBLIC_DATA", tmp_path)
+    monkeypatch.setattr(rendered, "downloads_folder", lambda tab: tmp_path / "downloads" / tab)
     monkeypatch.setattr(rendered, "video_size", lambda _path: (1920, 1080))
     monkeypatch.setattr(rendered, "ffprobe_duration", lambda _path: 12.5)
     exports = tmp_path / "exports"
@@ -52,3 +53,24 @@ def test_render_list_keeps_versions_and_thumbnail_cache(tmp_path, monkeypatch):
     assert not (exports / "project-100.mp4").exists()
     assert not (exports / "project.mp4").exists()
     assert rendered.list_rendered_videos() == []
+
+
+def test_render_list_includes_all_clone_and_review_downloads(tmp_path, monkeypatch):
+    monkeypatch.setattr(rendered, "PUBLIC_DATA", tmp_path / "public")
+    monkeypatch.setattr(rendered, "downloads_folder", lambda tab: tmp_path / "downloads" / tab)
+    monkeypatch.setattr(rendered, "video_size", lambda _path: (1080, 1920))
+    monkeypatch.setattr(rendered, "ffprobe_duration", lambda _path: 8.0)
+    clone = tmp_path / "downloads" / "video-clone" / "Video bản đẹp.mp4"
+    review = tmp_path / "downloads" / "film" / "Video bản đẹp.mp4"
+    clone.parent.mkdir(parents=True)
+    review.parent.mkdir(parents=True)
+    clone.write_bytes(b"clone")
+    review.write_bytes(b"review")
+
+    rows = rendered.list_rendered_videos()
+
+    assert len(rows) == 2
+    assert {row["name"] for row in rows} == {"Video bản đẹp"}
+    assert len({row["renderId"] for row in rows}) == 2
+    assert all(row["renderId"].startswith("media-") for row in rows)
+    assert {rendered._render_path(row["renderId"]) for row in rows} == {clone, review}

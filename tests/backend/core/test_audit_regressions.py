@@ -103,8 +103,8 @@ def test_fit_tts_audio_compresses_to_slot(tmp_path):
     ]
     n = fit_tts_audio_to_slots(segs, tmp_path, match="preferVideo")
     assert n == 1
-    # Tổng tăng tốc tự động bị chặn 1.25×: wav 4s không được ép ngắn quá ~3.2s.
-    assert 3.1 < segs[0]["audioDuration"] < 3.4
+    # Tổng tăng tốc tự động bị chặn 1.15×: wav 4s còn khoảng 3.48s.
+    assert 3.4 < segs[0]["audioDuration"] < 3.6
 
 
 def test_translate_parent_does_not_probe_cv2_or_ort():
@@ -138,6 +138,33 @@ def test_win_jobs_stay_out_of_uvicorn() -> None:
     assert "_run_in_subprocess" in spawn
     locate = Path("backend/pipeline/ocr/locate.py").read_text(encoding="utf-8")
     assert "không chạy OCR trong process API" in locate
+
+
+def test_job_worker_does_not_require_utf8_sig_codec_alias() -> None:
+    source = Path("backend/api/job_spawn.py").read_text(encoding="utf-8")
+    assert 'read_text(encoding="utf-8-sig")' not in source
+    assert 'removeprefix(b"\\\\xef\\\\xbb\\\\xbf").decode("utf-8")' in source
+
+
+def test_ollama_detector_covers_gui_app_paths_on_macos() -> None:
+    source = Path("backend/pipeline/core/system_check/checks.py").read_text(encoding="utf-8")
+    assert "/Applications/Ollama.app/Contents/Resources/ollama" in source
+    assert "/opt/homebrew/bin/ollama" in source
+    assert "/usr/local/bin/ollama" in source
+    assert "os.access(path, os.X_OK)" in source
+
+
+def test_ytdlp_detector_covers_gui_app_and_bundle_paths() -> None:
+    source = Path("backend/pipeline/core/executables.py").read_text(encoding="utf-8")
+    assert "/opt/homebrew/bin/yt-dlp" in source
+    assert ".pyenv/shims/yt-dlp" in source
+    assert 'root.parent / "Frameworks"' in source
+    for consumer in (
+        "backend/pipeline/download/ytdlp_jobs.py",
+        "backend/pipeline/srt_export.py",
+    ):
+        text = Path(consumer).read_text(encoding="utf-8")
+        assert "find_ytdlp()" in text
 
 
 def test_desktop_supervisor_shows_copyable_crash() -> None:

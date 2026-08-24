@@ -4,6 +4,8 @@ import { api } from '@/features/project/project.api'
 import ProgressPopup from '@/shared/components/ProgressPopup'
 import { IconHeadphones, IconHeart, IconMic, IconSpeaker } from '@/shared/components/Icons'
 import { BackTitle } from '@/shared/components/BackTitle'
+import { OutputFolderField } from '@/shared/components/OutputFolderField'
+import { studioApi } from '@/features/studio/studio.api'
 import {
   type TtsEngine,
   type TtsOutputFormat,
@@ -43,6 +45,7 @@ import {
 import './TtsStudio.css'
 
 const FAVORITE_LS_KEY = 'video-clone:tts-voice-favorites'
+const OUTPUT_DIR_LS_KEY = 'video-clone:tts-output-dir.v1'
 
 type Props = {
   voices: Voice[]
@@ -174,6 +177,11 @@ export default function TtsStudio({
   const [trimSilence, setTrimSilence] = useState(saved.trimSilence)
   const [autoSplit, setAutoSplit] = useState(saved.autoSplit)
   const [outputFormat, setOutputFormat] = useState<TtsOutputFormat>(saved.outputFormat)
+  const [outputDir, setOutputDir] = useState(() => localStorage.getItem(OUTPUT_DIR_LS_KEY) || '')
+  const webOutputStem = (outputDir.trim().split(/[/\\]/).filter(Boolean).pop() || 'tts-output')
+    .replace(/\.(?:wav|mp3|srt|zip)$/i, '')
+    .replace(/[<>:"/\\|?*]+/g, '-')
+    .trim() || 'tts-output'
   const [busy, setBusy] = useState(false)
   const [busyKind, setBusyKind] = useState<'synth' | 'clone' | null>(null)
   const [busyProgress, setBusyProgress] = useState(0)
@@ -623,6 +631,9 @@ export default function TtsStudio({
         autoSplit: useSrt ? false : autoSplit,
         gapMs: useSrt ? 0 : gapOn ? gapMs : 0,
         title: (useSrt ? srtRaw : text).trim().slice(0, 48),
+        outputDir: isDesktopApp ? outputDir : '',
+        outputFormat,
+        publishOutput: isDesktopApp,
       })
       if (cancelledJobIdsRef.current.has(requestJobId)) return
       setBusyProgress(100)
@@ -1068,6 +1079,12 @@ export default function TtsStudio({
       onToggleSrtMenu={(id) => setHistorySrtMenuId((cur) => (cur === id ? null : id))}
       onPlay={playHistoryItem}
       onDelete={(h) => { void api.ttsStudioDelete(h.id).then(loadHistory) }}
+      isDesktopApp={isDesktopApp}
+      onReveal={(id, kind, style) => {
+        setDownloadMenuId(null)
+        setHistorySrtMenuId(null)
+        void revealTtsOutput(kind, style, id)
+      }}
       onDownload={triggerDownload}
     />
   )
@@ -1097,11 +1114,11 @@ export default function TtsStudio({
     setText(srtPreviewLines(body))
   }
 
-  async function revealTtsOutput(kind: 'wav' | 'mp3' | 'srt' | 'zip', style = 'hard') {
-    if (!jobId) return
+  async function revealTtsOutput(kind: 'wav' | 'mp3' | 'srt' | 'zip', style = 'hard', targetJobId = jobId) {
+    if (!targetJobId) return
     try {
       const response = await fetch(
-        `/api/tts/studio/jobs/${encodeURIComponent(jobId)}/reveal/${kind}?style=${encodeURIComponent(style)}`,
+        `/api/tts/studio/jobs/${encodeURIComponent(targetJobId)}/reveal/${kind}?style=${encodeURIComponent(style)}`,
         { method: 'POST' },
       )
       if (!response.ok) throw new Error(await response.text())
@@ -1798,6 +1815,21 @@ export default function TtsStudio({
                 <option value="mp3">MP3</option>
               </select>
             </label>
+            <div className="tts-output-folder">
+              <OutputFolderField
+                isDesktopApp={isDesktopApp}
+                value={outputDir}
+                onChange={setOutputDir}
+                onChoose={async () => {
+                  const result = await studioApi.pickFolder()
+                  if (result.path) setOutputDir(result.path)
+                }}
+                onSave={() => localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)}
+                defaultPath={t('Mặc định: Downloads/tts', 'Default: Downloads/tts')}
+                label={t('Thư mục đầu ra', 'Output folder')}
+                disabled={busy}
+              />
+            </div>
           </section>
           </DashPanel>
 
@@ -2033,10 +2065,10 @@ export default function TtsStudio({
                 </>
               ) : (
                 <>
-                  <a className="tts-btn tts-btn-ghost" href={downloadWavHref(audioUrl)} download={audioUrl ? 'tts-output.wav' : undefined} style={{ pointerEvents: audioUrl ? 'auto' : 'none', opacity: audioUrl ? 1 : 0.5, textDecoration: 'none' }}>
+                  <a className="tts-btn tts-btn-ghost" href={downloadWavHref(audioUrl)} download={audioUrl ? `${webOutputStem}.wav` : undefined} style={{ pointerEvents: audioUrl ? 'auto' : 'none', opacity: audioUrl ? 1 : 0.5, textDecoration: 'none' }}>
                     <IconDownload size={14} /> {t('Tải audio (WAV)', 'Download audio (WAV)')}
                   </a>
-                  <a className="tts-btn tts-btn-ghost" href={mp3Url || undefined} download={mp3Url ? 'tts-output.mp3' : undefined} style={{ pointerEvents: mp3Url ? 'auto' : 'none', opacity: mp3Url ? 1 : 0.5, textDecoration: 'none' }}>
+                  <a className="tts-btn tts-btn-ghost" href={mp3Url || undefined} download={mp3Url ? `${webOutputStem}.mp3` : undefined} style={{ pointerEvents: mp3Url ? 'auto' : 'none', opacity: mp3Url ? 1 : 0.5, textDecoration: 'none' }}>
                     <IconDownload size={14} /> {t('Tải audio (MP3)', 'Download audio (MP3)')}
                   </a>
                 </>
@@ -2062,7 +2094,7 @@ export default function TtsStudio({
                         onClick={() =>
                           isDesktopApp
                             ? void revealTtsOutput('srt', opt.id)
-                            : triggerDownload(`/api/tts/studio/jobs/${jobId}/subs.srt?style=${opt.id}&t=${Date.now()}`, `tts-output-${opt.id}.srt`)
+                            : triggerDownload(`/api/tts/studio/jobs/${jobId}/subs.srt?style=${opt.id}&t=${Date.now()}`, `${webOutputStem}-${opt.id}.srt`)
                         }
                       >
                         {opt.label}
@@ -2076,7 +2108,7 @@ export default function TtsStudio({
                   <IconFile size={14} /> {t('Xuất ZIP (Audio + SRT)', 'Export ZIP (Audio + SRT)')}
                 </button>
               ) : (
-                <a className="tts-btn tts-btn-ghost" href={jobId ? `/api/tts/studio/jobs/${jobId}/bundle.zip?style=hard&t=${Date.now()}` : undefined} download={jobId ? 'tts-bundle.zip' : undefined} style={{ pointerEvents: jobId ? 'auto' : 'none', opacity: jobId ? 1 : 0.5, textDecoration: 'none' }}>
+                <a className="tts-btn tts-btn-ghost" href={jobId ? `/api/tts/studio/jobs/${jobId}/bundle.zip?style=hard&t=${Date.now()}` : undefined} download={jobId ? `${webOutputStem}.zip` : undefined} style={{ pointerEvents: jobId ? 'auto' : 'none', opacity: jobId ? 1 : 0.5, textDecoration: 'none' }}>
                   <IconFile size={14} /> {t('Xuất ZIP (Audio + SRT)', 'Export ZIP (Audio + SRT)')}
                 </a>
               )}

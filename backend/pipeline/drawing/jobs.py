@@ -6,6 +6,7 @@ the pen follows a continuous stroke path and deposits ink frame by frame.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import shutil
@@ -42,6 +43,17 @@ def _spawn(command: list[str], **kwargs: Any) -> subprocess.Popen:
     else:
         kwargs.setdefault("start_new_session", True)
     return subprocess.Popen(command, **kwargs)
+
+
+def _drawing_python() -> Path:
+    """Return a real Python executable, never the frozen desktop launcher."""
+    if not getattr(sys, "frozen", False):
+        return Path(sys.executable)
+    home = Path(os.environ.get("VIDEO_CLONE_HOME") or "")
+    python = home / ".venv-runtime" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    if python.is_file():
+        return python
+    raise RuntimeError("APP Python runtime is missing; install the Drawing/AI dependencies first")
 
 
 def _log(job_id: str, message: str) -> None:
@@ -128,6 +140,7 @@ def _run(job_id: str, command: list[str], timeout: int = 900) -> None:
     finally:
         with _LOCK:
             _PROCS.pop(job_id, None)
+    proc.wait()
     if (get_job(job_id) or {}).get("status") == "cancelled":
         return
     if proc.returncode:
@@ -311,7 +324,7 @@ def run(job_id: str) -> None:
         # export paint 2.25× as many pixels; final scale still honors output.
         render_long_edge = min(max(width, height), 1600 if str(options.get("resolution")) == "4k" else 1280)
         render_command = [
-            sys.executable, "-u", str(renderer), str(source), "--out-dir", str(stream_dir),
+            str(_drawing_python()), "-u", str(renderer), str(source), "--out-dir", str(stream_dir),
             "--total-ms", str(round(duration * 1000)), "--fps", str(fps),
             "--grid-edge", str(grid_edge), "--ink-path", ink_path,
             "--long-edge", str(render_long_edge),

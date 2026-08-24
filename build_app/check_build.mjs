@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const isWin = process.platform === 'win32'
+const isMac = process.platform === 'darwin'
 const releaseDir = path.join(root, 'build_app', 'release')
 
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -20,8 +21,13 @@ const version = process.argv[2] || bundledVersion || pkg.version.match(/^\d+\.\d
 const APP_ARTIFACT_NAME = 'ZM_AIO_TOOL'
 const APP_EXECUTABLE_NAME = 'ZM AIO TOOL'
 const verName = `${APP_ARTIFACT_NAME}_v${version}`
-const distDir = path.join(releaseDir, verName)
-const exePath = path.join(distDir, isWin ? `${APP_EXECUTABLE_NAME}.exe` : APP_EXECUTABLE_NAME)
+// PyInstaller on macOS emits one .app bundle rather than the Windows/Linux
+// onedir folder. Keep all later checks pointed at the equivalent bundle paths.
+const distDir = path.join(releaseDir, isMac ? `${verName}.app` : verName)
+const executableDir = isMac ? path.join(distDir, 'Contents', 'MacOS') : distDir
+const resourceDir = isMac ? path.join(distDir, 'Contents', 'Resources') : distDir
+const frameworkDir = isMac ? path.join(distDir, 'Contents', 'Frameworks') : resourceDir
+const exePath = path.join(executableDir, isWin ? `${APP_EXECUTABLE_NAME}.exe` : APP_EXECUTABLE_NAME)
 
 let ok = true
 function check(label, pass, detail = '') {
@@ -60,7 +66,9 @@ check('Release dir exists', existsSync(distDir))
 check(`${APP_EXECUTABLE_NAME}${isWin ? '.exe' : ''}`, existsSync(exePath), size(exePath))
 
 // 3. dist/index.html (frontend build đã được pack)
-const internalDir = existsSync(path.join(distDir, '_internal')) ? path.join(distDir, '_internal') : distDir
+const internalDir = isMac
+  ? resourceDir
+  : existsSync(path.join(distDir, '_internal')) ? path.join(distDir, '_internal') : distDir
 
 // 3. dist/index.html (frontend build đã được pack)
 const distIndex = path.join(internalDir, 'dist', 'index.html')
@@ -83,11 +91,11 @@ function checkTool(label, bin, expect) {
 }
 
 // 4. ffmpeg / 5. ffprobe — phải là binary thật, không phải Chocolatey ShimGen
-checkTool('ffmpeg', path.join(internalDir, isWin ? 'ffmpeg.exe' : 'ffmpeg'), 'ffmpeg')
-checkTool('ffprobe', path.join(internalDir, isWin ? 'ffprobe.exe' : 'ffprobe'), 'ffprobe')
+checkTool('ffmpeg', path.join(isMac ? frameworkDir : internalDir, isWin ? 'ffmpeg.exe' : 'ffmpeg'), 'ffmpeg')
+checkTool('ffprobe', path.join(isMac ? frameworkDir : internalDir, isWin ? 'ffprobe.exe' : 'ffprobe'), 'ffprobe')
 
 // 6. uv
-const uv = path.join(internalDir, isWin ? 'uv.exe' : 'uv')
+const uv = path.join(isMac ? frameworkDir : internalDir, isWin ? 'uv.exe' : 'uv')
 check('uv bundled', existsSync(uv), size(uv))
 check(
   'embedded Python runtime DLL',
@@ -102,6 +110,17 @@ check('pipeline/ dir', existsSync(pipeDir))
 // 8. resources/voice-ref
 const voiceRef = path.join(internalDir, 'resources', 'voice-ref')
 check('voice-ref', existsSync(voiceRef))
+
+// Drawing streaming renderer must be available to the managed Python runtime.
+const drawingReference = path.join(internalDir, 'references', 'whiteboard-stream-animation')
+check(
+  'drawing stream renderer',
+  existsSync(path.join(drawingReference, 'scripts', 'stream_render.py')),
+)
+check(
+  'drawing hand asset',
+  existsSync(path.join(drawingReference, 'assets', 'drawing-hand.png')),
+)
 
 // 9. VERSION file
 const versionFile = path.join(internalDir, 'VERSION')

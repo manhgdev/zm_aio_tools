@@ -2,6 +2,7 @@
 import subprocess
 import threading
 import time
+import zlib
 from pathlib import Path
 
 import sys
@@ -17,20 +18,58 @@ from pipeline.cleaner.cleaner_jobs import (
 
 CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)) if sys.platform == "win32" else 0
 
+# Gemini's sparkle watermark is intentionally icon-only, so an OCR-only probe
+# cannot describe it.  This small lower-right region matches that mark without
+# affecting the usual caption area at the bottom of vertical videos.
+_ICON_ONLY_WATERMARK_MASK = {"x": 0.80, "y": 0.89, "w": 0.08, "h": 0.06}
 
-def _logo_filter(input_path: str) -> str:
-    """Return an FFmpeg delogo filter from the shared OCR watermark detector."""
+
+def _retryable_ocr_load_error(exc: BaseException) -> bool:
+    message = str(exc).casefold()
+    return isinstance(exc, zlib.error) or (
+        "decompressing data" in message and "header" in message
+    )
+
+
+def _detect_logo_with_retry(input_path: str, job_id: str | None = None):
+    """Retry one transient frozen/runtime decompression failure during OCR load."""
     from pipeline.ocr.logo import detect_logo_bbox_inprocess
 
-    detection = detect_logo_bbox_inprocess(input_path)
+    try:
+        return detect_logo_bbox_inprocess(input_path)
+    except Exception as exc:
+        if not _retryable_ocr_load_error(exc):
+            raise
+        if job_id:
+            append_job_log(
+                job_id,
+                "OCR nạp lỗi tạm thời; đang thử lại · Temporary OCR load error; retrying",
+            )
+        # A partial first import must not remain cached as the shared locator.
+        try:
+            from pipeline.ocr import locate
+
+            locate._locate_ocr = None
+        except Exception:
+            pass
+        time.sleep(0.2)
+        return detect_logo_bbox_inprocess(input_path)
+
+
+def _logo_filter(input_path: str, job_id: str | None = None) -> str:
+    """Return an FFmpeg delogo filter from OCR, with an icon-only fallback."""
+    detection = _detect_logo_with_retry(input_path, job_id)
     bbox = (detection or {}).get("bbox")
+    # A visible Gemini sparkle has no readable text.  Give the cleaner a
+    # conservative fallback rather than failing every icon-only video before
+    # FFmpeg starts.  Textual watermark detections always take priority.
     if not isinstance(bbox, dict):
-        raise RuntimeError("Không phát hiện được logo/watermark để xoá")
+        bbox = _ICON_ONLY_WATERMARK_MASK
     width, height = video_size(Path(input_path))
     if width < 1 or height < 1:
         raise RuntimeError("Không đọc được kích thước video để xoá logo")
     raw_masks = (detection or {}).get("masks")
-    masks = raw_masks if isinstance(raw_masks, list) else [bbox]
+    masks = raw_masks if isinstance(raw_masks, list) and raw_masks else [bbox]
     filters: list[str] = []
     for mask in masks:
         if not isinstance(mask, dict):
@@ -115,7 +154,9 @@ def run_cleaner_job_sync(job_id: str) -> None:
             cmd.extend(["-movflags", "+faststart", "-c:a", "aac"])
 
         elif method == "logo":
-            cmd.extend(["-vf", _logo_filter(input_path)])
+            append_job_log(job_id, "Đang nhận diện logo bằng OCR · Detecting logo with OCR")
+            cmd.extend(["-vf", _logo_filter(input_path, job_id)])
+            append_job_log(job_id, "Đã xác định vùng xóa logo · Logo removal region ready")
             if h264_hardware_encoder():
                 cmd.extend(h264_encoder_args(quality=20))
             else:
@@ -185,6 +226,12 @@ def run_cleaner_job_sync(job_id: str) -> None:
         
     except Exception as e:
         unregister_proc(job_id)
+        try:
+            from pipeline.core.app_log import append_exception
+
+            append_exception(f"[cleaner:{job_id}:{method}] failed", e)
+        except Exception:
+            pass
         current_job = get_job(job_id)
         if current_job and current_job.get("status") != "cancelled":
             append_job_log(job_id, "LỖI: " + str(e))

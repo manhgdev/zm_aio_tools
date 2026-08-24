@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState, useEffect, type DragEvent } from 'react'
 import { localize, useLocale } from '@/app/i18n'
 import { BackTitle } from '@/shared/components/BackTitle'
+import { OutputFolderField } from '@/shared/components/OutputFolderField'
+import { copyText } from '@/shared/lib/clipboard'
 import './VideoCleanerPage.css'
 
 // Types
@@ -300,7 +302,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
   const copyDetailLog = async () => {
     if (!detailLog) return
     try {
-      await navigator.clipboard.writeText(detailLog)
+      await copyText(detailLog)
       alert(t('Đã sao chép log chi tiết', 'Detailed log copied'))
     } catch {
       alert(t('Không thể sao chép log', 'Could not copy log'))
@@ -390,13 +392,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                   </div>
                 </div>
               )}
-              {isDesktopApp && <label className="vc-field" style={{ marginTop: 14 }}>
-                <span>{t('Thư mục lưu', 'Save folder')}</span>
-                <div className="vc-output-row">
-                  <input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder={t('Mặc định: Downloads/cleaner', 'Default: Downloads/cleaner')} />
-                  <button className="vc-output-choose" type="button" onClick={() => void pickOutputDir().catch((error) => alert(error instanceof Error ? error.message : String(error)))}>{t('Chọn', 'Choose')}</button>
-                </div>
-              </label>}
+              <div style={{ marginTop: 14 }}><OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={() => pickOutputDir().catch((error) => alert(error instanceof Error ? error.message : String(error)))} onSave={() => localStorage.setItem(LS_VC_OUTPUT_DIR, outputDir)} defaultPath={t('Mặc định: Downloads/cleaner', 'Default: Downloads/cleaner')} /></div>
             </div>
 
             {/* Card 2 — Phương pháp */}

@@ -37,12 +37,14 @@ def test_shift_srt_and_subtitle_style(tmp_path):
 
     assert "00:00:00,000 --> 00:00:01,000" in output.read_text(encoding="utf-8")
     assert "Một câu bị xuống dòng sớm" in output.read_text(encoding="utf-8")
-    subtitle_filter = _ffmpeg_subtitle(output, 12, 24, True)
-    assert "FontSize=12" in subtitle_filter
-    assert "MarginV=24" in subtitle_filter
-    assert "BorderStyle=3" in subtitle_filter
-    assert "OutlineColour=&H60000000" in subtitle_filter
-    assert "MarginL=20,MarginR=20" in subtitle_filter
+    subtitle_filter = _ffmpeg_subtitle(
+        output, font_size=12, margin_bottom=24, bg_style="solid"
+    )
+    assert "subtitles=filename=" in subtitle_filter
+    ass = output.with_suffix(".sub.ass").read_text(encoding="utf-8-sig")
+    assert "Style: Default,Noto Sans,12" in ass
+    assert ",3," in ass
+    assert ",20,20,24," in ass
 
 
 def test_job_log_keeps_recent_lines(tmp_path):

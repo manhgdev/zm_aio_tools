@@ -7,8 +7,8 @@ def test_existing_editor_translate_does_not_render(monkeypatch):
     calls: list[tuple[str, object]] = []
 
     monkeypatch.setattr(headless, "load_meta", lambda _project_id: meta)
-    monkeypatch.setattr(headless, "arm_job", lambda _project_id: 1)
-    monkeypatch.setattr(headless, "share_cancel", lambda *_args: None)
+    monkeypatch.setattr("pipeline.core.jobs.arm_job", lambda _project_id: 1)
+    monkeypatch.setattr("pipeline.core.jobs.share_cancel", lambda *_args: None)
     monkeypatch.setattr(headless, "save_meta", lambda *_args: calls.append(("save", None)))
     monkeypatch.setattr(headless, "check_cancel", lambda *_args: None)
     monkeypatch.setattr(headless, "set_status", lambda *_args, **_kwargs: calls.append(("status", None)))

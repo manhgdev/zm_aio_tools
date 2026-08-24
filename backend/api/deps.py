@@ -235,6 +235,9 @@ class StudioSynthIn(BaseModel):
     autoSplit: bool = False
     gapMs: int = 0
     title: str = ""
+    outputDir: str = ""
+    outputFormat: str = "wav48"
+    publishOutput: bool = False
 
 
 def validate_segment_editor_fields(body: SegmentIn, meta: dict) -> None:

@@ -13,6 +13,7 @@ from typing import Any
 
 from pipeline.asr.whisper import asr_whisper
 from pipeline.core.config import DATA
+from pipeline.core.executables import find_ytdlp
 from pipeline.core.output_paths import selected_or_default
 from pipeline.core.media import extract_audio
 from pipeline.export.srt import SRT_STYLES, _split_for_style, parse_srt, style_params, wrap_capcut_text, write_subtitle
@@ -120,7 +121,7 @@ def _pick_platform_language(info: dict[str, Any], preferred: str = "auto") -> tu
 
 
 def _platform_subtitles(work: Path, url: str, source_lang: str) -> tuple[list[dict[str, Any]] | None, str]:
-    ytdlp = shutil.which("yt-dlp")
+    ytdlp = find_ytdlp()
     if not ytdlp:
         return None, "Không tìm thấy yt-dlp"
     meta = subprocess.run([ytdlp, "--dump-single-json", "--skip-download", "--no-playlist", url], capture_output=True, text=True, timeout=90)
@@ -145,7 +146,7 @@ def _platform_subtitles(work: Path, url: str, source_lang: str) -> tuple[list[di
 
 
 def _platform_audio(work: Path, url: str) -> Path:
-    ytdlp = shutil.which("yt-dlp")
+    ytdlp = find_ytdlp()
     if not ytdlp:
         raise RuntimeError("Chưa cài yt-dlp để đọc URL nền tảng")
     result = subprocess.run([ytdlp, "--no-playlist", "-f", "bestaudio/best", "-o", str(work / "input.%(ext)s"), url], capture_output=True, text=True, timeout=900)

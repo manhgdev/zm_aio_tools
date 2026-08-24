@@ -3,6 +3,20 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import './index.css'
 
+// WKWebView may omit the usual "Mac OS X" token. Check every platform hint so
+// the shared macOS form sizing is also enabled in packaged desktop builds.
+const navigatorWithPlatformData = navigator as Navigator & {
+  userAgentData?: { platform?: string }
+}
+const platformHint = [
+  navigator.userAgent,
+  navigator.platform,
+  navigatorWithPlatformData.userAgentData?.platform || '',
+].join(' ')
+if (/Macintosh|Mac OS X|MacIntel|macOS/i.test(platformHint)) {
+  document.documentElement.classList.add('platform-macos')
+}
+
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   override state: { hasError: boolean; error: Error | null } = { hasError: false, error: null }
   static getDerivedStateFromError(error: Error) {

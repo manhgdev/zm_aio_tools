@@ -16,7 +16,7 @@ import {
 import './Header.css'
 import { translate, type AppLocale } from '@/app/i18n'
 
-export type AppMode = 'clone' | 'live-preview' | 'tts' | 'download' | 'film' | 'batch' | 'renders' | 'cleaner' | 'srt-image' | 'srt-export' | 'drawing' | 'license'
+export type AppMode = 'clone' | 'live-preview' | 'tts' | 'download' | 'film' | 'batch' | 'flow' | 'renders' | 'cleaner' | 'srt-image' | 'srt-export' | 'drawing' | 'license'
 
 function IconSun({ size = 16 }: { size?: number }) {
   return (
@@ -36,13 +36,14 @@ function IconMoon({ size = 16 }: { size?: number }) {
 
 const NAV: {
   id: AppMode | 'tools' | 'config' | 'clone-menu'
-  label: 'nav.clone' | 'nav.batch' | 'nav.livePreview' | 'nav.renders' | 'nav.tts' | 'nav.tools' | 'nav.settings'
+  label: 'nav.clone' | 'nav.batch' | 'nav.flow' | 'nav.livePreview' | 'nav.renders' | 'nav.tts' | 'nav.tools' | 'nav.settings'
   Icon: typeof IconCam
   mode?: AppMode
   action?: 'config' | 'tools' | 'clone-menu'
 }[] = [
   { id: 'clone-menu', label: 'nav.clone', Icon: IconCam, action: 'clone-menu' },
   { id: 'batch', label: 'nav.batch', Icon: IconBatch, mode: 'batch' },
+  { id: 'flow', label: 'nav.flow', Icon: IconVideo, mode: 'flow' },
   { id: 'renders', label: 'nav.renders', Icon: IconVideo, mode: 'renders' },
   { id: 'tts', label: 'nav.tts', Icon: IconMic, mode: 'tts' },
   { id: 'tools', label: 'nav.tools', Icon: IconWand, action: 'tools' },

@@ -6,6 +6,7 @@ import ProgressPopup from '@/shared/components/ProgressPopup'
 import LicensePage from '@/features/license/LicensePage'
 import type { LicenseStatus } from '@/features/license/license.api'
 import { localize, useLocale } from '@/app/i18n'
+import { copyText } from '@/shared/lib/clipboard'
 import './ConfigModal.css'
 
 const PROVIDERS: CloudProviderId[] = [
@@ -824,7 +825,7 @@ export default function ConfigModal({
                 className="cfg-secondary"
                 disabled={!logText || logLoading}
                 onClick={() => {
-                  void navigator.clipboard.writeText(logText).then(() => {
+                  void copyText(logText).then(() => {
                     setLogCopied(true)
                     window.setTimeout(() => setLogCopied(false), 1600)
                   })

@@ -438,6 +438,7 @@ export type JobStatus = {
 export type RenderedVideo = {
   renderId: string
   projectId: string
+  canEdit?: boolean
   name: string
   createdAt: string
   sizeBytes: number

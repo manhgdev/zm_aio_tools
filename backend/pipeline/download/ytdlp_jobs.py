@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from pipeline.core.config import DATA, PUBLIC_DATA, SERVER_ROOT
 from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
+from pipeline.core.executables import find_ytdlp
 
 _DEFAULT_DOWNLOAD_ROOT = downloads_folder("download-video")
 _PREF_PATH = DATA / "download_root.json"
@@ -75,6 +76,8 @@ def set_download_root(path: str) -> dict[str, str]:
     if not raw:
         raise ValueError("Đường dẫn trống")
     p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = _default_root() / p
     # chặn path quá kỳ quặc
     if len(str(p)) > 480:
         raise ValueError("Đường dẫn quá dài")
@@ -288,7 +291,7 @@ _load_jobs_from_disk()
 
 
 def _ytdlp_bin() -> str:
-    return shutil.which("yt-dlp") or "yt-dlp"
+    return find_ytdlp() or "yt-dlp"
 
 
 def _platform_subtitle_selection(bin_: str, url: str) -> tuple[list[str], bool]:

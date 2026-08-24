@@ -6,7 +6,8 @@ from pipeline.export.burn_parts.layout_text import _caption_overlay
 
 
 def test_vietnamese_diacritics_and_descenders_are_not_clipped():
-    font = ImageFont.truetype(str(Path("C:/Windows/Fonts/arial.ttf")), 40)
+    font_path = Path(__file__).parents[3] / "frontend/public/fonts/Arimo-Bold.ttf"
+    font = ImageFont.truetype(str(font_path), 40)
     text = "nặng gạch quý"
     box = ImageDraw.Draw(Image.new("L", (1, 1))).textbbox((0, 0), text, font=font)
     text_h = box[3] - box[1]

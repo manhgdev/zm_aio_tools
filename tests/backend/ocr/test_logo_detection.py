@@ -3,7 +3,7 @@ import numpy as np
 from pipeline.ocr.logo import _logo_candidates, pick_logo_detection
 
 
-def _item(box, sample, confidence=0.9, text="LOGO"):
+def _item(box, sample, confidence=0.9, text="@logo"):
     return {
         "box": box,
         "sample": sample,
@@ -61,7 +61,7 @@ def test_bilibili_corner_watermark_is_branding():
 
 
 def test_rejects_transient_logo():
-    samples = [[_item((20, 20, 120, 70), 0)], [], []]
+    samples = [[_item((20, 20, 120, 70), 0, text="SALE")], [], []]
     assert pick_logo_detection(samples, 1080, 1920) is None
 
 

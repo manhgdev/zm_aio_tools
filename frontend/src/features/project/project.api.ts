@@ -237,6 +237,9 @@ export const api = {
     autoSplit?: boolean
     gapMs?: number
     title?: string
+    outputDir?: string
+    outputFormat?: 'wav48' | 'wav16' | 'mp3'
+    publishOutput?: boolean
   }) =>
     fetchJson<{
       id: string
@@ -247,6 +250,7 @@ export const api = {
       zipUrl?: string
       meta: Record<string, unknown>
       cached?: boolean
+      publishedDir?: string
     }>(
       `${base}/tts/studio/synthesize`,
       {

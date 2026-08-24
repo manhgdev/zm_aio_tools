@@ -10,15 +10,29 @@ import argparse
 import datetime
 import importlib.util
 import math
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
 def _load_reference():
-    root = Path(__file__).resolve().parents[3]
-    source = root / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py"
-    if not source.is_file():
+    current = Path(__file__).resolve()
+    candidates = [
+        Path(os.environ["VIDEO_CLONE_BUNDLE"]) if os.environ.get("VIDEO_CLONE_BUNDLE") else None,
+        current.parents[2],  # packaged Resources/_internal root
+        current.parents[3],  # repository root in development
+    ]
+    source = next(
+        (
+            root / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py"
+            for root in candidates
+            if root is not None
+            and (root / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py").is_file()
+        ),
+        None,
+    )
+    if source is None:
         raise RuntimeError("whiteboard-stream-animation renderer is unavailable")
     spec = importlib.util.spec_from_file_location("videoclone_whiteboard_stream", source)
     if not spec or not spec.loader:

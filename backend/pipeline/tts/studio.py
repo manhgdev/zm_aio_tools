@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.media import ffprobe_duration
+from ..core.output_paths import item_output_folder, selected_or_default
 from ..export.srt import SRT_STYLES, cues_from_parts, parse_srt, style_params, write_srt, _split_for_style, wrap_capcut_text
 from . import audio_utils
 from .engines.vieneu import parse_voice as parse_vieneu_voice
@@ -537,7 +538,7 @@ def synth_srt_job(
         write_srt(srt_path, export_cues, capcut=False)
         # backup bản gốc (byte-for-byte parse-normalized)
         try:
-            (job_dir / "source.srt").write_text(srt_text, encoding="utf-8-sig")
+            (job_dir / "source.srt").write_bytes(b"\xef\xbb\xbf" + srt_text.encode("utf-8"))
         except OSError:
             pass
         out_cues = export_cues
@@ -741,6 +742,29 @@ def ensure_mp3(job_id: str) -> Path:
         stderr=subprocess.DEVNULL,
     )
     return mp3
+
+
+def publish_job_outputs(job_id: str, output_dir: str = "", output_format: str = "wav48") -> Path:
+    """Publish one TTS job into a stable user-selected root/job-id folder."""
+    target = item_output_folder(selected_or_default("tts", output_dir), job_id)
+    source_srt = _job_dir(job_id) / "subs.srt"
+    if source_srt.is_file():
+        shutil.copy2(source_srt, target / "subtitles.srt")
+
+    if output_format == "mp3":
+        shutil.copy2(ensure_mp3(job_id), target / "audio.mp3")
+    elif output_format == "wav16":
+        subprocess.check_call(
+            [
+                "ffmpeg", "-y", "-i", str(ensure_wav(job_id)), "-map", "0:a:0", "-vn",
+                "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target / "audio.wav"),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        shutil.copy2(ensure_wav(job_id), target / "audio.wav")
+    return target
 
 
 def ensure_zip(job_id: str, srt_style: str = "hard") -> Path:

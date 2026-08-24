@@ -10,7 +10,8 @@ import traceback
 _JOB_WORKER = """# vc-job-worker
 import json, sys
 from pathlib import Path
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+raw = Path(sys.argv[1]).read_bytes()
+payload = json.loads(raw.removeprefix(b"\\xef\\xbb\\xbf").decode("utf-8"))
 mod = __import__(payload["module"], fromlist=[payload["name"]])
 fn = getattr(mod, payload["name"])
 try:

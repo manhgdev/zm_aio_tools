@@ -9,6 +9,7 @@ import type {
 import { downloadApi } from './download.api'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { localize, useLocale } from '@/app/i18n'
+import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import './DownloadStudio.css'
 
 const ACTIVE = new Set(['queued', 'running'])
@@ -141,14 +142,6 @@ function IconTrash() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-    </svg>
-  )
-}
-
-function IconFolder() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     </svg>
   )
 }
@@ -602,15 +595,8 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                 </label>
               </div>
 
-              {isDesktopApp ? <label className="dl-field">
-                <span>{t('Thư mục lưu', 'Save folder')}</span>
-                <div className="dl-path-row">
-                  <input type="text" value={savePath} onChange={(e) => { setSavePath(e.target.value); setPathMsg('') }} onBlur={() => { if (savePath.trim()) void applySavePath() }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void applySavePath() } }} placeholder="D:\ZM-AIO-TOOL\downloads" title={t('Đường dẫn trên máy chạy ứng dụng', 'Path on the app computer')} spellCheck={false} />
-                  <button type="button" className="dl-btn outline sm" disabled={pathBusy} title={t('Chọn thư mục lưu', 'Choose save folder')} onClick={() => void onPickFolder()}><IconFolder />{t('Chọn', 'Choose')}</button>
-                  <button type="button" className="dl-btn outline sm" disabled={pathBusy || !savePath.trim()} title={t('Lưu thư mục', 'Save folder')} onClick={() => void applySavePath()}>{pathBusy ? '…' : t('Lưu', 'Save')}</button>
-                </div>
-                {pathMsg && <span className="dl-path-msg">{pathMsg}</span>}
-              </label> : <p className="dl-browser-download-note">{t('Trên web, bấm Tải xuống ở kết quả để lưu vào thư mục Downloads của trình duyệt.', 'On the web, click Download in the result to save to your browser’s Downloads folder.')}</p>}
+              <OutputFolderField isDesktopApp={isDesktopApp} value={savePath} onChange={(value) => { setSavePath(value); setPathMsg('') }} onChoose={onPickFolder} onSave={applySavePath} defaultPath={t('Chọn thư mục lưu trên APP', 'Choose an app save folder')} disabled={pathBusy} />
+              {pathMsg && <span className="dl-path-msg">{pathMsg}</span>}
 
               <div className="dl-checks">
                 <label className="dl-check" title="Tải .srt + nhúng phụ đề (nếu có)">
@@ -779,7 +765,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                         <span className="dl-c-act">
                           {j.status === 'done' && (
                             <>
-                              {!isDesktopApp && <a className="dl-link" href={j.downloadUrl || downloadApi.fileUrl(j.id)} download title={t('Lưu vào Downloads của trình duyệt', 'Save to the browser Downloads folder')}>{t('Tải xuống', 'Download')}</a>}
+                              {!isDesktopApp && <a className="dl-link" href={j.downloadUrl || downloadApi.fileUrl(j.id)} download title={t('Tải file theo tên đầu ra đã chọn', 'Download using the selected output name')}>{t('Tải xuống', 'Download')}</a>}
                               <button
                                 type="button"
                                 className="dl-link"

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProjectSettings } from '../project/project.types'
 import { CoverPickerModal } from './CoverPickerModal'
+import { localize, useLocale } from '@/app/i18n'
+import { OutputFolderField } from '@/shared/components/OutputFolderField'
 
 export interface ExportModalOptions {
   renderName: string
@@ -74,6 +76,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   videoCoverUrl,
   durationSec = 0,
 }) => {
+  const { locale } = useLocale()
+  const t = (vi: string, en: string) => localize(locale, vi, en)
   const defaultName = (projectTitle || '0720').replace(/\.[^/.]+$/, '')
   const [renderName, setRenderName] = useState(defaultName)
 
@@ -110,6 +114,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [exportDir, setExportDir] = useState(
     () => localStorage.getItem('exportOutputDir') || ''
   )
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
+
+  useEffect(() => {
+    void fetch('/api/config').then(async (response) => response.ok && setIsDesktopApp(Boolean((await response.json() as { desktop?: boolean }).desktop))).catch(() => undefined)
+  }, [])
 
   async function pickFolder() {
     try {
@@ -338,46 +347,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               />
             </div>
 
-            {/* Xuất sang */}
-            <div className="space-y-1">
-              <label className="block font-medium" style={{ color: 'var(--muted-foreground, #a1a1aa)' }}>
-                Xuất sang
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={exportDir}
-                  onChange={(e) => {
-                    setExportDir(e.target.value)
-                    localStorage.setItem('exportOutputDir', e.target.value)
-                  }}
-                  className="flex-1 rounded-md px-3 py-1.5 outline-none transition-colors truncate"
-                  style={{
-                    backgroundColor: 'var(--input, #24252a)',
-                    color: exportDir ? 'var(--foreground, #ffffff)' : 'var(--muted-foreground, #a1a1aa)',
-                    borderColor: 'var(--border, #383940)',
-                    borderWidth: '1px',
-                  }}
-                  placeholder="Mặc định: Thư mục dự án"
-                />
-                <button
-                  type="button"
-                  onClick={pickFolder}
-                  className="px-2.5 py-1.5 rounded-md transition-colors hover:opacity-80"
-                  style={{
-                    backgroundColor: 'var(--input, #24252a)',
-                    borderColor: 'var(--border, #383940)',
-                    borderWidth: '1px',
-                    color: 'var(--foreground, #ffffff)',
-                  }}
-                  title="Chọn thư mục xuất"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                  </svg>
-                </button>
-              </div>
-            </div>
+            <OutputFolderField isDesktopApp={isDesktopApp} value={exportDir} onChange={setExportDir} onChoose={pickFolder} onSave={() => localStorage.setItem('exportOutputDir', exportDir)} defaultPath={t('Mặc định: Thư mục dự án', 'Default: Project folder')} label={t('Xuất sang', 'Export to')} />
 
             {/* ── 1. Group Video ── */}
 

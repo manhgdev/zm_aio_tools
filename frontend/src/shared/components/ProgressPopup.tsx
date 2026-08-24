@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { localize, useLocale } from '@/app/i18n'
+import { copyText } from '@/shared/lib/clipboard'
 
 export type ProgressPopupProps = {
   /** Job đang chạy hoặc vừa lỗi cần hiện UI */
@@ -139,7 +140,7 @@ export default function ProgressPopup({
       .filter(Boolean)
       .join('\n')
     try {
-      await navigator.clipboard.writeText(text)
+      await copyText(text)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -225,7 +226,7 @@ export default function ProgressPopup({
           {log && (
             <pre
               ref={logRef}
-              className="mt-1 max-h-40 overflow-y-auto rounded bg-black/85 p-2 text-[10px] leading-relaxed text-green-400 font-mono whitespace-pre-wrap break-all"
+              className="mt-1 max-h-40 cursor-text select-text overflow-y-auto rounded bg-black/85 p-2 text-[10px] leading-relaxed text-green-400 font-mono whitespace-pre-wrap break-all"
             >{log}</pre>
           )}
         </div>

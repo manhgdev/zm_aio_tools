@@ -196,6 +196,29 @@
   cursor: pointer;
 }
 
+/* Header is intentionally denser than content forms on macOS. */
+html.platform-macos select.locale-select:not([multiple]) {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 58px !important;
+  min-width: 58px !important;
+  max-width: 58px !important;
+  min-height: 28px !important;
+  height: 28px !important;
+  padding: 0 24px 0 10px !important;
+  border-radius: 6px !important;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 50%,
+    calc(100% - 11px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  font-size: 12px !important;
+  line-height: 1 !important;
+}
+
 .theme-toggle {
   display: inline-flex;
   align-items: center;

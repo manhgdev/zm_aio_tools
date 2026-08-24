@@ -254,6 +254,8 @@
   border-radius: 6px;
   background: var(--background);
   font-size: 0.78rem;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .siv-log strong {
   color: var(--muted-foreground);
@@ -261,6 +263,11 @@
 .siv-log p {
   margin: 15px 0 0;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.siv-log pre {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .siv-actions {
   display: flex;

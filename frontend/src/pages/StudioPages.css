@@ -32,6 +32,46 @@
 .studio-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .studio-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .studio-tabs button.active { border-color: var(--primary); color: var(--primary); font-weight: 700; }
+.batch-page {
+  --batch-flow-start: #17243d;
+  --batch-flow-end: #247f9c;
+  --batch-flow-highlight: #56b8c7;
+}
+.batch-page .studio-tabs {
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--batch-flow-end) 20%, var(--line));
+  border-radius: 11px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--batch-flow-start) 5%, var(--surface)), color-mix(in srgb, var(--batch-flow-highlight) 10%, var(--surface)));
+}
+.batch-page .studio-tabs .batch-tab {
+  min-height: 36px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  transition: color 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.batch-page .studio-tabs .batch-tab:hover {
+  border-color: color-mix(in srgb, var(--batch-flow-end) 35%, var(--line));
+  background: color-mix(in srgb, var(--batch-flow-highlight) 13%, var(--surface));
+  color: var(--batch-flow-start);
+}
+.batch-page .studio-tabs .batch-tab.active {
+  border-color: var(--batch-flow-end);
+  background: linear-gradient(135deg, var(--batch-flow-start), var(--batch-flow-end));
+  color: #fff;
+  box-shadow: 0 2px 9px color-mix(in srgb, var(--batch-flow-end) 27%, transparent);
+}
+.batch-page .studio-tabs .batch-tab:focus-visible {
+  outline: 2px solid var(--batch-flow-highlight);
+  outline-offset: 2px;
+}
+html.dark .batch-page .studio-tabs {
+  border-color: color-mix(in srgb, var(--batch-flow-highlight) 25%, var(--line));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--batch-flow-start) 46%, var(--surface)), color-mix(in srgb, var(--batch-flow-end) 28%, var(--surface)));
+}
+html.dark .batch-page .studio-tabs .batch-tab:hover { color: var(--batch-flow-highlight); }
+html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
 .studio-settings-toggle {
   display: inline-flex;
   align-items: center;
@@ -129,6 +169,35 @@
 .studio-job-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; min-width: 210px; }
 .studio-page .studio-job-actions button, .studio-page .studio-job-actions a { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: 650 .75rem/1 inherit; text-decoration: none; cursor: pointer; }
 .studio-page .studio-job-actions button:hover, .studio-page .studio-job-actions a:hover { border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: color-mix(in srgb, var(--primary) 5%, var(--surface)); }
+.batch-page .studio-job-actions .batch-action {
+  border-color: color-mix(in srgb, var(--batch-action-strong) 28%, var(--line));
+  font-weight: 750;
+  transition: color 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.batch-page .studio-job-actions .batch-action--pause { --batch-action-strong: #a65f00; color: #a65f00; background: #fff7e6; }
+.batch-page .studio-job-actions .batch-action--resume { --batch-action-strong: #157347; color: #157347; background: #e8f8ef; }
+.batch-page .studio-job-actions .batch-action--retry { --batch-action-strong: #9a4d00; color: #9a4d00; background: #fff2df; }
+.batch-page .studio-job-actions .batch-action--edit { --batch-action-strong: #1769aa; color: #1769aa; background: #e9f4ff; }
+.batch-page .studio-job-actions .batch-action--view,
+.batch-page .studio-job-actions .batch-action--open { --batch-action-strong: #176c7b; color: #176c7b; background: #e4f7f8; }
+.batch-page .studio-job-actions .batch-action--danger { --batch-action-strong: #bd2337; color: #bd2337; background: #fff0f2; }
+.batch-page .studio-job-actions .batch-action:hover {
+  border-color: var(--batch-action-strong);
+  background: var(--batch-action-strong);
+  color: #fff;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--batch-action-strong) 24%, transparent);
+}
+.batch-page .studio-job-actions .batch-action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--batch-action-strong) 62%, #fff);
+  outline-offset: 2px;
+}
+html.dark .batch-page .studio-job-actions .batch-action--pause { --batch-action-strong: #ffc266; color: #ffc266; background: #4a310d; }
+html.dark .batch-page .studio-job-actions .batch-action--resume { --batch-action-strong: #72d49b; color: #72d49b; background: #103d2a; }
+html.dark .batch-page .studio-job-actions .batch-action--retry { --batch-action-strong: #ffbc6b; color: #ffbc6b; background: #4a2c09; }
+html.dark .batch-page .studio-job-actions .batch-action--edit { --batch-action-strong: #79bcff; color: #79bcff; background: #102f4d; }
+html.dark .batch-page .studio-job-actions .batch-action--view,
+html.dark .batch-page .studio-job-actions .batch-action--open { --batch-action-strong: #7ddde8; color: #7ddde8; background: #0b3e47; }
+html.dark .batch-page .studio-job-actions .batch-action--danger { --batch-action-strong: #ff9baa; color: #ff9baa; background: #4b1720; }
 .queue-thumbnail { display: grid; place-items: center; width: 68px; height: 44px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--primary) 7%, var(--background)); color: var(--primary); }.queue-thumbnail img, .queue-thumbnail video { width: 100%; height: 100%; object-fit: cover; }.queue-thumbnail span { font-size: 1rem; }
 .studio-error { color: #dc2626; margin: 0; }
 .check { display: inline-flex; align-items: center; gap: 6px; height: 34px; }
@@ -142,5 +211,5 @@
 .studio-page .studio-job-delete{color:#c42828;border-color:color-mix(in srgb,#c42828 35%,var(--line))}
 
 @media (prefers-reduced-motion: reduce) {
-  .studio-settings-chevron { transition: none; }
+  .studio-settings-chevron, .batch-page .studio-tabs .batch-tab { transition: none; }
 }

@@ -65,6 +65,12 @@ def create_app() -> FastAPI:
             ensure_download_dirs()
         except Exception:
             pass
+        try:
+            from pipeline.flow import service as flow_service
+
+            flow_service.start()
+        except Exception:
+            pass
 
         threading.Thread(
             target=run_public_cleanup_periodically,

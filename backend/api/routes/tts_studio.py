@@ -96,7 +96,7 @@ def api_tts_studio_synth(body: StudioSynthIn):
     selected_voice = body.speaker_id or body.voice or "system"
     try:
         if srt_text:
-            return synth_srt_job(
+            result = synth_srt_job(
                 srt_text=srt_text,
                 voice=selected_voice,
                 lang=body.lang or "vi",
@@ -110,20 +110,28 @@ def api_tts_studio_synth(body: StudioSynthIn):
                 gap_ms=int(body.gapMs or 0),
                 job_id=body.jobId,
             )
-        return synth_text_job(
-            text=text,
-            voice=selected_voice,
-            lang=body.lang or "vi",
-            speed=float(body.speed or 1.0),
-            volume=float(body.volume or 1.0),
-            pitch=float(body.pitch or 0.0),
-            style=body.style or "tu_nhien",
-            match_duration=body.matchDuration or "none",
-            title=body.title or "",
-            auto_split=bool(body.autoSplit),
-            gap_ms=int(body.gapMs or 0),
-            job_id=body.jobId,
-        )
+        else:
+            result = synth_text_job(
+                text=text,
+                voice=selected_voice,
+                lang=body.lang or "vi",
+                speed=float(body.speed or 1.0),
+                volume=float(body.volume or 1.0),
+                pitch=float(body.pitch or 0.0),
+                style=body.style or "tu_nhien",
+                match_duration=body.matchDuration or "none",
+                title=body.title or "",
+                auto_split=bool(body.autoSplit),
+                gap_ms=int(body.gapMs or 0),
+                job_id=body.jobId,
+            )
+        if body.publishOutput:
+            from pipeline.tts.studio import publish_job_outputs
+
+            result["publishedDir"] = str(
+                publish_job_outputs(result["id"], body.outputDir, body.outputFormat)
+            )
+        return result
     except Exception as e:
         raise HTTPException(500, str(e)) from e
 

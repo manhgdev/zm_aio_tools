@@ -6,6 +6,7 @@
 - ensure_runtime_torch chỉ cài khi torch thật sự vắng mặt và .pyd không bị lock.
 """
 import pytest
+import sys
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -21,7 +22,9 @@ def test_ai_runtime_includes_soundfile_native_dependency() -> None:
 
 def test_frozen_runtime_provisions_managed_python(monkeypatch, tmp_path):
     calls = []
-    py = tmp_path / ".venv-runtime" / "Scripts" / "python.exe"
+    py = tmp_path / ".venv-runtime" / (
+        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    )
 
     def fake_stream(cmd, **_kwargs):
         calls.append(cmd)

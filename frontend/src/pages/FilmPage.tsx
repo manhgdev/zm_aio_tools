@@ -7,6 +7,7 @@ import { studioApi, type QueueJob } from '@/features/studio/studio.api'
 import { AudioSlider, CaptionModePicker, ReviewLangFields, ReviewLeftPanel, ReviewRightPanel, Stepper, useVoices } from '@/features/studio/ReviewSettingsPanel'
 import { DEFAULT_REVIEW_SETTINGS, STYLE_TO_PIPE, modeLabel, resolveBuildMode, type ReviewSettings } from '@/features/studio/reviewSettings'
 import { BackTitle } from '@/shared/components/BackTitle'
+import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import './FilmPage.css'
 
 type Props = { onBack: () => void; onOpenEditor?: (projectId: string) => void }
@@ -183,6 +184,7 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
   const [view, setView] = useState<View>('create')
   const [filter, setFilter] = useState<'all' | 'running' | 'done' | 'failed'>('all')
   const [draft, setDraft] = useState<Draft>(loadDraft)
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
   const [jobs, setJobs] = useState<QueueJob[]>([])
   // Removing a running project is asynchronous: the worker must release its
   // files before the backend can delete them. Keep it out of the project UI
@@ -208,6 +210,10 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
     delete next.cutMode
     return next
   })
+
+  useEffect(() => {
+    void fetch('/api/config').then(async (response) => response.ok && setIsDesktopApp(Boolean((await response.json() as { desktop?: boolean }).desktop))).catch(() => undefined)
+  }, [])
 
   useEffect(() => {
     if (editingJobId) return
@@ -652,14 +658,7 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
             </div>
           </label>
           <ReviewLangFields settings={draft} onChange={set} />
-          <label className="rv-field">
-            <span>{t('Thư mục lưu video', 'Output folder')}</span>
-            <div className="rv-combo rv-combo-peach">
-              <span className="rv-combo-ico">📂</span>
-              <input value={draft.outputDir} onChange={(e) => set({ outputDir: e.target.value })} placeholder={t('Bắt buộc chọn nơi lưu video…', 'Choose where to save the video…')} />
-              <button type="button" className="rv-inbtn" onClick={() => void pickOut()}>{t('Chọn', 'Choose')}</button>
-            </div>
-          </label>
+          <OutputFolderField isDesktopApp={isDesktopApp} value={draft.outputDir} onChange={(outputDir) => set({ outputDir })} onChoose={pickOut} onSave={() => localStorage.setItem(DRAFT_LS, JSON.stringify(draft))} defaultPath={t('Mặc định: Downloads/review', 'Default: Downloads/review')} label={t('Thư mục lưu video', 'Video output folder')} />
 
           <ReviewLeftPanel settings={draft} onChange={set} />
           <AudioSlider value={draft.originalAudioPct} onChange={(v) => set({ originalAudioPct: v })} />

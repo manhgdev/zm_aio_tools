@@ -3,6 +3,7 @@ import { api } from '@/features/project/project.api'
 import type { RenderedVideo } from '@/features/project/project.types'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { IconDownload, IconFilm, IconRefresh } from '@/shared/components/Icons'
+import { localize, useLocale } from '@/app/i18n'
 import './RendersPage.css'
 
 const PAGE_SIZE = 10
@@ -27,6 +28,8 @@ function renderName(item: RenderedVideo) {
 }
 
 export default function RendersPage({ onBack, onEdit }: { onBack: () => void; onEdit: (projectId: string) => Promise<void> }) {
+  const { locale } = useLocale()
+  const t = (vi: string, en: string) => localize(locale, vi, en)
   const [items, setItems] = useState<RenderedVideo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -112,8 +115,10 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
     <main className="renders-page">
       <header className="renders-head">
         <div>
-          <BackTitle onBack={onBack}>Video đã render</BackTitle>
-          <p>{items.length ? `${items.length} video · mới nhất trước` : 'Các video xuất hoàn tất sẽ xuất hiện tại đây.'}</p>
+          <BackTitle onBack={onBack}>{t('List render', 'Render list')}</BackTitle>
+          <p>{items.length
+            ? t(`${items.length} media · mới nhất trước`, `${items.length} media · newest first`)
+            : t('Tất cả media xuất từ Clone, Review và công cụ sẽ xuất hiện tại đây.', 'All media exported from Clone, Review, and tools will appear here.')}</p>
         </div>
         <button type="button" className="renders-refresh" onClick={() => void load()} disabled={loading}>
           <IconRefresh size={16} /> Làm mới
@@ -124,9 +129,9 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
       {loading ? (
         <div className="renders-state">Đang tải danh sách…</div>
       ) : items.length === 0 ? (
-        <div className="renders-state renders-empty"><IconFilm size={36} /><strong>Chưa có video đã render</strong><span>Xuất một video từ Clone Video để xem tại đây.</span></div>
+        <div className="renders-state renders-empty"><IconFilm size={36} /><strong>{t('Chưa có media đã render', 'No rendered media yet')}</strong><span>{t('Xuất media từ Clone, Review hoặc công cụ để xem tại đây.', 'Export media from Clone, Review, or a tool to see it here.')}</span></div>
       ) : (
-        <section className="renders-grid" aria-label="Danh sách video đã render">
+        <section className="renders-grid" aria-label={t('Danh sách media đã render', 'Rendered media list')}>
           {pageItems.map((item) => (
             <article className="render-card" key={item.renderId}>
               <button type="button" className="render-thumb" onClick={() => setViewing(item)} aria-label={`Xem video ${item.renderId}`}>
@@ -175,7 +180,7 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
                 ) : (
                   <a href={item.downloadUrl} download={`video-clone-${item.renderId}.mp4`}><IconDownload size={14} /> Tải xuống</a>
                 )}
-                {item.projectId !== 'srt' && <button type="button" disabled={openingId === item.renderId} onClick={() => void editRender(item)}>
+                {item.canEdit !== false && item.projectId && item.projectId !== 'srt' && <button type="button" disabled={openingId === item.renderId} onClick={() => void editRender(item)}>
                   {openingId === item.renderId ? 'Đang mở…' : 'Sửa'}
                 </button>}
                 <button type="button" className="render-delete" onClick={() => void deleteRender(item)}>Xóa</button>

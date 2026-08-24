@@ -35,8 +35,10 @@ def test_prefer_video_speeds_up_audio_that_still_overflows(tmp_path) -> None:
 
     fitted = fit_duration(wav, 1.0, "preferVideo")
 
-    assert fitted == pytest.approx(1.0, abs=0.08)
-    assert ffprobe_duration(wav) == pytest.approx(1.0, abs=0.08)
+    # preferVideo keeps speech natural: automatic compression is capped at 1.15×.
+    expected = 2.0 / 1.15
+    assert fitted == pytest.approx(expected, abs=0.08)
+    assert ffprobe_duration(wav) == pytest.approx(expected, abs=0.08)
 
 
 def test_none_keeps_original_audio_duration(tmp_path) -> None:

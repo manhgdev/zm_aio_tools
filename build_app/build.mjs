@@ -201,6 +201,8 @@ const args = [
   // ── Cross-platform data ────────────────────────────────────────────────────
   '--add-data', `${path.join(root, 'frontend', 'dist')}${dataSep}dist`,
   '--add-data', `${path.join(root, 'backend', 'pipeline')}${dataSep}pipeline`,
+  '--add-data', `${path.join(root, 'references', 'whiteboard-stream-animation', 'scripts', 'stream_render.py')}${dataSep}references/whiteboard-stream-animation/scripts`,
+  '--add-data', `${path.join(root, 'references', 'whiteboard-stream-animation', 'assets', 'drawing-hand.png')}${dataSep}references/whiteboard-stream-animation/assets`,
   '--add-data', `${path.join(root, 'backend', 'resources', 'voice-ref')}${dataSep}resources/voice-ref`,
   '--add-data', `${versionFilePath}${dataSep}.`,
   '--collect-all', 'webview',

@@ -303,6 +303,7 @@ if ocr_site.is_dir():
             sys.path[:] = [p for p in sys.path if _path_ok(p)]
 
 bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+os.environ.setdefault("VIDEO_CLONE_BUNDLE", str(bundle))
 os.environ["PATH"] = os.pathsep.join((str(bundle), os.environ.get("PATH", "")))
 if sys.platform == "win32":
     _motw_removed = unblock_windows_motw(bundle)
@@ -648,6 +649,7 @@ def run_desktop() -> int:
                     ),
                     width=520,
                     height=280,
+                    text_select=True,
                 )
                 webview.start()
             except Exception:
@@ -667,6 +669,7 @@ def run_desktop() -> int:
             x=x,
             y=y,
             min_size=(960, 640),
+            text_select=True,
         )
         if icon:
             win_kw["icon"] = icon
@@ -677,8 +680,9 @@ def run_desktop() -> int:
                 **win_kw,
             )
         except TypeError:
-            # pywebview cũ không hỗ trợ icon=
+            # pywebview cũ có thể không hỗ trợ icon= hoặc text_select=.
             win_kw.pop("icon", None)
+            win_kw.pop("text_select", None)
             webview.create_window(
                 f"{APP_DISPLAY_NAME} v{APP_VERSION}",
                 f"{base}/?v={APP_VERSION}",

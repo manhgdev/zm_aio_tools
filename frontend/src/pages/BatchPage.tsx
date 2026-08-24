@@ -6,6 +6,7 @@ import { CloneBatchSettingsPanel } from '@/features/studio/CloneBatchSettingsPan
 import { studioApi, type QueueJob } from '@/features/studio/studio.api'
 import { AudioSlider, CaptionModePicker, ReviewLangFields, ReviewLeftPanel, ReviewRightPanel, useVoices } from '@/features/studio/ReviewSettingsPanel'
 import { BackTitle } from '@/shared/components/BackTitle'
+import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import { IconArrowRight, IconGear } from '@/shared/components/Icons'
 import { DEFAULT_REVIEW_SETTINGS, STYLE_TO_PIPE, type ReviewSettings } from '@/features/studio/reviewSettings'
 import './StudioPages.css'
@@ -28,6 +29,7 @@ const BATCH_CLONE_SETTINGS_VERSION_LS = 'videoclone.batchCloneSettingsVersion'
 const BATCH_CLONE_SETTINGS_VERSION = '3'
 const BATCH_REVIEW_SETTINGS_LS = 'videoclone.batchReviewSettings'
 const BATCH_DRAWING_SETTINGS_LS = 'videoclone.batchDrawingSettings'
+const BATCH_OUTPUT_DIR_LS = 'videoclone.batchOutputDir'
 
 function loadBatchTab(): BatchTab {
   try {
@@ -97,7 +99,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
   const t = (vi: string, en: string) => localize(locale, vi, en)
   const [tab, setTab] = useState<BatchTab>(loadBatchTab)
   const [sources, setSources] = useState<string[]>([])
-  const [outputDir, setOutputDir] = useState('')
+  const [outputDir, setOutputDir] = useState(() => localStorage.getItem(BATCH_OUTPUT_DIR_LS) || '')
   const [recursive, setRecursive] = useState(true)
   const [overwrite, setOverwrite] = useState('rename')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -356,7 +358,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
   }
 
   return (
-    <div className="studio-page">
+    <div className="studio-page batch-page">
       <header>
         <div>
           <BackTitle onBack={onBack}>{t('Hàng loạt', 'Batch')}</BackTitle>
@@ -371,10 +373,10 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
         </div> : null}
       </header>
       <div className="studio-tabs" role="tablist" aria-label={t('Loại hàng loạt', 'Batch type')}>
-        <button type="button" role="tab" aria-selected={tab === 'all'} className={tab === 'all' ? 'active' : undefined} onClick={() => selectTab('all')}>{t('Tất cả', 'All')}</button>
-        <button type="button" className={tab === 'clone' ? 'active' : undefined} onClick={() => selectTab('clone')}>{t('Clone hàng loạt', 'Clone batch')}</button>
-        <button type="button" className={tab === 'review' ? 'active' : undefined} onClick={() => selectTab('review')}>{t('Review hàng loạt', 'Review batch')}</button>
-        <button type="button" className={tab === 'drawing' ? 'active' : undefined} onClick={() => selectTab('drawing')}>{t('Vẽ tay hàng loạt', 'Drawing batch')}</button>
+        <button type="button" role="tab" aria-selected={tab === 'all'} className={`batch-tab batch-tab--all${tab === 'all' ? ' active' : ''}`} onClick={() => selectTab('all')}>{t('Tất cả', 'All')}</button>
+        <button type="button" role="tab" aria-selected={tab === 'clone'} className={`batch-tab batch-tab--clone${tab === 'clone' ? ' active' : ''}`} onClick={() => selectTab('clone')}>{t('Clone hàng loạt', 'Clone batch')}</button>
+        <button type="button" role="tab" aria-selected={tab === 'review'} className={`batch-tab batch-tab--review${tab === 'review' ? ' active' : ''}`} onClick={() => selectTab('review')}>{t('Review hàng loạt', 'Review batch')}</button>
+        <button type="button" role="tab" aria-selected={tab === 'drawing'} className={`batch-tab batch-tab--drawing${tab === 'drawing' ? ' active' : ''}`} onClick={() => selectTab('drawing')}>{t('Vẽ tay hàng loạt', 'Drawing batch')}</button>
       </div>
       {tab === 'all' ? <>
         <section className="studio-card">
@@ -385,7 +387,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
           <table className="studio-table studio-queue-table">
             <thead><tr><th>{t('Loại', 'Type')}</th><th>{t('Ảnh xem trước', 'Thumbnail')}</th><th>{t('Nguồn', 'Source')}</th><th>{t('Trạng thái', 'Status')}</th><th>{t('Tiến độ', 'Progress')}</th><th className="studio-queue-actions-heading">{t('Thao tác', 'Actions')}</th></tr></thead>
             <tbody>
-              {jobs.map((job) => <tr key={job.id}><td>{job.type === 'review' ? t('Review', 'Review') : t('Clone', 'Clone')}</td><td><div className="queue-thumbnail">{job.status === 'done' ? <video muted preload="metadata" src={studioApi.fileUrl(job.id)} /> : <span>▶</span>}</div></td><td title={job.source}>{job.source.split(/[/\\]/).pop()}</td><td>{job.status} · {job.stage}</td><td>{Math.round((job.progress || 0) * 100)}%</td><td className="studio-job-actions">{job.status === 'running' || job.status === 'queued' ? <><button type="button" onClick={() => void studioApi.jobAction(job.id, 'pause').then(refresh)}>{t('Dừng', 'Pause')}</button><button type="button" onClick={() => void studioApi.jobAction(job.id, 'cancel').then(refresh)}>{t('Hủy', 'Cancel')}</button></> : null}{job.status === 'paused' || job.status === 'interrupted' ? <button type="button" onClick={() => void studioApi.jobAction(job.id, 'resume').then(refresh)}>{t('Tiếp tục', 'Resume')}</button> : null}{job.status === 'failed' || job.status === 'cancelled' ? <button type="button" onClick={() => void studioApi.jobAction(job.id, 'retry').then(refresh)}>{t('Thử lại', 'Retry')}</button> : null}{job.status !== 'running' && job.status !== 'done' ? <button type="button" onClick={() => void editQueueJob(job)}>{t('Sửa', 'Edit')}</button> : null}{job.status === 'done' ? <><button type="button" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button>{isDesktopApp ? <button type="button" onClick={() => void studioApi.revealJob(job.id).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : <a href={studioApi.fileUrl(job.id, { download: true })} download>{t('Tải xuống', 'Download')}</a>}{job.projectId && onOpenEditor ? <button type="button" onClick={() => onOpenEditor(job.projectId!)}>{t('Mở Editor', 'Open Editor')}</button> : null}</> : null}<button type="button" className="studio-job-delete" onClick={() => void deleteQueueJob(job.id)}>{t('Xóa', 'Delete')}</button></td></tr>)}
+              {jobs.map((job) => <tr key={job.id}><td>{job.type === 'review' ? t('Review', 'Review') : t('Clone', 'Clone')}</td><td><div className="queue-thumbnail">{job.status === 'done' ? <video muted preload="metadata" src={studioApi.fileUrl(job.id)} /> : <span>▶</span>}</div></td><td title={job.source}>{job.source.split(/[/\\]/).pop()}</td><td>{job.status} · {job.stage}</td><td>{Math.round((job.progress || 0) * 100)}%</td><td className="studio-job-actions">{job.status === 'running' || job.status === 'queued' ? <><button type="button" className="batch-action batch-action--pause" onClick={() => void studioApi.jobAction(job.id, 'pause').then(refresh)}>{t('Dừng', 'Pause')}</button><button type="button" className="batch-action batch-action--danger" onClick={() => void studioApi.jobAction(job.id, 'cancel').then(refresh)}>{t('Hủy', 'Cancel')}</button></> : null}{job.status === 'paused' || job.status === 'interrupted' ? <button type="button" className="batch-action batch-action--resume" onClick={() => void studioApi.jobAction(job.id, 'resume').then(refresh)}>{t('Tiếp tục', 'Resume')}</button> : null}{job.status === 'failed' || job.status === 'cancelled' ? <button type="button" className="batch-action batch-action--retry" onClick={() => void studioApi.jobAction(job.id, 'retry').then(refresh)}>{t('Thử lại', 'Retry')}</button> : null}{job.status !== 'running' && job.status !== 'done' ? <button type="button" className="batch-action batch-action--edit" onClick={() => void editQueueJob(job)}>{t('Sửa', 'Edit')}</button> : null}{job.status === 'done' ? <><button type="button" className="batch-action batch-action--view" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button>{isDesktopApp ? <button type="button" className="batch-action batch-action--open" onClick={() => void studioApi.revealJob(job.id).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : <a className="batch-action batch-action--open" href={studioApi.fileUrl(job.id, { download: true })} download>{t('Tải xuống', 'Download')}</a>}{job.projectId && onOpenEditor ? <button type="button" className="batch-action batch-action--edit" onClick={() => onOpenEditor(job.projectId!)}>{t('Mở Editor', 'Open Editor')}</button> : null}</> : null}<button type="button" className="studio-job-delete batch-action batch-action--danger" onClick={() => void deleteQueueJob(job.id)}>{t('Xóa', 'Delete')}</button></td></tr>)}
               {drawingJobs.map((job) => <tr key={job.id}><td>{t('Vẽ tay', 'Drawing')}</td><td><button type="button" className="queue-thumbnail" onClick={() => setDrawingPreview(job)}><img loading="lazy" src={`/api/drawing/jobs/${job.id}/input`} alt={t(`Ảnh nguồn ${job.filename}`, `Source image ${job.filename}`)} /></button></td><td title={job.filename}>{job.filename}</td><td>{job.status}</td><td>{job.progress}%</td><td className="studio-job-actions"><button type="button" onClick={() => setDrawingPreview(job)}>{t('Xem trước', 'Preview')}</button>{job.status === 'queued' ? <button type="button" onClick={() => editDrawingJob(job)}>{t('Sửa', 'Edit')}</button> : null}{job.status === 'done' ? <>{isDesktopApp ? <button type="button" onClick={() => void fetch(`/api/drawing/jobs/${job.id}/reveal`, { method: 'POST' }).then(async (r) => { if (!r.ok) throw new Error(await r.text()) }).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : null}<a href={`/api/drawing/jobs/${job.id}/output`} download>{t('Tải MP4', 'Download MP4')}</a></> : null}{job.status === 'queued' || job.status === 'processing' ? <button type="button" className="danger" onClick={() => void cancelDrawingJob(job.id)}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="studio-job-delete" onClick={() => void deleteDrawingJob(job.id)}>{t('Xóa', 'Delete')}</button></td></tr>)}
             </tbody>
           </table>
@@ -416,7 +418,6 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
         <div className="studio-actions">
           <button type="button" onClick={() => void addFiles()}>{t('Thêm file', 'Add files')}</button>
           <button type="button" onClick={() => void addFolder()}>{t('Thêm thư mục', 'Add folder')}</button>
-          <button type="button" className="primary" disabled={!readyQueueJobs.length} onClick={() => void runQueueJobs()}>{t(`Chạy ${readyQueueJobs.length} job`, `Run ${readyQueueJobs.length} jobs`)}</button>
           <button
             type="button"
             className={`studio-settings-toggle${settingsOpen ? ' open' : ''}`}
@@ -430,6 +431,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
               : t('Cài đặt Clone hàng loạt', 'Clone batch settings')}
             <IconArrowRight size={15} className="studio-settings-chevron" />
           </button>
+          <button type="button" className="primary" disabled={!readyQueueJobs.length} onClick={() => void runQueueJobs()}>{t(`Chạy ${readyQueueJobs.length} job`, `Run ${readyQueueJobs.length} jobs`)}</button>
           {editingQueueJob ? <button type="button" className="primary" onClick={() => void addToQueue()}>{t('Lưu chỉnh sửa', 'Save changes')}</button> : null}
           {editingQueueJob ? <button type="button" onClick={() => setEditingQueueJob(null)}>{t('Hủy sửa', 'Cancel edit')}</button> : null}
         </div>
@@ -442,7 +444,6 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
           <section className="studio-card studio-settings-common">
             <h2>{t('Cài đặt đầu ra', 'Output settings')}</h2>
             <div className="studio-actions">
-              <button type="button" onClick={() => void studioApi.pickFolder().then((r) => r.path && setOutputDir(r.path))}>{t('Thư mục xuất', 'Output folder')}</button>
               <label className="check"><input type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} /> {t('Quét đệ quy', 'Recursive scan')}</label>
               <select aria-label={t('Xử lý file trùng', 'Existing file handling')} value={overwrite} onChange={(e) => setOverwrite(e.target.value)}>
                 <option value="rename">{t('Đổi tên nếu trùng', 'Auto rename')}</option>
@@ -450,7 +451,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                 <option value="overwrite">{t('Ghi đè', 'Overwrite')}</option>
               </select>
             </div>
-            <p className="muted">{outputDir || t('Xuất mặc định vào project', 'Default output is the project folder')}</p>
+            <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={async () => { const result = await studioApi.pickFolder(); if (result.path) setOutputDir(result.path) }} onSave={() => localStorage.setItem(BATCH_OUTPUT_DIR_LS, outputDir)} defaultPath={t('Mặc định: Downloads/batch', 'Default: Downloads/batch')} label={t('Thư mục xuất', 'Output folder')} />
           </section>
           {tab === 'review' ? (
             <div className="rv-page rv-embed">
@@ -509,25 +510,25 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                 <td className="studio-job-actions">
                   {job.status === 'running' || job.status === 'queued' ? (
                     <>
-                      <button type="button" onClick={() => void studioApi.jobAction(job.id, 'pause').then(refresh)}>{t('Dừng', 'Pause')}</button>
-                      <button type="button" onClick={() => void studioApi.jobAction(job.id, 'cancel').then(refresh)}>{t('Hủy', 'Cancel')}</button>
+                      <button type="button" className="batch-action batch-action--pause" onClick={() => void studioApi.jobAction(job.id, 'pause').then(refresh)}>{t('Dừng', 'Pause')}</button>
+                      <button type="button" className="batch-action batch-action--danger" onClick={() => void studioApi.jobAction(job.id, 'cancel').then(refresh)}>{t('Hủy', 'Cancel')}</button>
                     </>
                   ) : null}
                   {job.status === 'paused' || job.status === 'interrupted' ? (
-                    <button type="button" onClick={() => void studioApi.jobAction(job.id, 'resume').then(refresh)}>{t('Tiếp tục', 'Resume')}</button>
+                    <button type="button" className="batch-action batch-action--resume" onClick={() => void studioApi.jobAction(job.id, 'resume').then(refresh)}>{t('Tiếp tục', 'Resume')}</button>
                   ) : null}
                   {job.status === 'failed' || job.status === 'cancelled' ? (
-                    <button type="button" onClick={() => void studioApi.jobAction(job.id, 'retry').then(refresh)}>{t('Thử lại', 'Retry')}</button>
+                    <button type="button" className="batch-action batch-action--retry" onClick={() => void studioApi.jobAction(job.id, 'retry').then(refresh)}>{t('Thử lại', 'Retry')}</button>
                   ) : null}
                   {job.status !== 'running' && job.status !== 'done' ? (
-                    <button type="button" onClick={() => void editQueueJob(job)}>{t('Sửa', 'Edit')}</button>
+                    <button type="button" className="batch-action batch-action--edit" onClick={() => void editQueueJob(job)}>{t('Sửa', 'Edit')}</button>
                   ) : null}
-                  {job.status === 'done' ? <button type="button" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button> : null}
-                  {job.status === 'done' ? (isDesktopApp ? <button type="button" onClick={() => void studioApi.revealJob(job.id).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : <a href={studioApi.fileUrl(job.id, { download: true })} download>{t('Tải xuống', 'Download')}</a>) : null}
+                  {job.status === 'done' ? <button type="button" className="batch-action batch-action--view" onClick={() => setQueuePreview(job)}>{t('Xem trước', 'Preview')}</button> : null}
+                  {job.status === 'done' ? (isDesktopApp ? <button type="button" className="batch-action batch-action--open" onClick={() => void studioApi.revealJob(job.id).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : <a className="batch-action batch-action--open" href={studioApi.fileUrl(job.id, { download: true })} download>{t('Tải xuống', 'Download')}</a>) : null}
                   {job.status === 'done' && job.projectId && onOpenEditor ? (
-                    <button type="button" onClick={() => onOpenEditor(job.projectId!)}>{t('Mở Editor', 'Open Editor')}</button>
+                    <button type="button" className="batch-action batch-action--edit" onClick={() => onOpenEditor(job.projectId!)}>{t('Mở Editor', 'Open Editor')}</button>
                   ) : null}
-                  <button type="button" className="studio-job-delete" onClick={() => void deleteQueueJob(job.id)}>{t('Xóa', 'Delete')}</button>
+                  <button type="button" className="studio-job-delete batch-action batch-action--danger" onClick={() => void deleteQueueJob(job.id)}>{t('Xóa', 'Delete')}</button>
                 </td>
               </tr>
             ))}
