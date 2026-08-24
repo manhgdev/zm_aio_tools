@@ -1825,7 +1825,7 @@ export default function TtsStudio({
                   if (result.path) setOutputDir(result.path)
                 }}
                 onSave={() => localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)}
-                defaultPath={t('Mặc định: Downloads/tts', 'Default: Downloads/tts')}
+                defaultPath={t('Mặc định: Downloads/ZM_AIO_TOOL/text-to-speech', 'Default: Downloads/ZM_AIO_TOOL/text-to-speech')}
                 label={t('Thư mục đầu ra', 'Output folder')}
                 disabled={busy}
               />

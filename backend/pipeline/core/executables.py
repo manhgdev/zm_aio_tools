@@ -54,3 +54,11 @@ def find_ytdlp() -> str | None:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return None
+
+
+def ytdlp_command() -> list[str] | None:
+    """Return a runnable yt-dlp command, including the copy embedded in APP."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--yt-dlp-cli"]
+    found = find_ytdlp()
+    return [found] if found else None

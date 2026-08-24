@@ -179,7 +179,7 @@ if (!ffmpegCheck) {
 }
 
 // Chỉ cài khi thiếu — không reinstall mỗi lần
-ensurePip(['pyinstaller', 'uv', 'pywebview'])
+ensurePip(['pyinstaller', 'uv', 'pywebview', 'yt-dlp'])
 
 const iconIco = path.join(root, 'build_app', 'app.ico')
 const iconIcns = path.join(root, 'build_app', 'app.icns')
@@ -206,6 +206,7 @@ const args = [
   '--add-data', `${path.join(root, 'backend', 'resources', 'voice-ref')}${dataSep}resources/voice-ref`,
   '--add-data', `${versionFilePath}${dataSep}.`,
   '--collect-all', 'webview',
+  '--collect-all', 'yt_dlp',
   // Hidden imports: stdlib + third-party hay bị PyInstaller miss
   '--hidden-import', 'timeit',
   '--hidden-import', 'pickletools',

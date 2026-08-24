@@ -718,6 +718,10 @@ def run_desktop() -> int:
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     try:
+        if len(sys.argv) > 1 and sys.argv[1] == "--yt-dlp-cli":
+            from yt_dlp import main as ytdlp_main
+
+            raise SystemExit(ytdlp_main(sys.argv[2:]) or 0)
         if len(sys.argv) == 3 and sys.argv[1] == "--restart-after":
             wait_for_parent_exit(int(sys.argv[2]))
         elif len(sys.argv) > 1:

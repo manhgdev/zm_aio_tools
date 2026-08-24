@@ -3,6 +3,7 @@
 .output-folder-label small { flex: 0 0 auto; padding: 2px 6px; border-radius: 999px; background: color-mix(in srgb, var(--primary, #2684d9) 10%, var(--surface, #fff)); color: var(--primary, #2684d9); font-size: .6rem; line-height: 1.35; letter-spacing: .04em; }
 .output-folder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; width: 100%; min-width: 0; align-items: stretch; }
 .output-folder-row.is-web-editable { grid-template-columns: minmax(0, 1fr) auto; }
+.output-folder-row.is-web-editable.has-choose { grid-template-columns: minmax(0, 1fr) auto auto; }
 .output-folder-row input { width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box; border: 1px solid var(--line, var(--border, #d8dee7)); border-radius: 8px; padding: 7px 10px; background: var(--surface, var(--card, #fff)); color: var(--ink, var(--foreground, #1f2937)); font: 500 .86rem/1.25 inherit; outline: none; text-overflow: ellipsis; }
 .output-folder-row input:focus { border-color: var(--primary, #2684d9); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #2684d9) 18%, transparent); }
 .output-folder-row input[readonly] { background: color-mix(in srgb, var(--muted-foreground, #64748b) 5%, var(--surface, #fff)); }

@@ -12,18 +12,46 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.core.config import PUBLIC_DATA
-from pipeline.core.output_paths import item_output_folder, nested_output_folder, safe_output_part
+from pipeline.core.output_paths import safe_output_part, selected_or_default
 from . import store
 
 _PROJECT_RE = re.compile(r"/flow/project/([^/?#]+)")
 _TERMINAL = {"done", "failed", "cancelled", "action_required"}
+_MAX_CONCURRENT_JOBS_PER_ACCOUNT = 3
+_PROFILE_COPY_IGNORES = {
+    "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache",
+    "GraphiteDawnCache", "GPUPersistentCache", "ShaderCache", "GrShaderCache",
+    "Crashpad", "SingletonCookie", "SingletonLock", "SingletonSocket", "LOCK",
+}
+_IMAGE_UI_MODELS = {"Nano Banana Pro", "Nano Banana 2", "Nano Banana 2 Lite"}
+_VIDEO_UI_MODELS = {
+    "Omni Flash", "Veo 3.1 - Lite", "Veo 3.1 - Fast",
+    "Veo 3.1 - Quality", "Veo 3.1 - Lite [Lower Priority]",
+}
 
 
 class FlowService:
     def __init__(self) -> None:
-        self._account_locks: dict[str, threading.Lock] = {}
+        self._account_slots: dict[str, threading.BoundedSemaphore] = {}
+        self._claimed_media_ids: set[str] = set()
         self._cancelled: set[str] = set()
         self._guard = threading.RLock()
+
+    def _claim_media_ids(self, candidates: list[str], expected_count: int) -> list[str]:
+        """Atomically assign project media so concurrent jobs cannot share one output."""
+        with self._guard:
+            persisted = {
+                str(media_id)
+                for job in self.jobs()
+                for media_id in (job.get("mediaIds") or [])
+                if str(media_id)
+            }
+            used = persisted | self._claimed_media_ids
+            selected = [media_id for media_id in candidates if media_id not in used][:expected_count]
+            if len(selected) == expected_count:
+                self._claimed_media_ids.update(selected)
+                return selected
+            return []
 
     def accounts(self) -> list[dict[str, Any]]:
         return store.list_rows("accounts")
@@ -65,6 +93,19 @@ class FlowService:
             if job.get("status") in {"queued", "processing"}:
                 store.patch_row("jobs", job["id"], {"status": "queued", "stage": "queued", "progress": 0, "updatedAt": time.time()})
                 threading.Thread(target=self._run_sync, args=(job["id"],), daemon=True, name=f"flow-resume-{job['id']}").start()
+            elif job.get("status") == "done" and not self._outputs_exist(job.get("outputs")):
+                store.patch_row("jobs", job["id"], {
+                    "status": "failed",
+                    "stage": "failed",
+                    "progress": 0,
+                    "error": "FLOW_EMPTY_OUTPUT: generation finished without a downloaded media file",
+                    "updatedAt": time.time(),
+                })
+
+    @staticmethod
+    def _outputs_exist(outputs: Any) -> bool:
+        paths = [Path(str(value)) for value in (outputs or []) if str(value)]
+        return bool(paths) and all(path.is_file() and path.stat().st_size > 0 for path in paths)
 
     def save_account(self, payload: dict[str, Any], account_id: str | None = None) -> dict[str, Any]:
         now = time.time()
@@ -102,11 +143,36 @@ class FlowService:
         if not job:
             return False
         if job.get("status") not in _TERMINAL:
-            raise RuntimeError("Cancel the Flow job before deleting it")
+            self._cancelled.add(job_id)
+            store.patch_row("jobs", job_id, {"status": "cancelled", "stage": "cancelled", "progress": 0, "updatedAt": time.time()})
         removed = store.delete_row("jobs", job_id)
         if removed:
-            shutil.rmtree(self._output_folder(job, create=False), ignore_errors=True)
+            # Output folders can now be shared by multiple prompts. Only remove
+            # artifacts belonging to this job, then remove the folder if empty.
+            for raw_output in job.get("outputs") or []:
+                try:
+                    Path(str(raw_output)).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            try:
+                self._output_folder(job, create=False).rmdir()
+            except OSError:
+                pass
         return removed
+
+    def cancel_all(self) -> int:
+        count = 0
+        for job in self.jobs():
+            if job.get("status") not in _TERMINAL and self.cancel(str(job["id"])):
+                count += 1
+        return count
+
+    def delete_all_jobs(self) -> int:
+        count = 0
+        for job in self.jobs():
+            if self.delete_job(str(job["id"])):
+                count += 1
+        return count
 
     def connect(self, account_id: str) -> dict[str, Any]:
         account = store.get_row("accounts", account_id)
@@ -166,13 +232,29 @@ class FlowService:
         account_id = str(payload.get("accountId") or "")
         if not prompts or not store.get_row("accounts", account_id):
             raise ValueError("Prompts and a valid Flow account are required")
+        settings = dict(payload.get("settings") or {})
+        kind = str(payload.get("kind") or "video")
+        mode = str(payload.get("mode") or "text")
+        input_type = str(payload.get("inputType") or "prompt").lower()
+        if input_type not in {"prompt", "txt", "csv", "json"}:
+            input_type = "prompt"
+        source_files = list(payload.get("sourceFiles") or [])
+        if kind == "image":
+            if str(settings.get("model") or "Nano Banana 2") not in _IMAGE_UI_MODELS:
+                raise ValueError(f"Unsupported Flow image model: {settings.get('model')}")
+            if mode != "text" and not source_files:
+                raise ValueError("Image edit/reference mode requires at least one source image")
+        else:
+            if str(settings.get("model") or "Veo 3.1 - Fast") not in _VIDEO_UI_MODELS:
+                raise ValueError(f"Unsupported Flow video model: {settings.get('model')}")
         created = []
         for index, prompt in enumerate(prompts, 1):
             now = time.time()
             job = {
-                "id": uuid.uuid4().hex[:12], "inputIndex": index, "kind": payload.get("kind", "video"),
-                "mode": payload.get("mode", "text"), "prompt": prompt, "accountId": account_id,
-                "settings": dict(payload.get("settings") or {}), "sourceFiles": list(payload.get("sourceFiles") or []),
+                "id": uuid.uuid4().hex[:12], "inputIndex": index, "kind": kind,
+                "mode": mode, "prompt": prompt, "accountId": account_id,
+                "inputType": input_type,
+                "settings": settings, "sourceFiles": source_files,
                 "status": "queued", "stage": "queued", "progress": 0, "mediaIds": [], "outputs": [],
                 "error": None, "createdAt": now, "updatedAt": now,
             }
@@ -188,11 +270,31 @@ class FlowService:
             return
         account_id = str(job["accountId"])
         with self._guard:
-            lock = self._account_locks.setdefault(account_id, threading.Lock())
-        with lock:
+            slots = self._account_slots.setdefault(
+                account_id,
+                threading.BoundedSemaphore(_MAX_CONCURRENT_JOBS_PER_ACCOUNT),
+            )
+        with slots:
             if job_id in self._cancelled:
                 return
-            asyncio.run(self._run(job_id))
+            runtime_profile = self._clone_runtime_profile(account_id, job_id)
+            try:
+                asyncio.run(self._run(job_id, profile_dir=runtime_profile))
+            finally:
+                shutil.rmtree(runtime_profile, ignore_errors=True)
+
+    def _clone_runtime_profile(self, account_id: str, job_id: str) -> Path:
+        """Copy login state into an isolated, cache-free profile for one job."""
+        source = store.profile_dir(account_id)
+        target = store.root() / "runtime-profiles" / account_id / job_id
+        shutil.rmtree(target, ignore_errors=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            source,
+            target,
+            ignore=lambda _directory, names: sorted(_PROFILE_COPY_IGNORES.intersection(names)),
+        )
+        return target
 
     async def _prepare_video_mode(self, page, model: str) -> None:
         """Open Flow's live settings popover and verify Video mode.
@@ -245,6 +347,130 @@ class FlowService:
             if not selected:
                 raise RuntimeError(f"FLOW_MODEL_UNAVAILABLE: {model}")
 
+    async def _prepare_ui_model(self, page, kind: str, model: str) -> None:
+        """Select a current Flow UI model for models without a stable REST key."""
+        await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=10_000)
+        mode_pattern = re.compile(r"Image|Hình ảnh", re.I) if kind == "image" else re.compile(r"Video", re.I)
+        mode_matches = page.locator('[role="tab"]').filter(has_text=mode_pattern)
+        mode_tab = None
+        for index in range(await mode_matches.count()):
+            candidate = mode_matches.nth(index)
+            if await candidate.is_visible():
+                mode_tab = candidate
+                break
+        if mode_tab is None:
+            pills = page.locator('button[aria-haspopup="menu"]')
+            trigger = None
+            for index in range(await pills.count() - 1, -1, -1):
+                candidate = pills.nth(index)
+                text = (await candidate.inner_text()).strip()
+                if await candidate.is_visible() and re.search(r"\bx[1-4]\b", text):
+                    trigger = candidate
+                    break
+            if trigger is None:
+                raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
+            await trigger.click()
+            await asyncio.sleep(0.5)
+            mode_matches = page.locator('[role="tab"]').filter(has_text=mode_pattern)
+            for index in range(await mode_matches.count()):
+                candidate = mode_matches.nth(index)
+                if await candidate.is_visible():
+                    mode_tab = candidate
+                    break
+        if mode_tab is None:
+            raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
+        if await mode_tab.get_attribute("aria-selected") != "true":
+            await mode_tab.click()
+            await asyncio.sleep(0.5)
+
+        family = re.compile(r"Nano Banana|Imagen", re.I) if kind == "image" else re.compile(r"Omni|Veo", re.I)
+        selectors = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
+        selector = None
+        for index in range(await selectors.count() - 1, -1, -1):
+            candidate = selectors.nth(index)
+            if await candidate.is_visible():
+                selector = candidate
+                break
+        if selector is None:
+            raise RuntimeError(f"FLOW_UI_CHANGED: {kind} model selector was not found")
+        if model.lower() not in (await selector.inner_text()).lower():
+            await selector.click()
+            await asyncio.sleep(0.35)
+            choices = page.locator('[role="menuitem"], [role="option"]')
+            selected = False
+            for index in range(await choices.count()):
+                choice = choices.nth(index)
+                text = (await choice.inner_text()).strip()
+                if await choice.is_visible() and model.lower() in text.lower():
+                    await choice.click()
+                    selected = True
+                    break
+            if not selected:
+                raise RuntimeError(f"FLOW_MODEL_UNAVAILABLE: {model}")
+
+    async def _prepare_ui_format(self, page, ratio: str, duration: str | None = None) -> None:
+        """Select current numeric Flow tabs and verify the requested format.
+
+        Recent Flow builds label aspect tabs ``16:9``/``9:16``/``1:1`` rather
+        than the older Landscape/Portrait/Square labels used by flow-py.
+        """
+        async def visible_tab(label: str):
+            matches = page.locator('[role="tab"]').filter(
+                has_text=re.compile(re.escape(label))
+            )
+            for index in range(await matches.count()):
+                candidate = matches.nth(index)
+                if await candidate.is_visible():
+                    return candidate
+            return None
+
+        ratio_label = ratio if ratio in {"16:9", "9:16", "1:1"} else "16:9"
+        ratio_tab = None
+        for attempt in range(4):
+            ratio_tab = await visible_tab(ratio_label)
+            if ratio_tab is not None:
+                break
+            # Model selection can leave a transient menu open or close the
+            # settings popover. Close the transient layer, then reopen the
+            # summary pill whose text always contains x1..x4.
+            if attempt:
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.2)
+            buttons = page.locator("button")
+            trigger = None
+            for index in range(await buttons.count() - 1, -1, -1):
+                candidate = buttons.nth(index)
+                text = (await candidate.inner_text()).strip()
+                if (
+                    await candidate.is_visible()
+                    and re.search(r"\bx[1-4]\b", text)
+                    and await candidate.get_attribute("role") != "tab"
+                ):
+                    trigger = candidate
+                    break
+            if trigger is not None:
+                await trigger.click()
+            await asyncio.sleep(0.75)
+        if ratio_tab is None:
+            raise RuntimeError(f"FLOW_UI_CHANGED: aspect ratio {ratio_label} was not found")
+        if await ratio_tab.get_attribute("aria-selected") != "true":
+            await ratio_tab.click()
+            await asyncio.sleep(0.3)
+        if await ratio_tab.get_attribute("aria-selected") != "true":
+            raise RuntimeError(f"FLOW_SETTING_MISMATCH: aspect ratio {ratio_label} was not selected")
+
+        if duration is None:
+            return
+        duration_label = f"{duration}s" if duration in {"4", "6", "8"} else "8s"
+        duration_tab = await visible_tab(duration_label)
+        if duration_tab is None:
+            raise RuntimeError(f"FLOW_UI_CHANGED: duration {duration_label} was not found")
+        if await duration_tab.get_attribute("aria-selected") != "true":
+            await duration_tab.click()
+            await asyncio.sleep(0.3)
+        if await duration_tab.get_attribute("aria-selected") != "true":
+            raise RuntimeError(f"FLOW_SETTING_MISMATCH: duration {duration_label} was not selected")
+
     async def _wait_for_project_videos(
         self,
         api,
@@ -278,9 +504,14 @@ class FlowService:
                     "MEDIA_GENERATION_STATUS_SUCCESSFUL",
                 }:
                     completed.append((str(metadata.get("createTime") or ""), media_id))
-            if len(completed) >= expected_count:
+            if completed:
                 completed.sort()
-                return [media_id for _, media_id in completed[:expected_count]]
+                claimed = self._claim_media_ids(
+                    [media_id for _, media_id in completed],
+                    expected_count,
+                )
+                if claimed:
+                    return claimed
             store.patch_row("jobs", job_id, {
                 "stage": "generating",
                 "progress": min(90, 20 + int((timeout_s - (deadline - time.monotonic())) / 12)),
@@ -289,7 +520,21 @@ class FlowService:
             await asyncio.sleep(5)
         raise RuntimeError("FLOW_GENERATION_TIMEOUT: no completed video appeared in project data")
 
-    async def _run(self, job_id: str) -> None:
+    async def _sync_credits(self, api, account_id: str) -> None:
+        """Refresh the persisted balance without turning a successful job into a failure."""
+        try:
+            credit_info = await api.get_credits()
+            store.patch_row("accounts", account_id, {
+                "credits": int(credit_info.credits),
+                "creditsSyncedAt": time.time(),
+                "updatedAt": time.time(),
+            })
+        except Exception:
+            # Credit reporting is secondary to generation. A later job or
+            # reconnect can refresh it if Google's balance endpoint is busy.
+            pass
+
+    async def _run(self, job_id: str, *, profile_dir: Path | None = None) -> None:
         job = store.get_row("jobs", job_id)
         account = store.get_row("accounts", str(job.get("accountId"))) if job else None
         if not job or not account:
@@ -305,7 +550,7 @@ class FlowService:
             # Generation uses the already-authenticated persistent profile in
             # background mode. Only the explicit account-connect flow opens a
             # visible Chrome window for interactive Google sign-in.
-            browser = BrowserManager(headless=True, profile_dir=store.profile_dir(account["id"]))
+            browser = BrowserManager(headless=True, profile_dir=profile_dir or store.profile_dir(account["id"]))
             await browser.start()
             self._log("info", "browser_ready", job_id=job_id, account_id=account["id"])
             api = FlowAPI(browser, project_id=account["projectId"], default_timeout_s=600)
@@ -315,21 +560,37 @@ class FlowService:
             if job["kind"] == "video":
                 source = next(iter(job.get("sourceFiles") or []), None)
                 model = str(settings.get("model") or "Veo 3.1 - Fast").replace("3.1 Fast", "3.1 - Fast").replace("3.1 Quality", "3.1 - Quality")
+                ratio = str(settings.get("ratio") or "16:9")
                 page = await browser.page()
                 await client._ensure_project_page(page)
-                await self._prepare_video_mode(page, model)
-                project_before = await api.get_project_data()
+                await self._prepare_ui_model(page, "video", model)
+                await self._prepare_ui_format(page, ratio, str(settings.get("duration") or "8"))
+                project_data = await api.get_project_data()
                 baseline_ids = {
-                    str(media.get("name") or "")
-                    for media in project_before.get("projectContents", {}).get("media", [])
+                    str(media.get("name"))
+                    for media in project_data.get("projectContents", {}).get("media", [])
+                    if media.get("name")
                 }
-                remote = await client.generate_video(job["prompt"], model=model, aspect="portrait" if settings.get("ratio") == "9:16" else "landscape", count=int(settings.get("count", 1)), start_image=source)
+                async def ready(*_args, **_kwargs):
+                    return True
+                client._ui.open_settings_panel = ready
+                client._ui.switch_mode = ready
+                client._ui.set_aspect_ratio = ready
+                remote = await client.generate_video(
+                    job["prompt"], model=model,
+                    aspect="portrait" if ratio == "9:16" else "landscape",
+                    count=max(1, min(4, int(settings.get("count", 1)))), start_image=source,
+                )
                 media_ids = [item.media_name for item in remote]
                 if not media_ids:
                     media_ids = await self._wait_for_project_videos(
-                        api, baseline_ids, int(settings.get("count", 1)), job_id
+                        api,
+                        baseline_ids,
+                        max(1, min(4, int(settings.get("count", 1)))),
+                        job_id,
                     )
                 self._log("success", "generation_submitted", job_id=job_id, account_id=account["id"], details={"model": model, "mediaIds": media_ids})
+                await self._sync_credits(api, account["id"])
                 store.patch_row("jobs", job_id, {"mediaIds": media_ids, "stage": "generating", "progress": 20})
                 outputs = []
                 remote_by_id = {item.media_name: item for item in remote}
@@ -338,7 +599,7 @@ class FlowService:
                     remote_job = remote_by_id.get(media_id)
                     status = None
                     if remote_job is not None:
-                        status = await client.wait_for_video(remote_job, timeout_s=900, on_poll=lambda _s, elapsed: store.patch_row("jobs", job_id, {"progress": min(90, 20 + int(elapsed / 12)), "updatedAt": time.time()}))
+                        status = await api.wait_for_video(remote_job, timeout_s=900, on_poll=lambda _s, elapsed: store.patch_row("jobs", job_id, {"progress": min(90, 20 + int(elapsed / 12)), "updatedAt": time.time()}))
                     suffix = "mp4"
                     output = self._output_path(job, output_index, suffix)
                     media_url = (
@@ -346,25 +607,40 @@ class FlowService:
                         if status is not None and status.fife_url
                         else f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={media_id}"
                     )
-                    await client.download(media_url, output)
+                    await api.download(media_url, output)
                     outputs.append(str(output))
                     self._log("success", "output_downloaded", job_id=job_id, account_id=account["id"], details={"outputIndex": output_index, "path": str(output)})
             else:
-                # Flow keeps uploaded references in the composer. Upload them
-                # through the real file input before the intercepted submit.
-                for source in job.get("sourceFiles") or []:
-                    await client._ui.upload_image(await browser.page(), source)
-                images = await client.generate_image(job["prompt"], aspect={"9:16": "portrait", "1:1": "square"}.get(settings.get("ratio"), "landscape"), count=int(settings.get("count", 1)), reference_images=job.get("sourceFiles") or None)
+                model = str(settings.get("model") or "Nano Banana 2")
+                sources = job.get("sourceFiles") or []
+                page = await browser.page()
+                await client._ensure_project_page(page)
+                await self._prepare_ui_model(page, "image", model)
+                await self._prepare_ui_format(page, str(settings.get("ratio") or "16:9"))
+                for source in sources:
+                    await client._ui.upload_image(page, source)
+                async def ready(*_args, **_kwargs):
+                    return True
+                client._ui.open_settings_panel = ready
+                client._ui.switch_mode = ready
+                client._ui.set_aspect_ratio = ready
+                images = await client.generate_image(
+                    job["prompt"], aspect={"9:16": "portrait", "1:1": "square"}.get(settings.get("ratio"), "landscape"),
+                    count=max(1, min(4, int(settings.get("count", 1)))), reference_images=sources or None,
+                )
                 media_ids = [image.media_name for image in images]
                 self._log("success", "generation_submitted", job_id=job_id, account_id=account["id"], details={"model": settings.get("model"), "mediaIds": media_ids})
+                await self._sync_credits(api, account["id"])
                 store.patch_row("jobs", job_id, {"mediaIds": media_ids, "stage": "downloading", "progress": 80})
                 outputs = []
                 for output_index, image in enumerate(images, 1):
                     self._check_cancel(job_id)
                     output = self._output_path(job, output_index, str(settings.get("format", "png")).lower())
-                    await client.download(image.fife_url, output)
+                    await api.download(image.fife_url, output)
                     outputs.append(str(output))
                     self._log("success", "output_downloaded", job_id=job_id, account_id=account["id"], details={"outputIndex": output_index, "path": str(output)})
+            if not self._outputs_exist(outputs):
+                raise RuntimeError("FLOW_EMPTY_OUTPUT: generation finished without a downloaded media file")
             store.patch_row("jobs", job_id, {"status": "done", "stage": "done", "progress": 100, "outputs": outputs, "updatedAt": time.time()})
             self._log("success", "job_completed", job_id=job_id, account_id=account["id"], details={"outputCount": len(outputs)})
         except asyncio.CancelledError:
@@ -380,22 +656,18 @@ class FlowService:
                 await browser.stop()
 
     def _output_folder(self, job: dict[str, Any], *, create: bool = True) -> Path:
-        """One shared output root, then one child folder per Flow job."""
+        """Return the requested Flow folder without hidden time/job subfolders."""
         settings = job.get("settings") or {}
         selected = Path(str(settings.get("outputDir") or "")).expanduser()
         desktop = os.environ.get("VIDEO_CLONE_DESKTOP") == "1"
-        if desktop and selected.is_absolute():
-            root = selected
-            if bool(settings.get("createTimeFolder", True)):
-                created_at = float(job.get("createdAt") or time.time())
-                root /= time.strftime("%Y%m%d_%H%M%S", time.localtime(created_at))
-            return item_output_folder(root, job["id"], create=create)
-        return nested_output_folder(
-            PUBLIC_DATA / "flow",
-            settings.get("outputDir") or "results",
-            job["id"],
-            create=create,
-        )
+        if desktop:
+            return selected_or_default("flow", str(settings.get("outputDir") or ""))
+        root = PUBLIC_DATA / "flow"
+        folder_name = safe_output_part(settings.get("outputDir") or "results", "results")
+        folder = root / folder_name
+        if create:
+            folder.mkdir(parents=True, exist_ok=True)
+        return folder
 
     def _output_path(self, job: dict[str, Any], output_index: int, suffix: str) -> Path:
         folder = self._output_folder(job)

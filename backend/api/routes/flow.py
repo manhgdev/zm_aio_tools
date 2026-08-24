@@ -92,7 +92,9 @@ async def asset_upload(files: list[UploadFile] = File(...)):
 
 @router.get("/jobs")
 def jobs_list():
-    return {"jobs": service.jobs()}
+    # Include the account snapshot so the active-job poll also refreshes
+    # credits without adding another recurring request from the frontend.
+    return {"jobs": service.jobs(), "accounts": service.accounts()}
 
 
 @router.get("/logs")
@@ -114,6 +116,16 @@ def jobs_create(body: GenerateIn):
         raise HTTPException(422, str(exc)) from exc
 
 
+@router.post("/jobs/cancel-all")
+def jobs_cancel_all():
+    return {"ok": True, "cancelled": service.cancel_all(), "jobs": service.jobs()}
+
+
+@router.delete("/jobs")
+def jobs_delete_all():
+    return {"ok": True, "deleted": service.delete_all_jobs(), "jobs": service.jobs()}
+
+
 @router.post("/jobs/{job_id}/cancel")
 def jobs_cancel(job_id: str):
     job = service.cancel(job_id)
@@ -132,10 +144,7 @@ def jobs_retry(job_id: str):
 
 @router.delete("/jobs/{job_id}")
 def jobs_delete(job_id: str):
-    try:
-        removed = service.delete_job(job_id)
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    removed = service.delete_job(job_id)
     if not removed:
         raise HTTPException(404, "Flow job not found")
     return {"ok": True}

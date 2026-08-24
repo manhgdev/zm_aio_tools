@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from pipeline.core.config import DATA, PUBLIC_DATA, SERVER_ROOT
 from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
-from pipeline.core.executables import find_ytdlp
+from pipeline.core.executables import ytdlp_command
 
 _DEFAULT_DOWNLOAD_ROOT = downloads_folder("download-video")
 _PREF_PATH = DATA / "download_root.json"
@@ -36,7 +36,11 @@ def _load_pref_path() -> Path | None:
         raw = str(data.get("path") or "").strip()
         if not raw:
             return None
-        return Path(raw).expanduser()
+        selected = Path(raw).expanduser()
+        # Migrate the former built-in default; retain genuinely custom paths.
+        if selected == Path.home() / "Downloads" / "download-video":
+            return None
+        return selected
     except Exception:
         return None
 
@@ -290,15 +294,15 @@ def _load_jobs_from_disk() -> None:
 _load_jobs_from_disk()
 
 
-def _ytdlp_bin() -> str:
-    return find_ytdlp() or "yt-dlp"
+def _ytdlp_bin() -> list[str]:
+    return ytdlp_command() or ["yt-dlp"]
 
 
-def _platform_subtitle_selection(bin_: str, url: str) -> tuple[list[str], bool]:
+def _platform_subtitle_selection(bin_: str | list[str], url: str) -> tuple[list[str], bool]:
     """Pick one vi/en caption from metadata; manual captions win over automatic ones."""
     try:
         proc = subprocess.run(
-            [bin_, "--no-playlist", "--ignore-config", "--skip-download", "--dump-single-json", url],
+            [*([bin_] if isinstance(bin_, str) else bin_), "--no-playlist", "--ignore-config", "--skip-download", "--dump-single-json", url],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -757,7 +761,7 @@ def _run_ytdlp(job_id: str) -> None:
     )
 
     cmd: list[str] = [
-        bin_,
+        *bin_,
         "--no-playlist",
         "--newline",
         "--ignore-config",

@@ -451,7 +451,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                 <option value="overwrite">{t('Ghi đè', 'Overwrite')}</option>
               </select>
             </div>
-            <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={async () => { const result = await studioApi.pickFolder(); if (result.path) setOutputDir(result.path) }} onSave={() => localStorage.setItem(BATCH_OUTPUT_DIR_LS, outputDir)} defaultPath={t('Mặc định: Downloads/batch', 'Default: Downloads/batch')} label={t('Thư mục xuất', 'Output folder')} />
+            <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={async () => { const result = await studioApi.pickFolder(); if (result.path) setOutputDir(result.path) }} onSave={() => localStorage.setItem(BATCH_OUTPUT_DIR_LS, outputDir)} defaultPath={t('Mặc định: Downloads/ZM_AIO_TOOL/clone hoặc review', 'Default: Downloads/ZM_AIO_TOOL/clone or review')} label={t('Thư mục xuất', 'Output folder')} />
           </section>
           {tab === 'review' ? (
             <div className="rv-page rv-embed">

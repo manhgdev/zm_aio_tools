@@ -214,6 +214,26 @@
   border-color: var(--primary, #2563eb);
 }
 
+/* Match Clone's Recognition select metrics in the macOS APP. */
+.platform-macos .dl-studio .dl-field select {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: 35px;
+  padding: 0 30px 0 10px;
+  border-radius: 8px;
+  font-size: .84rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 12px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+
 .dl-path-row {
   display: flex;
   gap: 6px;
@@ -231,6 +251,17 @@
   font-weight: 500;
   color: var(--muted-foreground, #64748b);
   line-height: 1.3;
+}
+
+/* Keep the folder helper on its own row before the option checkboxes. */
+.dl-studio .output-folder-field {
+  margin-bottom: 10px;
+}
+
+.dl-studio .output-folder-hint {
+  display: block;
+  min-height: 18px;
+  line-height: 18px;
 }
 
 .dl-checks {

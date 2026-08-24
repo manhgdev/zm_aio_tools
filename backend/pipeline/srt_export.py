@@ -13,7 +13,7 @@ from typing import Any
 
 from pipeline.asr.whisper import asr_whisper
 from pipeline.core.config import DATA
-from pipeline.core.executables import find_ytdlp
+from pipeline.core.executables import ytdlp_command
 from pipeline.core.output_paths import selected_or_default
 from pipeline.core.media import extract_audio
 from pipeline.export.srt import SRT_STYLES, _split_for_style, parse_srt, style_params, wrap_capcut_text, write_subtitle
@@ -121,10 +121,10 @@ def _pick_platform_language(info: dict[str, Any], preferred: str = "auto") -> tu
 
 
 def _platform_subtitles(work: Path, url: str, source_lang: str) -> tuple[list[dict[str, Any]] | None, str]:
-    ytdlp = find_ytdlp()
+    ytdlp = ytdlp_command()
     if not ytdlp:
         return None, "Không tìm thấy yt-dlp"
-    meta = subprocess.run([ytdlp, "--dump-single-json", "--skip-download", "--no-playlist", url], capture_output=True, text=True, timeout=90)
+    meta = subprocess.run([*ytdlp, "--dump-single-json", "--skip-download", "--no-playlist", url], capture_output=True, text=True, timeout=90)
     if meta.returncode:
         return None, (meta.stderr.strip().splitlines()[-1] if meta.stderr.strip() else "Không đọc được phụ đề của nền tảng")
     info = json.loads(meta.stdout)
@@ -134,7 +134,7 @@ def _platform_subtitles(work: Path, url: str, source_lang: str) -> tuple[list[di
     language, label = picked
     template = work / "platform.%(ext)s"
     result = subprocess.run([
-        ytdlp, "--skip-download", "--no-playlist", "--write-subs", "--write-auto-subs",
+        *ytdlp, "--skip-download", "--no-playlist", "--write-subs", "--write-auto-subs",
         "--sub-langs", language, "--sub-format", "srt/vtt/best", "--convert-subs", "srt",
         "-o", str(template), url,
     ], capture_output=True, text=True, timeout=180)
@@ -146,10 +146,10 @@ def _platform_subtitles(work: Path, url: str, source_lang: str) -> tuple[list[di
 
 
 def _platform_audio(work: Path, url: str) -> Path:
-    ytdlp = find_ytdlp()
+    ytdlp = ytdlp_command()
     if not ytdlp:
         raise RuntimeError("Chưa cài yt-dlp để đọc URL nền tảng")
-    result = subprocess.run([ytdlp, "--no-playlist", "-f", "bestaudio/best", "-o", str(work / "input.%(ext)s"), url], capture_output=True, text=True, timeout=900)
+    result = subprocess.run([*ytdlp, "--no-playlist", "-f", "bestaudio/best", "-o", str(work / "input.%(ext)s"), url], capture_output=True, text=True, timeout=900)
     sources = [path for path in work.glob("input.*") if path.suffix.lower() != ".part"]
     if result.returncode or not sources:
         detail = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "Không tải được audio từ nền tảng"

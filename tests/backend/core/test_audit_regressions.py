@@ -164,7 +164,17 @@ def test_ytdlp_detector_covers_gui_app_and_bundle_paths() -> None:
         "backend/pipeline/srt_export.py",
     ):
         text = Path(consumer).read_text(encoding="utf-8")
-        assert "find_ytdlp()" in text
+        assert "ytdlp_command()" in text
+
+
+def test_desktop_bundle_exposes_embedded_ytdlp_cli() -> None:
+    launcher = Path("build_app/launcher.py").read_text(encoding="utf-8")
+    build = Path("build_app/build.mjs").read_text(encoding="utf-8")
+    check = Path("build_app/check_build.mjs").read_text(encoding="utf-8")
+    assert 'sys.argv[1] == "--yt-dlp-cli"' in launcher
+    assert "from yt_dlp import main as ytdlp_main" in launcher
+    assert "'--collect-all', 'yt_dlp'" in build
+    assert "yt-dlp embedded CLI" in check
 
 
 def test_desktop_supervisor_shows_copyable_crash() -> None:

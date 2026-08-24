@@ -97,6 +97,9 @@ checkTool('ffprobe', path.join(isMac ? frameworkDir : internalDir, isWin ? 'ffpr
 // 6. uv
 const uv = path.join(isMac ? frameworkDir : internalDir, isWin ? 'uv.exe' : 'uv')
 check('uv bundled', existsSync(uv), size(uv))
+const ytdlp = spawnSync(exePath, ['--yt-dlp-cli', '--version'], { encoding: 'utf8', timeout: 8000 })
+const ytdlpOutput = `${ytdlp.stdout || ''}${ytdlp.stderr || ''}`.trim()
+check('yt-dlp embedded CLI', ytdlp.status === 0 && /^\d{4}\.\d{1,2}\.\d{1,2}/m.test(ytdlpOutput), ytdlpOutput.split(/\r?\n/)[0] || `exit ${ytdlp.status}`)
 check(
   'embedded Python runtime DLL',
   !isWin || existsSync(path.join(internalDir, 'python312.dll')),

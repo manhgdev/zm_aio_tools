@@ -210,7 +210,25 @@ test('Drawing tab uses bilingual localized UI', async () => {
   assert.match(source, /Từ tâm lan ra/)
   assert.match(source, /Centre outward/)
   assert.match(source, /OutputFolderField/)
-  assert.match(source, /Downloads\/drawing/)
+  assert.match(source, /Downloads\/ZM_AIO_TOOL\/drawing/)
+})
+
+test('APP outputs share one documented root with feature subfolders', async () => {
+  const [paths, flow, drawing, batch, cleaner, subtitles, review, tts, download] = await Promise.all([
+    readFile(new URL('../backend/pipeline/core/output_paths.py', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/DrawingPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/VideoCleanerPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/SrtExportPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FilmPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(paths, /APP_OUTPUT_ROOT_NAME = "ZM_AIO_TOOL"/)
+  for (const source of [flow, drawing, batch, cleaner, subtitles, review, tts, download]) {
+    assert.match(source, /Downloads\/ZM_AIO_TOOL/)
+  }
 })
 
 test('Flow/Veo backend workspace uses bilingual localized UI', async () => {
@@ -337,6 +355,12 @@ test('Batch navigation uses Flow-inspired color states', async () => {
   assert.match(styles, /prefers-reduced-motion/)
 })
 
+test('Batch queue actions use compact Flow-sized controls', async () => {
+  const styles = await readFile(new URL('../frontend/src/pages/StudioPages.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.batch-page \.studio-job-actions\s*\{[^}]*gap: 4px;[^}]*min-width: 180px;/s)
+  assert.match(styles, /\.studio-page\.batch-page \.studio-job-actions button,[\s\S]*?height: 28px;[\s\S]*?padding: 0 7px;[\s\S]*?font-size: \.68rem;/)
+})
+
 test('Batch file selection creates localized queue jobs immediately', async () => {
   const source = await readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8')
   assert.match(source, /create jobs in the queue below, then press Run/)
@@ -393,6 +417,25 @@ test('macOS form controls preserve each feature compact size', async () => {
   assert.match(main, /userAgentData\?\.platform/)
 })
 
+test('macOS Download and TTS selects match Clone Recognition metrics', async () => {
+  const [download, tts] = await Promise.all([
+    readFile(new URL('../frontend/src/features/download/DownloadStudio.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/tts/TtsStudio.css', import.meta.url), 'utf8'),
+  ])
+  for (const styles of [download, tts]) {
+    assert.match(styles, /\.platform-macos[\s\S]*height: 35px;/)
+    assert.match(styles, /padding: 0 30px 0 10px;/)
+    assert.match(styles, /font-size: \.84rem;/)
+    assert.match(styles, /calc\(100% - 16px\) 50%/)
+  }
+})
+
+test('Download output folder hint stays separated from option checkboxes', async () => {
+  const styles = await readFile(new URL('../frontend/src/features/download/DownloadStudio.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.dl-studio \.output-folder-field\s*\{[^}]*margin-bottom: 10px;/s)
+  assert.match(styles, /\.dl-studio \.output-folder-hint\s*\{[^}]*display: block;[^}]*min-height: 18px;[^}]*line-height: 18px;/s)
+})
+
 test('quick settings keep paired controls at equal widths', async () => {
   const styles = await readFile(new URL('../frontend/src/features/project/ProjectSidebar.css', import.meta.url), 'utf8')
   assert.match(styles, /\.locate-logo-filter\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/s)
@@ -404,9 +447,160 @@ test('quick settings keep paired controls at equal widths', async () => {
 })
 
 test('Flow output options render as separate parent rows', async () => {
-  const styles = await readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8')
-  assert.match(styles, /\.flow-output-row\s*\{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);/s)
-  assert.match(styles, /\.flow-output-row > label:first-child\s*\{[^}]*width: 100%;/s)
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(styles, /\.flow-output-row\s*\{[^}]*display: grid;[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s)
+  assert.match(styles, /\.flow-output-row > label:first-child\s*\{[^}]*grid-column: 1 \/ -1;[^}]*width: 100%;/s)
+  assert.match(source, /webFolderOnly/)
+})
+
+test('Flow prompt file import is always visible and compact', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(source, /importOpen|setImportOpen/)
+  assert.match(source, /flow-import-row/)
+  assert.match(source, /Nhập TXT \/ CSV \/ JSON/)
+  assert.match(source, /Import TXT \/ CSV \/ JSON/)
+  assert.match(styles, /\.flow-import-row > button\s*\{[^}]*height: 30px;/s)
+})
+
+test('Flow history uses persisted prompt input provenance', async () => {
+  const source = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /inputType: promptInputType/)
+  assert.match(source, /job\.inputType === "prompt"/)
+  assert.match(source, /Nhập tay/)
+  assert.match(source, /Manual/)
+  assert.doesNotMatch(source, /index % 2 \? "TXT" : "Prompt"/)
+})
+
+test('Flow heading keeps description and backend state compact', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(source, /className="flow-heading"/)
+  assert.match(styles, /\.flow-heading\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;[^}]*margin-bottom: 8px;/s)
+  assert.match(styles, /\.flow-page-title\s*\{[^}]*display: inline-flex;/s)
+  assert.match(styles, /\.flow-api-state\s*\{[^}]*margin: 0 0 0 auto;/s)
+  assert.match(source, /Tạo ảnh và video bằng tài khoản Google Pro\/Ultra\./)
+  assert.match(source, /Create images and videos with Google Pro\/Ultra accounts\./)
+})
+
+test('Flow manual prompt provides bilingual paste and clear actions', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(source, /navigator\.clipboard\.readText\(\)/)
+  assert.match(source, /t\("Dán", "Paste"\)/)
+  assert.match(source, /t\("Xóa", "Clear"\)/)
+  assert.match(source, /onClick=\{\(\) => \{[\s\S]*setPrompt\(""\);[\s\S]*setPromptInputType\("prompt"\);/)
+  assert.match(styles, /\.flow-prompt-actions\s*\{[^}]*display: inline-flex;/s)
+  assert.match(styles, /\.flow-workspace \.flow-prompt-actions > button\s*\{[^}]*height: 26px;/s)
+})
+
+test('Flow queue exposes bilingual bulk cancel and delete actions', async () => {
+  const [source, styles, route] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/api/routes/flow.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(source, /t\("Hủy tất cả", "Cancel all"\)/)
+  assert.match(source, /t\("Xóa tất cả", "Delete all"\)/)
+  assert.match(source, /\/api\/flow\/jobs\/cancel-all/)
+  assert.match(styles, /\.flow-queue-tools\s*\{[^}]*display: inline-flex;/s)
+  assert.match(route, /@router\.post\("\/jobs\/cancel-all"\)/)
+  assert.match(route, /@router\.delete\("\/jobs"\)/)
+})
+
+test('Flow destructive actions use an in-app bilingual confirmation modal', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(source, /window\.confirm/)
+  assert.match(source, /className="flow-confirm-dialog"/)
+  assert.match(source, /t\("Xác nhận thao tác", "Confirm action"\)/)
+  assert.match(source, /t\("Quay lại", "Go back"\)/)
+  assert.match(styles, /\.flow-confirm-dialog\s*\{[^}]*width: min\(420px, 92vw\);/s)
+})
+
+test('Flow exposes live-account models through the authenticated UI path', async () => {
+  const [source, service] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/flow/service.py', import.meta.url), 'utf8'),
+  ])
+  for (const model of ['Omni Flash', 'Veo 3.1 - Lite', 'Veo 3.1 - Lite [Lower Priority]', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Nano Banana Pro', 'Nano Banana 2', 'Nano Banana 2 Lite']) {
+    assert.match(source, new RegExp(model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.doesNotMatch(source, /Imagen 4/)
+  assert.match(service, /await client\.generate_image\(/)
+  assert.match(service, /await client\.generate_video\(/)
+  assert.doesNotMatch(service, /batchAsyncGenerateVideoText/)
+  assert.match(service, /await self\._prepare_ui_model\(page, "video", model\)/)
+  assert.match(service, /Image\|Hình ảnh/)
+})
+
+test("Flow queue renders each job's persisted generation settings", async () => {
+  const source = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /raw\.settings/)
+  assert.match(source, /job\.settings\.model/)
+  assert.match(source, /job\.settings\.ratio/)
+  assert.doesNotMatch(source, /Imagen 3 Fast · 1:1 · 1K/)
+})
+
+test('Flow WEB output can create subfolders in a user-authorized Chrome directory', async () => {
+  const [source, field] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(source, /showDirectoryPicker/)
+  assert.match(source, /function defaultFlowOutputFolder/)
+  assert.match(source, /outputDir: defaultFlowOutputFolder\(\)/)
+  assert.match(source, /settings: effectiveSettings/)
+  assert.match(source, /root\.getDirectoryHandle\("flow", \{ create: true \}\)/)
+  assert.match(source, /getDirectoryHandle\(part, \{ create: true \}\)/)
+  assert.doesNotMatch(source, /getDirectoryHandle\(timeFolder, \{ create: true \}\)/)
+  assert.doesNotMatch(source, /getDirectoryHandle\(job\.id, \{ create: true \}\)/)
+  assert.match(source, /createWritable\(\)/)
+  assert.match(source, /function downloadFlowOutput/)
+  assert.match(source, /downloadFlowOutput\(item\.job, item\.outputIndex\)/)
+  assert.match(source, /WEB_AUTO_DOWNLOAD_DEFAULT_KEY/)
+  assert.doesNotMatch(source, /!webOutputDirectoryRef\.current &&\s*settings\.autoDownload/)
+  assert.match(source, /error\.name === "AbortError"/)
+  assert.match(source, /setSettings\(\(current\) => \(\{ \.\.\.current, autoDownload: true \}\)\)/)
+  assert.doesNotMatch(source, /const directory = await pickOutputFolder\(\);[\s\S]{0,300}createFlowJobs/)
+  assert.doesNotMatch(source, /link\.href = `\/api\/flow\/jobs\/\$\{item\.job\.id\}/)
+  assert.match(source, /Trình duyệt này không hỗ trợ chọn thư mục ghi file\./)
+  assert.match(source, /This browser does not support writable folder selection\./)
+  assert.match(field, /Chọn thư mục tải xuống/)
+  assert.match(field, /Choose download folder/)
+})
+
+test('Flow create-video screen exposes the latest completed video preview', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(source, /latestCompletedVideo/)
+  assert.match(source, /t\("Xem trước video", "Preview video"\)/)
+  assert.match(source, /t\("Chưa có video", "No video yet"\)/)
+  assert.match(styles, /\.flow-preview-latest/)
+})
+
+test('Flow never presents an empty-output job as a localized success', async () => {
+  const [source, service] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/flow/service.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(service, /FLOW_EMPTY_OUTPUT/)
+  assert.match(service, /_outputs_exist\(outputs\)/)
+  assert.match(source, /Flow không trả về file video\/ảnh\. Job chưa thành công\./)
+  assert.match(source, /Flow returned no video\/image file\. The job did not succeed\./)
 })
 
 test('desktop APP and detailed logs allow selecting and copying text', async () => {

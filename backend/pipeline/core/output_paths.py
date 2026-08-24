@@ -5,6 +5,23 @@ import re
 from pathlib import Path
 
 
+APP_OUTPUT_ROOT_NAME = "ZM_AIO_TOOL"
+_OUTPUT_SUBFOLDERS: dict[str, tuple[str, ...]] = {
+    "video-clone": ("clone",),
+    "clone": ("clone",),
+    "film": ("review",),
+    "review": ("review",),
+    "flow": ("flow",),
+    "download-video": ("download-video",),
+    "tts": ("text-to-speech",),
+    "subtitle-export": ("subtitles", "export"),
+    "subtitle-image": ("subtitles", "image-video"),
+    "drawing": ("drawing",),
+    "cleaner": ("cleaner",),
+    "batch": ("batch",),
+}
+
+
 def safe_output_part(value: object, fallback: str = "output", *, max_length: int = 96) -> str:
     """Return one filesystem-safe name component for generated outputs."""
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or fallback)).strip(" .-")
@@ -33,10 +50,18 @@ def item_output_folder(root: Path, item_id: object, *, create: bool = True) -> P
     return folder
 
 
+def app_output_root() -> Path:
+    """Return the single APP output root shared by every feature."""
+    folder = Path.home() / "Downloads" / APP_OUTPUT_ROOT_NAME
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
 def downloads_folder(tab: str) -> Path:
-    """Return and create the default output folder for one application tab."""
-    safe_tab = safe_output_part(tab.lower(), "video-clone")
-    folder = Path.home() / "Downloads" / safe_tab
+    """Return one feature subfolder inside the shared APP output root."""
+    key = str(tab or "video-clone").strip().lower()
+    parts = _OUTPUT_SUBFOLDERS.get(key, (safe_output_part(key, "video-clone"),))
+    folder = app_output_root().joinpath(*parts)
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 

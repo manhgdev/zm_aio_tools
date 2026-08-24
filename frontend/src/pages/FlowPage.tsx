@@ -25,11 +25,14 @@ type RailItem =
 type JobStatus = "processing" | "queued" | "done" | "failed" | "cancelled";
 type CreateKind = "video" | "image";
 type ImageMode = "text" | "edit" | "reference";
+type PromptInputType = "prompt" | "txt" | "csv" | "json";
 type FlowJob = {
   id: string;
   index: number;
   kind: CreateKind;
   prompt: string;
+  inputType: PromptInputType;
+  createdAt: number;
   status: JobStatus;
   progress: number;
   account: string;
@@ -37,6 +40,13 @@ type FlowJob = {
   outputs?: string[];
   accountId?: string;
   error?: string | null;
+  settings: {
+    model: string;
+    ratio: string;
+    duration: string;
+    resolution: string;
+    outputDir: string;
+  };
 };
 type FlowAccount = {
   id: string;
@@ -77,7 +87,6 @@ type FlowSettings = {
   enhancePrompt: boolean;
   referenceStrength: number;
   autoDownload: boolean;
-  createTimeFolder: boolean;
 };
 const FLOW_VIDEO_MODELS = [
   "Veo 3.1 - Lite",
@@ -90,13 +99,13 @@ const FLOW_IMAGE_MODELS = [
   "Nano Banana Pro",
   "Nano Banana 2",
   "Nano Banana 2 Lite",
-  "Imagen 4",
 ] as const;
-const isVideoModel = (model: string) => /^(Veo\b|Omni Flash$)/i.test(model);
+const isVideoModel = (model: string) => FLOW_VIDEO_MODELS.includes(model as (typeof FLOW_VIDEO_MODELS)[number]);
 const isImageModel = (model: string) =>
-  /^(Nano Banana\b|Imagen\b)/i.test(model);
+  FLOW_IMAGE_MODELS.includes(model as (typeof FLOW_IMAGE_MODELS)[number]);
 const DRAFT_KEY = "zm-flow-veo:draft:v1";
 const SETTINGS_KEY = "zm-flow-veo:settings:v1";
+const WEB_AUTO_DOWNLOAD_DEFAULT_KEY = "zm-flow-veo:web-auto-download:v1";
 const TAB_KEY = "zm-flow-veo:tab:v1";
 const RAIL_KEY = "zm-flow-veo:rail:v1";
 const ACCOUNTS_KEY = "zm-flow-veo:accounts:v1";
@@ -110,6 +119,10 @@ function readText(key: string, fallback: string) {
     return fallback;
   }
 }
+function defaultFlowOutputFolder(now = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `flow_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
 function readSettings(): FlowSettings {
   const fallback: FlowSettings = {
     model: "Veo 3.1 - Fast",
@@ -117,7 +130,7 @@ function readSettings(): FlowSettings {
     duration: "8",
     count: 1,
     account: "Ultra 01",
-    outputDir: "flow_20250824_143022",
+    outputDir: defaultFlowOutputFolder(),
     quality: "Standard",
     resolution: "1K",
     seed: "",
@@ -126,7 +139,6 @@ function readSettings(): FlowSettings {
     enhancePrompt: true,
     referenceStrength: 70,
     autoDownload: true,
-    createTimeFolder: true,
   };
   try {
     const saved = JSON.parse(
@@ -140,6 +152,9 @@ function readSettings(): FlowSettings {
     if (merged.model === "Veo 3.1 Fast") merged.model = "Veo 3.1 - Fast";
     if (merged.model === "Veo 3.1 Quality") merged.model = "Veo 3.1 - Quality";
     if (/^Imagen 3/i.test(merged.model)) merged.model = "Nano Banana 2";
+    if (!String(merged.outputDir || "").trim() || merged.outputDir === "flow_20250824_143022") {
+      merged.outputDir = defaultFlowOutputFolder();
+    }
     return merged;
   } catch {
     return fallback;
@@ -198,15 +213,69 @@ async function flowRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+type DirectoryPickerWindow = Window & {
+  showDirectoryPicker?: (options?: {
+    id?: string;
+    mode?: "read" | "readwrite";
+    startIn?: string;
+  }) => Promise<FileSystemDirectoryHandle>;
+};
+
+function safeWebFolderParts(value: string): string[] {
+  return value
+    .split(/[\\/]+/)
+    .map((part) => part.replace(/[<>:"|?*\u0000-\u001f]/g, "-").trim())
+    .filter((part) => part && part !== "." && part !== "..");
+}
+
+async function writeFlowOutputToDirectory(
+  root: FileSystemDirectoryHandle,
+  outputFolder: string,
+  job: FlowJob,
+  outputIndex: number,
+) {
+  let target = await root.getDirectoryHandle("flow", { create: true });
+  for (const part of safeWebFolderParts(outputFolder || "flow")) {
+    target = await target.getDirectoryHandle(part, { create: true });
+  }
+  const storedPath = job.outputs?.[outputIndex] || "";
+  const filename = storedPath.split(/[\\/]/).pop() || `${job.kind}-${outputIndex + 1}`;
+  const response = await fetch(`/api/flow/jobs/${job.id}/outputs/${outputIndex}`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const file = await target.getFileHandle(filename, { create: true });
+  const writable = await file.createWritable();
+  await writable.write(await response.blob());
+  await writable.close();
+}
+
+function downloadFlowOutput(job: FlowJob, outputIndex: number) {
+  const link = document.createElement("a");
+  link.href = `/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`;
+  link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function normalizeFlowJobs(
   rows: Array<Record<string, unknown>>,
   accounts: FlowAccount[],
 ): FlowJob[] {
-  return rows.map((raw) => ({
+  return rows.map((raw) => {
+    const rawSettings =
+      raw.settings && typeof raw.settings === "object"
+        ? (raw.settings as Record<string, unknown>)
+        : {};
+    return {
     id: String(raw.id),
     index: Number(raw.inputIndex || 0),
     kind: raw.kind === "image" ? "image" : "video",
     prompt: String(raw.prompt || ""),
+    inputType:
+      raw.inputType === "txt" || raw.inputType === "csv" || raw.inputType === "json"
+        ? raw.inputType
+        : "prompt",
+    createdAt: Number(raw.createdAt || Date.now() / 1000),
     status:
       raw.status === "processing" ||
       raw.status === "queued" ||
@@ -222,6 +291,26 @@ function normalizeFlowJobs(
     outputs: Array.isArray(raw.outputs) ? raw.outputs.map(String) : [],
     output: Array.isArray(raw.outputs) ? String(raw.outputs[0] || "") : "",
     error: raw.error ? String(raw.error) : null,
+    settings: {
+      model: String(rawSettings.model || (raw.kind === "image" ? "Nano Banana 2" : "Veo 3.1 - Fast")),
+      ratio: String(rawSettings.ratio || "16:9"),
+      duration: String(rawSettings.duration || "8"),
+      resolution: String(rawSettings.resolution || "1K"),
+      outputDir: String(rawSettings.outputDir || "flow"),
+    },
+  };
+  });
+}
+
+function normalizeFlowAccounts(rows: FlowAccount[]): FlowAccount[] {
+  return rows.map((account) => ({
+    ...account,
+    used: Number(account.used || 0),
+    credits:
+      account.creditsSyncedAt ||
+      (account.status === "online" && account.projectId && account.credits != null)
+        ? Number(account.credits)
+        : null,
   }));
 }
 
@@ -252,6 +341,8 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
   const t = (vi: string, en: string) => localize(locale, vi, en);
   const fileRef = useRef<HTMLInputElement>(null);
   const sourceRef = useRef<HTMLInputElement>(null);
+  const webOutputDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null);
+  const [webOutputDirectoryName, setWebOutputDirectoryName] = useState("");
   const [tab, setTab] = useState<FlowTab>(() => {
     const saved = readText(TAB_KEY, "create");
     return saved === "queue" || saved === "history" || saved === "logs"
@@ -268,8 +359,8 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     ),
   );
   const [settings, setSettings] = useState<FlowSettings>(readSettings);
-  const [importOpen, setImportOpen] = useState(false);
   const [importName, setImportName] = useState("");
+  const [promptInputType, setPromptInputType] = useState<PromptInputType>("prompt");
   const [jobs, setJobs] = useState<FlowJob[]>([]);
   const [logs, setLogs] = useState<FlowLog[]>([]);
   const [createKind, setCreateKind] = useState<CreateKind>(() =>
@@ -302,6 +393,11 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
   const [preview, setPreview] = useState<{
     job: FlowJob;
     outputIndex: number;
+  } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    message: string;
+    confirmLabel: string;
+    run: () => void;
   } | null>(null);
 
   useEffect(() => {
@@ -345,17 +441,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       try {
         const { accountData, jobData } = await loadFlowSnapshot();
         if (!active) return;
-        const loadedAccounts = accountData.accounts.map((account) => ({
-          ...account,
-          used: Number(account.used || 0),
-          credits:
-            account.creditsSyncedAt ||
-            (account.status === "online" &&
-              account.projectId &&
-              account.credits != null)
-              ? Number(account.credits)
-              : null,
-        }));
+        const loadedAccounts = normalizeFlowAccounts(accountData.accounts);
         setAccounts(loadedAccounts);
         setJobs(normalizeFlowJobs(jobData.jobs, loadedAccounts));
         setBackendReady(true);
@@ -380,9 +466,14 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     if (!backendReady || !hasActiveFlowJobs) return;
     let active = true;
     const refreshJobs = () =>
-      void flowRequest<{ jobs: Array<Record<string, unknown>> }>("/api/flow/jobs")
+      void flowRequest<{ jobs: Array<Record<string, unknown>>; accounts?: FlowAccount[] }>("/api/flow/jobs")
         .then((data) => {
-          if (active) setJobs(normalizeFlowJobs(data.jobs, accounts));
+          if (!active) return;
+          const refreshedAccounts = data.accounts
+            ? normalizeFlowAccounts(data.accounts)
+            : accounts;
+          if (data.accounts) setAccounts(refreshedAccounts);
+          setJobs(normalizeFlowJobs(data.jobs, refreshedAccounts));
         })
         .catch((error) => {
           if (active) setApiError(error instanceof Error ? error.message : String(error));
@@ -428,6 +519,16 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       .finally(() => setRuntimeKnown(true));
   }, []);
   useEffect(() => {
+    if (!runtimeKnown || isDesktopApp) return;
+    try {
+      if (localStorage.getItem(WEB_AUTO_DOWNLOAD_DEFAULT_KEY)) return;
+      localStorage.setItem(WEB_AUTO_DOWNLOAD_DEFAULT_KEY, "1");
+      setSettings((current) => ({ ...current, autoDownload: true }));
+    } catch {
+      setSettings((current) => ({ ...current, autoDownload: true }));
+    }
+  }, [isDesktopApp, runtimeKnown]);
+  useEffect(() => {
     if (!backendReady || !runtimeKnown) return;
     const completed = jobs.flatMap((job) =>
       job.status === "done"
@@ -446,12 +547,18 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       if (completedOutputsRef.current.has(item.key)) continue;
       completedOutputsRef.current.add(item.key);
       if (!isDesktopApp && settings.autoDownload) {
-        const link = document.createElement("a");
-        link.href = `/api/flow/jobs/${item.job.id}/outputs/${item.outputIndex}?download=1`;
-        link.download = "";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+        if (webOutputDirectoryRef.current) {
+          void writeFlowOutputToDirectory(
+            webOutputDirectoryRef.current,
+            item.job.settings.outputDir || settings.outputDir,
+            item.job,
+            item.outputIndex,
+          ).catch((error) =>
+            setApiError(error instanceof Error ? error.message : String(error)),
+          );
+        } else {
+          downloadFlowOutput(item.job, item.outputIndex);
+        }
       }
     }
   }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload]);
@@ -472,6 +579,9 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
         .filter(Boolean).length,
     [prompt],
   );
+  const latestCompletedVideo = jobs.find(
+    (job) => job.kind === "video" && job.status === "done" && job.outputs?.length,
+  );
   const displayedAccount =
     accounts.find((account) => account.label === settings.account) ||
     accounts.find((account) => account.isDefault) ||
@@ -486,6 +596,13 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
           : status === "cancelled"
             ? t("Đã hủy", "Cancelled")
             : t("Lỗi", "Failed");
+  const jobErrorText = (error: string) =>
+    error.startsWith("FLOW_EMPTY_OUTPUT")
+      ? t(
+          "Flow không trả về file video/ảnh. Job chưa thành công.",
+          "Flow returned no video/image file. The job did not succeed.",
+        )
+      : error;
   const showCreate = tab === "create";
   const activateRail = (item: RailItem) => {
     if (item === "createImage" || item === "createVideo") {
@@ -511,6 +628,10 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
   const importPrompts = (file?: File) => {
     if (!file) return;
     setImportName(file.name);
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    setPromptInputType(
+      extension === "csv" || extension === "json" ? extension : "txt",
+    );
     const reader = new FileReader();
     reader.onload = () =>
       setPrompt((current) =>
@@ -519,6 +640,26 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
           : String(reader.result || ""),
       );
     reader.readAsText(file);
+  };
+  const pastePrompt = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) {
+        setApiError(t("Clipboard đang trống.", "Clipboard is empty."));
+        return;
+      }
+      setPrompt(text);
+      setPromptInputType("prompt");
+      setImportName("");
+      setApiError("");
+    } catch {
+      setApiError(
+        t(
+          "Không đọc được clipboard. Hãy cấp quyền dán hoặc dùng Cmd/Ctrl+V.",
+          "Could not read the clipboard. Allow paste access or use Cmd/Ctrl+V.",
+        ),
+      );
+    }
   };
   const createFlowJobs = async () => {
     const prompts = prompt
@@ -538,6 +679,13 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       return;
     }
     try {
+      const effectiveSettings = settings.outputDir.trim()
+        ? settings
+        : { ...settings, outputDir: defaultFlowOutputFolder() };
+      if (effectiveSettings !== settings) {
+        setSettings(effectiveSettings);
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(effectiveSettings));
+      }
       let uploaded: string[] = [];
       if (sourceFiles.length) {
         const form = new FormData();
@@ -561,8 +709,9 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                 ? "frame"
                 : "text",
           accountId: account.id,
+          inputType: promptInputType,
           sourceFiles: uploaded,
-          settings,
+          settings: effectiveSettings,
         }),
       });
       setJobs((current) => [
@@ -612,19 +761,13 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     }
   };
   const deleteAccount = (account: FlowAccount) => {
-    if (
-      !window.confirm(
-        t(
-          `Xóa tài khoản ${account.label}?`,
-          `Delete account ${account.label}?`,
-        ),
-      )
-    )
-      return;
-    void flowRequest(`/api/flow/accounts/${account.id}`, {
-      method: "DELETE",
-    }).then(() => setAccounts((current) => current.filter((item) => item.id !== account.id)))
-      .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+    setConfirmAction({
+      message: t(`Xóa tài khoản ${account.label}?`, `Delete account ${account.label}?`),
+      confirmLabel: t("Xóa tài khoản", "Delete account"),
+      run: () => void flowRequest(`/api/flow/accounts/${account.id}`, { method: "DELETE" })
+        .then(() => setAccounts((current) => current.filter((item) => item.id !== account.id)))
+        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+    });
   };
   const updateJob = (raw: Record<string, unknown>) => {
     const next = normalizeFlowJobs([raw], accounts)[0];
@@ -639,14 +782,40 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       .then(updateJob)
       .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
   const deleteJob = (id: string) => {
-    if (
-      window.confirm(
-        t("Xóa job này khỏi danh sách?", "Delete this job from the list?"),
-      )
-    )
-      void flowRequest(`/api/flow/jobs/${id}`, { method: "DELETE" })
+    setConfirmAction({
+      message: t("Xóa job này khỏi danh sách?", "Delete this job from the list?"),
+      confirmLabel: t("Xóa job", "Delete job"),
+      run: () => void flowRequest(`/api/flow/jobs/${id}`, { method: "DELETE" })
         .then(() => setJobs((current) => current.filter((item) => item.id !== id)))
-        .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+    });
+  };
+  const cancelAllJobs = () => {
+    const activeCount = jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
+    if (!activeCount) return;
+    setConfirmAction({
+      message: t(`Hủy ${activeCount} job đang chờ/chạy?`, `Cancel ${activeCount} queued/running jobs?`),
+      confirmLabel: t("Hủy tất cả", "Cancel all"),
+      run: () => void flowRequest<{ jobs: Array<Record<string, unknown>> }>("/api/flow/jobs/cancel-all", { method: "POST" })
+        .then(({ jobs: rows }) => {
+          setJobs(normalizeFlowJobs(rows, accounts));
+          setApiError("");
+        })
+        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+    });
+  };
+  const deleteAllJobs = () => {
+    if (!jobs.length) return;
+    setConfirmAction({
+      message: t(`Xóa toàn bộ ${jobs.length} job khỏi hàng đợi?`, `Delete all ${jobs.length} jobs from the queue?`),
+      confirmLabel: t("Xóa tất cả", "Delete all"),
+      run: () => void flowRequest<{ jobs: Array<Record<string, unknown>> }>("/api/flow/jobs", { method: "DELETE" })
+        .then(({ jobs: rows }) => {
+          setJobs(normalizeFlowJobs(rows, accounts));
+          setApiError("");
+        })
+        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+    });
   };
   const setDefaultAccount = (id: string) => {
     const selected = accounts.find((account) => account.id === id);
@@ -678,8 +847,26 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     }).catch((error) =>
       setApiError(error instanceof Error ? error.message : String(error)),
     );
-  const pickOutputFolder = async () => {
+  const pickOutputFolder = async (): Promise<
+    FileSystemDirectoryHandle | "cancelled" | null
+  > => {
     try {
+      if (!isDesktopApp) {
+        const pickerWindow = window as DirectoryPickerWindow;
+        if (!pickerWindow.showDirectoryPicker) {
+          throw new Error(t("Trình duyệt này không hỗ trợ chọn thư mục ghi file.", "This browser does not support writable folder selection."));
+        }
+        const directory = await pickerWindow.showDirectoryPicker({
+          id: "zm-flow-output",
+          mode: "readwrite",
+          startIn: "downloads",
+        });
+        webOutputDirectoryRef.current = directory;
+        setWebOutputDirectoryName(directory.name);
+        setSettings((current) => ({ ...current, autoDownload: true }));
+        setApiError("");
+        return directory;
+      }
       const result = await flowRequest<{ path?: string }>(
         "/api/system/pick-folder",
         { method: "POST" },
@@ -687,19 +874,30 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       if (result.path) {
         setSettings((current) => ({ ...current, outputDir: result.path! }));
       }
+      return null;
     } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "name" in error &&
+        error.name === "AbortError"
+      ) {
+        setApiError("");
+        return "cancelled";
+      }
       setApiError(error instanceof Error ? error.message : String(error));
+      return null;
     }
   };
 
   const clearLogs = () => {
-    if (!window.confirm(t("Xóa toàn bộ log Flow?", "Clear all Flow logs?")))
-      return;
-    void flowRequest("/api/flow/logs", { method: "DELETE" })
-      .then(() => setLogs([]))
-      .catch((error) =>
-        setApiError(error instanceof Error ? error.message : String(error)),
-      );
+    setConfirmAction({
+      message: t("Xóa toàn bộ log Flow?", "Clear all Flow logs?"),
+      confirmLabel: t("Xóa log", "Clear logs"),
+      run: () => void flowRequest("/api/flow/logs", { method: "DELETE" })
+        .then(() => setLogs([]))
+        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+    });
   };
   const copyLogs = async () => {
     const text = logs
@@ -828,26 +1026,28 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
         </div>
       </aside>
       <section className="flow-workspace">
-        <BackTitle onBack={onBack}>
-          <span className="flow-page-title">
-            Flow (Veo 3)
-            <small>
-              {t(
-                "Tạo ảnh và video bằng tài khoản Google Pro/Ultra.",
-                "Create images and videos with Google Pro/Ultra accounts.",
-              )}
-            </small>
-          </span>
-        </BackTitle>
-        <div
-          className={`flow-api-state ${backendReady ? "is-online" : "is-offline"}`}
-          role="status"
-        >
-          <span />
-          {backendReady
-            ? t("Backend Flow đã kết nối", "Flow backend connected")
-            : t("Backend Flow chưa sẵn sàng", "Flow backend unavailable")}
-          {apiError && <small>{apiError}</small>}
+        <div className="flow-heading">
+          <BackTitle onBack={onBack}>
+            <span className="flow-page-title">
+              Flow (Veo 3)
+              <small>
+                {t(
+                  "Tạo ảnh và video bằng tài khoản Google Pro/Ultra.",
+                  "Create images and videos with Google Pro/Ultra accounts.",
+                )}
+              </small>
+            </span>
+          </BackTitle>
+          <div
+            className={`flow-api-state ${backendReady ? "is-online" : "is-offline"}`}
+            role="status"
+          >
+            <span />
+            {backendReady
+              ? t("Backend Flow đã kết nối", "Flow backend connected")
+              : t("Backend Flow chưa sẵn sàng", "Flow backend unavailable")}
+            {apiError && <small>{apiError}</small>}
+          </div>
         </div>
         {utilityView === "accounts" && (
           <section className="flow-accounts">
@@ -1191,13 +1391,34 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                     `1. ${createKind === "video" ? "Video" : "Image"} prompt`,
                   )}
                 </b>
-                <span>
-                  {promptCount} {t("prompt", "prompts")}
-                </span>
+                <div className="flow-prompt-actions">
+                  <span>
+                    {promptCount} {t("prompt", "prompts")}
+                  </span>
+                  <button type="button" onClick={() => void pastePrompt()}>
+                    {t("Dán", "Paste")}
+                  </button>
+                  <button
+                    type="button"
+                    className="is-danger"
+                    disabled={!prompt}
+                    onClick={() => {
+                      setPrompt("");
+                      setPromptInputType("prompt");
+                      setImportName("");
+                    }}
+                  >
+                    {t("Xóa", "Clear")}
+                  </button>
+                </div>
               </div>
               <textarea
                 value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
+                onChange={(event) => {
+                  setPrompt(event.target.value);
+                  setPromptInputType("prompt");
+                  setImportName("");
+                }}
                 maxLength={8000}
                 placeholder={
                   createKind === "video"
@@ -1221,39 +1442,24 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                 <span>{prompt.length} / 8000</span>
               </div>
               <div className="flow-import">
-                <button
-                  type="button"
-                  onClick={() => setImportOpen((open) => !open)}
-                  aria-expanded={importOpen}
-                >
-                  <span className="flow-paperclip">⌕</span>
-                  {t("Nhập TXT / CSV / JSON", "Import TXT / CSV / JSON")}
-                  <b>⌄</b>
-                </button>
-                {importOpen && (
-                  <div className="flow-import-panel">
-                    <span>
-                      {t(
-                        "Dùng TXT: mỗi đoạn một prompt. CSV/JSON: lấy cột prompt.",
-                        "TXT: one prompt per block. CSV/JSON: reads the prompt field.",
-                      )}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => fileRef.current?.click()}
-                    >
-                      {t("Chọn file", "Choose file")}
-                    </button>
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      accept=".txt,.csv,.json,text/plain,application/json"
-                      onChange={(event) =>
-                        importPrompts(event.target.files?.[0])
-                      }
-                    />
-                  </div>
-                )}
+                <div className="flow-import-row">
+                  <button type="button" onClick={() => fileRef.current?.click()}>
+                    <span className="flow-paperclip">⌕</span>
+                    {t("Nhập TXT / CSV / JSON", "Import TXT / CSV / JSON")}
+                  </button>
+                  <span>
+                    {t(
+                      "TXT: mỗi đoạn một prompt · CSV/JSON: lấy cột prompt.",
+                      "TXT: one prompt per block · CSV/JSON: reads the prompt field.",
+                    )}
+                  </span>
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".txt,.csv,.json,text/plain,application/json"
+                  onChange={(event) => importPrompts(event.target.files?.[0])}
+                />
                 {importName && (
                   <small>
                     {t("Đã thêm", "Added")}: {importName}
@@ -1452,58 +1658,57 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                 </div>
               )}
               <div className="flow-output-row">
-                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={pickOutputFolder} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t("Mặc định: Downloads/flow", "Default: Downloads/flow")} label={t("3. Thư mục kết quả", "3. Output folder")} />
-                <label className="flow-check">
-                  <input
-                    type="checkbox"
-                    checked={settings.createTimeFolder}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        createTimeFolder: event.target.checked,
-                      }))
-                    }
-                  />
-                  {t("Tạo thư mục theo thời gian", "Create time folder")}
-                </label>
-                <label className="flow-check">
-                  <input
-                    type="checkbox"
-                    checked={settings.autoDownload}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        autoDownload: event.target.checked,
-                      }))
-                    }
-                  />
-                  {isDesktopApp
-                    ? t(
-                        "Tự lưu vào thư mục kết quả",
-                        "Save automatically to output folder",
-                      )
-                    : t(
-                        "Tự động tải về khi hoàn thành",
-                        "Auto-download when completed",
-                      )}
-                </label>
+                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={() => void pickOutputFolder()} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t("Mặc định: Downloads/ZM_AIO_TOOL/flow", "Default: Downloads/ZM_AIO_TOOL/flow")} label={t("3. Thư mục kết quả", "3. Output folder")} selectedRootName={webOutputDirectoryName ? `${webOutputDirectoryName}/flow` : ""} webFolderOnly />
+                {!isDesktopApp && (
+                  <label className="flow-check">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoDownload}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          autoDownload: event.target.checked,
+                        }))
+                      }
+                    />
+                    {t("Tự động tải về khi hoàn thành", "Auto-download when completed")}
+                  </label>
+                )}
               </div>
-              <button
-                type="button"
-                className="flow-generate"
-                onClick={() => void createFlowJobs()}
-              >
-                <IconPlay size={17} />
-                {createKind === "video"
-                  ? t("TẠO VIDEO", "CREATE VIDEO")
-                  : t("TẠO ẢNH", "CREATE IMAGES")}
-                <small>
-                  {t(
-                    "Gửi qua Chrome profile của tài khoản đã chọn",
-                    "Sent through the selected account Chrome profile",
-                  )}
-                </small>
-              </button>
+              <div className={`flow-create-actions ${createKind === "video" ? "has-preview" : ""}`}>
+                {createKind === "video" && (
+                  <button
+                    type="button"
+                    className="flow-preview-latest"
+                    disabled={!latestCompletedVideo}
+                    onClick={() =>
+                      latestCompletedVideo &&
+                      setPreview({ job: latestCompletedVideo, outputIndex: 0 })
+                    }
+                  >
+                    <IconPlay size={16} />
+                    {latestCompletedVideo
+                      ? t("Xem trước video", "Preview video")
+                      : t("Chưa có video", "No video yet")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="flow-generate"
+                  onClick={() => void createFlowJobs()}
+                >
+                  <IconPlay size={17} />
+                  {createKind === "video"
+                    ? t("TẠO VIDEO", "CREATE VIDEO")
+                    : t("TẠO ẢNH", "CREATE IMAGES")}
+                  <small>
+                    {t(
+                      "Gửi qua Chrome profile của tài khoản đã chọn",
+                      "Sent through the selected account Chrome profile",
+                    )}
+                  </small>
+                </button>
+              </div>
             </section>
           </div>
         )}
@@ -1511,13 +1716,11 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
           <section className="flow-card flow-queue-card">
             <div className="flow-card-title">
               <b>{t(`Hàng đợi (${jobs.length})`, `Queue (${jobs.length})`)}</b>
-              <button
-                className="flow-text-button"
-                type="button"
-                onClick={() => setTab("queue")}
-              >
-                {t("Xem tất cả", "View all")}
-              </button>
+              <div className="flow-queue-tools">
+                <button className="flow-text-button" type="button" onClick={() => setTab("queue")}>{t("Xem tất cả", "View all")}</button>
+                <button className="flow-text-button" type="button" disabled={!jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={cancelAllJobs}>{t("Hủy tất cả", "Cancel all")}</button>
+                <button className="flow-text-button is-danger" type="button" disabled={!jobs.length} onClick={deleteAllJobs}>{t("Xóa tất cả", "Delete all")}</button>
+              </div>
             </div>
             <div className="flow-queue-list">
               {jobs.map((job) => (
@@ -1565,8 +1768,8 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                     </strong>
                     <span>
                       {job.kind === "video"
-                        ? "Veo 3.1 Fast · 16:9 · 8s"
-                        : "Imagen 3 Fast · 1:1 · 1K"}{" "}
+                        ? `${job.settings.model} · ${job.settings.ratio} · ${job.settings.duration}s`
+                        : `${job.settings.model} · ${job.settings.ratio} · ${job.settings.resolution}`}{" "}
                       · {job.account}
                     </span>
                     <div className="flow-job-progress">
@@ -1576,7 +1779,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                       <small>{job.progress}%</small>
                     </div>
                     {job.error && (
-                      <small className="flow-job-error">{job.error}</small>
+                      <small className="flow-job-error">{jobErrorText(job.error)}</small>
                     )}
                   </div>
                   <aside>
@@ -1750,9 +1953,9 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                       t("Prompt", "Prompt"),
                       t("Model", "Model"),
                       t("Tài khoản", "Account"),
-                      t("Trạng thái", "Status"),
+                      t("TT", "Status"),
                       t("Output", "Output"),
-                      t("Thao tác", "Actions"),
+                      t("Tác vụ", "Actions"),
                     ].map((label) => (
                       <th key={label}>{label}</th>
                     ))}
@@ -1770,15 +1973,17 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                         </mark>
                       </td>
                       <td>
-                        <mark>{index % 2 ? "TXT" : "Prompt"}</mark>
+                        <mark>
+                          {job.inputType === "prompt"
+                            ? t("Nhập tay", "Manual")
+                            : job.inputType.toUpperCase()}
+                        </mark>
                       </td>
-                      <td>{job.prompt}</td>
-                      <td>
-                        {job.kind === "video"
-                          ? "Veo 3.1 Fast"
-                          : "Imagen 3 Fast"}
+                      <td title={job.prompt}>{job.prompt}</td>
+                      <td title={job.settings.model}>
+                        {job.settings.model}
                       </td>
-                      <td>{job.account}</td>
+                      <td title={job.account}>{job.account}</td>
                       <td>
                         <mark className={`flow-status-${job.status}`}>
                           {statusText(job.status)}
@@ -1797,7 +2002,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                                     setPreview({ job, outputIndex })
                                   }
                                 >
-                                  {t("Xem trước", "Preview")}{" "}
+                                  {t("Xem", "View")}{" "}
                                   {(job.outputs?.length || 0) > 1
                                     ? outputIndex + 1
                                     : ""}
@@ -1809,14 +2014,14 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                                       revealOutput(job.id, outputIndex)
                                     }
                                   >
-                                    {t("Mở thư mục", "Open folder")}
+                                    {t("Mở", "Open")}
                                   </button>
                                 ) : (
                                   <a
                                     href={`/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`}
                                     download
                                   >
-                                    {t("Tải về", "Download")}
+                                    {t("Tải", "Save")}
                                   </a>
                                 )}
                               </span>
@@ -1941,6 +2146,37 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
               </div>
             )}
           </section>
+        )}
+        {confirmAction && (
+          <div
+            className="flow-preview-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setConfirmAction(null);
+            }}
+          >
+            <section className="flow-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="flow-confirm-title">
+              <header>
+                <strong id="flow-confirm-title">{t("Xác nhận thao tác", "Confirm action")}</strong>
+                <button type="button" onClick={() => setConfirmAction(null)} aria-label={t("Đóng", "Close")}>×</button>
+              </header>
+              <p>{confirmAction.message}</p>
+              <footer>
+                <button type="button" onClick={() => setConfirmAction(null)}>{t("Quay lại", "Go back")}</button>
+                <button
+                  type="button"
+                  className="is-danger"
+                  onClick={() => {
+                    const run = confirmAction.run;
+                    setConfirmAction(null);
+                    run();
+                  }}
+                >
+                  {confirmAction.confirmLabel}
+                </button>
+              </footer>
+            </section>
+          </div>
         )}
         {preview && (
           <div

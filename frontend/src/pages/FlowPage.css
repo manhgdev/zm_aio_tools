@@ -97,16 +97,24 @@
   min-height: 34px;
   padding-inline: 10px;
 }
-.flow-workspace .back-title {
-  margin-bottom: 14px;
+.flow-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 8px;
+}
+.flow-heading .back-title {
+  flex: 0 1 auto;
 }
 .flow-api-state {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin: -7px 0 12px;
+  margin: 0 0 0 auto;
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
+  white-space: nowrap;
 }
 .flow-api-state > span {
   width: 7px;
@@ -176,6 +184,34 @@
   font-size: 0.75rem;
   color: var(--muted-foreground);
 }
+.flow-prompt-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.flow-prompt-actions > span {
+  margin-right: 3px;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+.flow-workspace .flow-prompt-actions > button {
+  min-height: 26px !important;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.flow-workspace .flow-prompt-actions > button.is-danger {
+  color: #c93646;
+}
+.flow-workspace .flow-prompt-actions > button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 .flow-text-button {
   display: inline-flex;
   align-items: center;
@@ -185,6 +221,25 @@
   color: var(--primary) !important;
   font-size: 0.75rem !important;
   font-weight: 750;
+}
+.flow-queue-tools {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+}
+.flow-queue-tools .flow-text-button {
+  min-height: 26px;
+  padding: 0 6px;
+  font-size: 0.68rem !important;
+}
+.flow-queue-tools .flow-text-button.is-danger {
+  color: #c93646 !important;
+}
+.flow-queue-tools .flow-text-button:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 .flow-prompt-card textarea {
   display: block;
@@ -208,51 +263,39 @@
 }
 .flow-import {
   border-top: 1px solid var(--line);
-  padding-top: 10px;
+  padding-top: 8px;
 }
-.flow-import > button {
+.flow-import-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--background);
-  padding: 0 10px;
-  color: var(--ink);
-  font-size: 0.78rem;
-  text-align: left;
+  gap: 10px;
+  min-width: 0;
 }
-.flow-import > button b {
-  margin-left: auto;
+.flow-import-row > button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--background);
+  padding: 0 9px;
+  color: var(--ink);
+  font-size: 0.73rem;
+  font-weight: 650;
+}
+.flow-import-row > span {
+  min-width: 0;
+  color: var(--muted-foreground);
+  font-size: 0.67rem;
+  line-height: 1.3;
 }
 .flow-paperclip {
-  font-size: 1rem;
+  font-size: 0.9rem;
   color: var(--primary);
 }
-.flow-import-panel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 7px;
-  padding: 8px;
-  border: 1px dashed color-mix(in srgb, var(--primary) 40%, var(--line));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--primary) 4%, var(--surface));
-  font-size: 0.7rem;
-  color: var(--muted-foreground);
-}
-.flow-import-panel button {
-  flex: 0 0 auto;
-  height: 28px;
-  border: 1px solid var(--primary);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--primary);
-  font-size: 0.72rem;
-}
-.flow-import-panel input {
+.flow-import > input {
   display: none;
 }
 .flow-import small {
@@ -260,6 +303,13 @@
   margin-top: 6px;
   color: var(--muted-foreground);
   font-size: 0.69rem;
+}
+@media (max-width: 640px) {
+  .flow-import-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
 }
 .flow-settings-grid {
   display: grid;
@@ -328,7 +378,7 @@
 }
 .flow-output-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 6px;
   margin-top: 15px;
@@ -336,6 +386,7 @@
   border-top: 1px solid var(--line);
 }
 .flow-output-row > label:first-child {
+  grid-column: 1 / -1;
   width: 100%;
   margin-bottom: 2px;
 }
@@ -377,13 +428,41 @@
   gap: 0 8px;
   width: 100%;
   min-height: 54px;
-  margin-top: 14px;
+  margin-top: 0;
   border: 1px solid var(--primary);
   border-radius: 8px;
   background: var(--primary);
   color: var(--primary-foreground);
   font-size: 0.9rem;
   font-weight: 800;
+}
+.flow-create-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+.flow-create-actions.has-preview {
+  grid-template-columns: minmax(140px, 0.42fr) minmax(0, 1fr);
+}
+.flow-preview-latest {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 54px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+.flow-preview-latest:disabled {
+  border-color: var(--line);
+  color: var(--muted-foreground);
+  cursor: default;
+  opacity: 0.65;
 }
 .flow-generate small {
   grid-column: 1/-1;
@@ -727,12 +806,65 @@
   border-color: var(--primary);
   color: var(--primary);
 }
+.flow-confirm-dialog {
+  width: min(420px, 92vw);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgb(0 0 0/0.35);
+}
+.flow-confirm-dialog > header,
+.flow-confirm-dialog > footer {
+  display: flex;
+  align-items: center;
+  padding: 11px 13px;
+}
+.flow-confirm-dialog > header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.flow-confirm-dialog > header button {
+  min-width: 30px !important;
+  min-height: 30px !important;
+  padding: 0 !important;
+  border: 0;
+  background: transparent;
+  font-size: 1.15rem;
+}
+.flow-confirm-dialog > p {
+  margin: 0;
+  padding: 16px 13px;
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.flow-confirm-dialog > footer {
+  justify-content: flex-end;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+}
+.flow-confirm-dialog > footer button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+.flow-confirm-dialog > footer button.is-danger {
+  border-color: #c93646;
+  background: #c93646;
+  color: #fff;
+}
 .flow-history-scroll {
   overflow: auto;
 }
 .flow-history table {
   width: 100%;
-  min-width: 1080px;
+  min-width: 880px;
   border-collapse: collapse;
   font-size: 0.71rem;
 }
@@ -749,19 +881,29 @@
   font-size: 0.66rem;
 }
 .flow-history td:nth-child(4) {
-  max-width: 420px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flow-history td:nth-child(5) {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flow-history td:nth-child(6) {
+  max-width: 112px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .flow-history th:nth-child(8),
 .flow-history td:nth-child(8) {
-  width: 148px;
-  min-width: 148px;
+  width: 112px;
+  min-width: 112px;
 }
 .flow-history th:nth-child(9),
 .flow-history td:nth-child(9) {
-  width: 112px;
-  min-width: 112px;
+  width: 96px;
+  min-width: 96px;
 }
 .flow-history .flow-output-actions {
   display: flex;
@@ -834,8 +976,12 @@
   }
   .flow-output-row {
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
     gap: 9px;
+  }
+  .flow-create-actions.has-preview {
+    grid-template-columns: minmax(0, 1fr);
   }
   .flow-queue-job {
     grid-template-columns: 48px minmax(0, 1fr);
@@ -871,13 +1017,16 @@
   }
 }
 .flow-page-title {
-  display: grid;
-  gap: 3px;
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 9px;
 }
 .flow-page-title small {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 500;
   color: var(--muted-foreground);
+  letter-spacing: 0;
 }
 .flow-image-modes {
   display: grid;

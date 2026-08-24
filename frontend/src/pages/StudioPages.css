@@ -169,6 +169,18 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
 .studio-job-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; min-width: 210px; }
 .studio-page .studio-job-actions button, .studio-page .studio-job-actions a { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: 650 .75rem/1 inherit; text-decoration: none; cursor: pointer; }
 .studio-page .studio-job-actions button:hover, .studio-page .studio-job-actions a:hover { border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: color-mix(in srgb, var(--primary) 5%, var(--surface)); }
+.batch-page .studio-job-actions {
+  gap: 4px;
+  min-width: 180px;
+}
+.studio-page.batch-page .studio-job-actions button,
+.studio-page.batch-page .studio-job-actions a {
+  min-height: 28px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: .68rem;
+}
 .batch-page .studio-job-actions .batch-action {
   border-color: color-mix(in srgb, var(--batch-action-strong) 28%, var(--line));
   font-weight: 750;
