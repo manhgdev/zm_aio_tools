@@ -142,6 +142,24 @@ export const api = {
       15_000,
     ),
 
+  checkAppUpdate: () =>
+    fetchJson<{
+      desktop: boolean
+      currentVersion: string
+      latestVersion?: string
+      updateAvailable: boolean
+      assetAvailable?: boolean
+      releaseUrl?: string
+      notes?: string
+    }>(`${base}/system/update/check`, undefined, 20_000),
+
+  installAppUpdate: () =>
+    fetchJson<{ ok: boolean; updated: boolean; message: string }>(
+      `${base}/system/update/install`,
+      { method: 'POST' },
+      90_000,
+    ),
+
   /** Log app (job lỗi, crash) — tab Cấu hình → Log */
   getAppLogs: (tail = 800) =>
     fetchJson<{ path: string; text: string; lines: number; desktop?: boolean }>(

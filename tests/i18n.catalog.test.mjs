@@ -31,6 +31,23 @@ test('English catalog has no empty entries', () => {
   assert.deepEqual(missing, [])
 })
 
+test('desktop update check uses bilingual confirmation UI', async () => {
+  const [config, api, system] = await Promise.all([
+    readFile(new URL('../frontend/src/features/configuration/ConfigModal.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/project/project.api.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/api/routes/system.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(config, /Kiểm tra cập nhật/)
+  assert.match(config, /Check for updates/)
+  assert.match(config, /window\.confirm/)
+  assert.match(config, /Bạn đang dùng phiên bản mới nhất/)
+  assert.match(config, /You are using the latest version/)
+  assert.match(api, /checkAppUpdate/)
+  assert.match(api, /installAppUpdate/)
+  assert.match(system, /\/api\/system\/update\/check/)
+  assert.match(system, /\/api\/system\/update\/install/)
+})
+
 test('interface locale is persisted through the app API', async () => {
   const [app, api, index] = await Promise.all([
     readFile(new URL('../frontend/src/app/App.tsx', import.meta.url), 'utf8'),

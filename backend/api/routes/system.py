@@ -10,6 +10,8 @@ import subprocess
 import sys
 import threading
 import uuid
+import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -86,6 +88,34 @@ _install_state: dict[str, Any] = {
 _install_lock = threading.Lock()
 _checks_warm_lock = threading.Lock()
 _checks_warming = False
+_UPDATE_REPOSITORY = "manhgdev/zm_aio_tools"
+
+
+def _version_key(value: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", str(value).strip())
+    return tuple(map(int, match.groups())) if match else (0, 0, 0)
+
+
+def _desktop_version() -> str:
+    return str(os.environ.get("VIDEO_CLONE_VERSION") or "0.0.0").strip()
+
+
+def _latest_release() -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{_UPDATE_REPOSITORY}/releases/latest",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "ZM-AIO-TOOL"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _release_asset(release: dict[str, Any]) -> dict[str, Any] | None:
+    suffix = "-windows-x64.zip" if sys.platform == "win32" else ".pkg" if sys.platform == "darwin" else ""
+    for asset in release.get("assets") or []:
+        if isinstance(asset, dict) and str(asset.get("name") or "").endswith(suffix):
+            return asset
+    return None
 
 
 def _start_checks_warm() -> None:
@@ -512,6 +542,70 @@ def api_system_restart():
     subprocess.Popen([sys.executable, "--restart-after", str(os.getpid())])
     threading.Timer(0.8, lambda: os._exit(0)).start()
     return {"ok": True, "message": "Đang khởi động lại…"}
+
+
+@router.get("/api/system/update/check")
+def api_update_check():
+    if os.environ.get("VIDEO_CLONE_DESKTOP") != "1":
+        return {"desktop": False, "updateAvailable": False, "currentVersion": _desktop_version()}
+    try:
+        release = _latest_release()
+        tag = str(release.get("tag_name") or "")
+        asset = _release_asset(release)
+        return {
+            "desktop": True,
+            "currentVersion": _desktop_version(),
+            "latestVersion": tag.lstrip("v"),
+            "updateAvailable": bool(asset and _version_key(tag) > _version_key(_desktop_version())),
+            "assetAvailable": bool(asset),
+            "releaseUrl": str(release.get("html_url") or ""),
+            "notes": str(release.get("body") or ""),
+        }
+    except Exception as exc:
+        raise HTTPException(502, f"Không kiểm tra được GitHub Release: {exc}") from exc
+
+
+@router.post("/api/system/update/install")
+def api_update_install():
+    if os.environ.get("VIDEO_CLONE_DESKTOP") != "1":
+        raise HTTPException(400, "Chỉ bản desktop hỗ trợ cập nhật")
+    try:
+        release = _latest_release()
+        tag = str(release.get("tag_name") or "")
+        asset = _release_asset(release)
+        if not asset or _version_key(tag) <= _version_key(_desktop_version()):
+            return {"ok": True, "updated": False, "message": "Đã là phiên bản mới nhất"}
+        url = str(asset.get("browser_download_url") or "")
+        name = str(asset.get("name") or "")
+        if not url or not name:
+            raise RuntimeError("Release không có gói cài đặt phù hợp")
+        updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
+        updates.mkdir(parents=True, exist_ok=True)
+        package = updates / name
+        urllib.request.urlretrieve(url, package)
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(package)])
+            return {"ok": True, "updated": True, "message": "Đã mở macOS Installer để cập nhật"}
+        target = Path(sys.executable).resolve().parent
+        script = updates / "apply-update.ps1"
+        script.write_text(
+            "param([int]$Pid,[string]$Zip,[string]$Target,[string]$Exe)\n"
+            "Wait-Process -Id $Pid -ErrorAction SilentlyContinue\n"
+            "$stage = Join-Path (Split-Path $Zip) 'stage'\n"
+            "Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue\n"
+            "Expand-Archive -Path $Zip -DestinationPath $stage -Force\n"
+            "Copy-Item (Join-Path $stage '*') $Target -Recurse -Force\n"
+            "Start-Process -FilePath $Exe\n",
+            encoding="utf-8",
+        )
+        subprocess.Popen([
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+            "-Pid", str(os.getpid()), "-Zip", str(package), "-Target", str(target), "-Exe", str(sys.executable),
+        ], creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+        threading.Timer(0.8, lambda: os._exit(0)).start()
+        return {"ok": True, "updated": True, "message": "Đang tải và cài đặt bản cập nhật…"}
+    except Exception as exc:
+        raise HTTPException(502, f"Không thể tải bản cập nhật: {exc}") from exc
 
 
 @router.get("/api/system/logs")

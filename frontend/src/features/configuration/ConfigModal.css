@@ -60,6 +60,24 @@
   padding: 0 4px;
 }
 
+.cfg-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cfg-update {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--foreground);
+  padding: 5px 8px;
+  font-size: .7rem;
+  font-weight: 700;
+}
+
+.cfg-update:disabled { opacity: .55; }
+
 .cfg-section-tabs {
   display: flex;
   gap: 0;

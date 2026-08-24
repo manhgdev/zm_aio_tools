@@ -164,11 +164,41 @@ export default function ConfigModal({
   const [logLoading, setLogLoading] = useState(false)
   const [logErr, setLogErr] = useState('')
   const [logCopied, setLogCopied] = useState(false)
+  const [updateChecking, setUpdateChecking] = useState(false)
   const autoSetupLock = useRef(false)
   /** Install kinds already auto-attempted — prevents infinite retry when install
    *  succeeds but the underlying check item remains !ok (e.g. native lib missing). */
   const autoAttempted = useRef<Set<string>>(new Set())
   const restartRequested = useRef(false)
+
+  const checkForUpdate = async () => {
+    setUpdateChecking(true)
+    try {
+      const result = await api.checkAppUpdate()
+      if (!result.desktop) {
+        window.alert(t('Cập nhật chỉ áp dụng cho bản APP macOS/Windows.', 'Updates are available only in the macOS/Windows APP.'))
+        return
+      }
+      if (!result.updateAvailable) {
+        window.alert(t(
+          `Bạn đang dùng phiên bản mới nhất (v${result.currentVersion}).`,
+          `You are using the latest version (v${result.currentVersion}).`,
+        ))
+        return
+      }
+      const approved = window.confirm(t(
+        `Đã có v${result.latestVersion}. Tải và cài đặt ngay?`,
+        `Version ${result.latestVersion} is available. Download and install now?`,
+      ))
+      if (!approved) return
+      const installed = await api.installAppUpdate()
+      window.alert(installed.message)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : t('Không thể kiểm tra cập nhật.', 'Could not check for updates.'))
+    } finally {
+      setUpdateChecking(false)
+    }
+  }
 
   const loadLogs = useCallback(() => {
     setLogLoading(true)
@@ -498,11 +528,16 @@ export default function ConfigModal({
                   : t('Thiết lập hệ thống · Cloud AI · ElevenLabs', 'System settings · Cloud AI · ElevenLabs')}
             </p>
           </div>
-          {canClose ? (
-            <button type="button" className="cfg-close" onClick={tryClose} aria-label="Đóng">
-              ×
+          <div className="cfg-head-actions">
+            <button type="button" className="cfg-update" disabled={updateChecking} onClick={() => void checkForUpdate()}>
+              {updateChecking ? t('Đang kiểm tra…', 'Checking…') : t('Kiểm tra cập nhật', 'Check for updates')}
             </button>
-          ) : null}
+            {canClose ? (
+              <button type="button" className="cfg-close" onClick={tryClose} aria-label={t('Đóng', 'Close')}>
+                ×
+              </button>
+            ) : null}
+          </div>
         </header>
 
         <div className="cfg-section-tabs">
