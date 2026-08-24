@@ -213,41 +213,6 @@ async function flowRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-type DirectoryPickerWindow = Window & {
-  showDirectoryPicker?: (options?: {
-    id?: string;
-    mode?: "read" | "readwrite";
-    startIn?: string;
-  }) => Promise<FileSystemDirectoryHandle>;
-};
-
-function safeWebFolderParts(value: string): string[] {
-  return value
-    .split(/[\\/]+/)
-    .map((part) => part.replace(/[<>:"|?*\u0000-\u001f]/g, "-").trim())
-    .filter((part) => part && part !== "." && part !== "..");
-}
-
-async function writeFlowOutputToDirectory(
-  root: FileSystemDirectoryHandle,
-  outputFolder: string,
-  job: FlowJob,
-  outputIndex: number,
-) {
-  let target = await root.getDirectoryHandle("flow", { create: true });
-  for (const part of safeWebFolderParts(outputFolder || "flow")) {
-    target = await target.getDirectoryHandle(part, { create: true });
-  }
-  const storedPath = job.outputs?.[outputIndex] || "";
-  const filename = storedPath.split(/[\\/]/).pop() || `${job.kind}-${outputIndex + 1}`;
-  const response = await fetch(`/api/flow/jobs/${job.id}/outputs/${outputIndex}`);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  const file = await target.getFileHandle(filename, { create: true });
-  const writable = await file.createWritable();
-  await writable.write(await response.blob());
-  await writable.close();
-}
-
 function downloadFlowOutput(job: FlowJob, outputIndex: number) {
   const link = document.createElement("a");
   link.href = `/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`;
@@ -341,8 +306,6 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
   const t = (vi: string, en: string) => localize(locale, vi, en);
   const fileRef = useRef<HTMLInputElement>(null);
   const sourceRef = useRef<HTMLInputElement>(null);
-  const webOutputDirectoryRef = useRef<FileSystemDirectoryHandle | null>(null);
-  const [webOutputDirectoryName, setWebOutputDirectoryName] = useState("");
   const [tab, setTab] = useState<FlowTab>(() => {
     const saved = readText(TAB_KEY, "create");
     return saved === "queue" || saved === "history" || saved === "logs"
@@ -547,18 +510,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       if (completedOutputsRef.current.has(item.key)) continue;
       completedOutputsRef.current.add(item.key);
       if (!isDesktopApp && settings.autoDownload) {
-        if (webOutputDirectoryRef.current) {
-          void writeFlowOutputToDirectory(
-            webOutputDirectoryRef.current,
-            item.job.settings.outputDir || settings.outputDir,
-            item.job,
-            item.outputIndex,
-          ).catch((error) =>
-            setApiError(error instanceof Error ? error.message : String(error)),
-          );
-        } else {
-          downloadFlowOutput(item.job, item.outputIndex);
-        }
+        downloadFlowOutput(item.job, item.outputIndex);
       }
     }
   }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload]);
@@ -847,26 +799,8 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     }).catch((error) =>
       setApiError(error instanceof Error ? error.message : String(error)),
     );
-  const pickOutputFolder = async (): Promise<
-    FileSystemDirectoryHandle | "cancelled" | null
-  > => {
+  const pickOutputFolder = async (): Promise<"cancelled" | null> => {
     try {
-      if (!isDesktopApp) {
-        const pickerWindow = window as DirectoryPickerWindow;
-        if (!pickerWindow.showDirectoryPicker) {
-          throw new Error(t("Trình duyệt này không hỗ trợ chọn thư mục ghi file.", "This browser does not support writable folder selection."));
-        }
-        const directory = await pickerWindow.showDirectoryPicker({
-          id: "zm-flow-output",
-          mode: "readwrite",
-          startIn: "downloads",
-        });
-        webOutputDirectoryRef.current = directory;
-        setWebOutputDirectoryName(directory.name);
-        setSettings((current) => ({ ...current, autoDownload: true }));
-        setApiError("");
-        return directory;
-      }
       const result = await flowRequest<{ path?: string }>(
         "/api/system/pick-folder",
         { method: "POST" },
@@ -1658,7 +1592,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                 </div>
               )}
               <div className="flow-output-row">
-                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={() => void pickOutputFolder()} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t("Mặc định: Downloads/ZM_AIO_TOOL/flow", "Default: Downloads/ZM_AIO_TOOL/flow")} label={t("3. Thư mục kết quả", "3. Output folder")} selectedRootName={webOutputDirectoryName ? `${webOutputDirectoryName}/flow` : ""} webFolderOnly />
+                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? () => void pickOutputFolder() : undefined} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t("Mặc định: Downloads/ZM_AIO_TOOL/flow", "Default: Downloads/ZM_AIO_TOOL/flow")} label={t("3. Thư mục kết quả", "3. Output folder")} />
                 {!isDesktopApp && (
                   <label className="flow-check">
                     <input

@@ -453,7 +453,7 @@ test('Flow output options render as separate parent rows', async () => {
   ])
   assert.match(styles, /\.flow-output-row\s*\{[^}]*display: grid;[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s)
   assert.match(styles, /\.flow-output-row > label:first-child\s*\{[^}]*grid-column: 1 \/ -1;[^}]*width: 100%;/s)
-  assert.match(source, /webFolderOnly/)
+  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : undefined\}/)
 })
 
 test('Flow prompt file import is always visible and compact', async () => {
@@ -553,32 +553,21 @@ test("Flow queue renders each job's persisted generation settings", async () => 
   assert.doesNotMatch(source, /Imagen 3 Fast · 1:1 · 1K/)
 })
 
-test('Flow WEB output can create subfolders in a user-authorized Chrome directory', async () => {
+test('Flow WEB output accepts an output name without requesting filesystem access', async () => {
   const [source, field] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
   ])
-  assert.match(source, /showDirectoryPicker/)
   assert.match(source, /function defaultFlowOutputFolder/)
   assert.match(source, /outputDir: defaultFlowOutputFolder\(\)/)
   assert.match(source, /settings: effectiveSettings/)
-  assert.match(source, /root\.getDirectoryHandle\("flow", \{ create: true \}\)/)
-  assert.match(source, /getDirectoryHandle\(part, \{ create: true \}\)/)
-  assert.doesNotMatch(source, /getDirectoryHandle\(timeFolder, \{ create: true \}\)/)
-  assert.doesNotMatch(source, /getDirectoryHandle\(job\.id, \{ create: true \}\)/)
-  assert.match(source, /createWritable\(\)/)
   assert.match(source, /function downloadFlowOutput/)
   assert.match(source, /downloadFlowOutput\(item\.job, item\.outputIndex\)/)
   assert.match(source, /WEB_AUTO_DOWNLOAD_DEFAULT_KEY/)
-  assert.doesNotMatch(source, /!webOutputDirectoryRef\.current &&\s*settings\.autoDownload/)
-  assert.match(source, /error\.name === "AbortError"/)
-  assert.match(source, /setSettings\(\(current\) => \(\{ \.\.\.current, autoDownload: true \}\)\)/)
-  assert.doesNotMatch(source, /const directory = await pickOutputFolder\(\);[\s\S]{0,300}createFlowJobs/)
-  assert.doesNotMatch(source, /link\.href = `\/api\/flow\/jobs\/\$\{item\.job\.id\}/)
-  assert.match(source, /Trình duyệt này không hỗ trợ chọn thư mục ghi file\./)
-  assert.match(source, /This browser does not support writable folder selection\./)
-  assert.match(field, /Chọn thư mục tải xuống/)
-  assert.match(field, /Choose download folder/)
+  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : undefined\}/)
+  assert.doesNotMatch(source, /showDirectoryPicker/)
+  assert.doesNotMatch(source, /writeFlowOutputToDirectory/)
+  assert.match(field, /Ví dụ: du-an-01 hoặc video-01\.mp4/)
 })
 
 test('Flow create-video screen exposes the latest completed video preview', async () => {
