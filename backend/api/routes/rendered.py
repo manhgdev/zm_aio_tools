@@ -197,7 +197,9 @@ def api_delete_render(render_id: str):
     if path is None:
         raise HTTPException(404, "Khong tim thay file render")
     exports = PUBLIC_DATA / "exports"
-    path.unlink()
+    # The UI can issue a duplicate delete after another tab has removed the
+    # file; deletion must remain idempotent while metadata is cleaned up.
+    path.unlink(missing_ok=True)
     path.with_suffix(".json").unlink(missing_ok=True)
     (exports / "thumbnails" / f"{render_id}.jpg").unlink(missing_ok=True)
     # Bản "dễ tìm" <project>.mp4 chỉ bị ẩn khi còn bản lưu trữ <project>-*.mp4;

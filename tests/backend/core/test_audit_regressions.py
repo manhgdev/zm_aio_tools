@@ -177,6 +177,11 @@ def test_desktop_bundle_exposes_embedded_ytdlp_cli() -> None:
     assert "yt-dlp embedded CLI" in check
 
 
+def test_render_delete_is_safe_when_the_output_disappears() -> None:
+    source = Path("backend/api/routes/rendered.py").read_text(encoding="utf-8")
+    assert "path.unlink(missing_ok=True)" in source
+
+
 def test_desktop_supervisor_shows_copyable_crash() -> None:
     src = Path("build_app/launcher.py").read_text(encoding="utf-8")
     assert "VIDEO_CLONE_SUPERVISOR_CHILD" in src

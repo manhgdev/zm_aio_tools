@@ -1,6 +1,7 @@
 """Domain API routes."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -11,7 +12,6 @@ import sys
 import threading
 import uuid
 import urllib.request
-import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -89,6 +89,17 @@ _install_lock = threading.Lock()
 _checks_warm_lock = threading.Lock()
 _checks_warming = False
 _UPDATE_REPOSITORY = "manhgdev/zm_aio_tools"
+_UPDATE_LOCK = threading.Lock()
+_UPDATE_STATE: dict[str, Any] = {
+    "running": False,
+    "phase": "idle",
+    "progress": 0,
+    "message": "",
+    "error": "",
+    "assetName": "",
+    "latestVersion": "",
+    "packagePath": "",
+}
 
 
 def _version_key(value: str) -> tuple[int, int, int]:
@@ -110,12 +121,123 @@ def _latest_release() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _desktop_platform_asset_suffix(platform_name: str | None = None, machine: str | None = None) -> str:
+    """Return the only release asset suffix acceptable for this desktop build."""
+    platform_name = platform_name or sys.platform
+    machine = (machine or os.uname().machine if hasattr(os, "uname") else "").lower()
+    if platform_name == "win32":
+        return "-windows-x64.zip"
+    if platform_name == "darwin":
+        if machine in {"arm64", "aarch64"}:
+            return "-macos-arm64.pkg"
+        if machine in {"x86_64", "amd64"}:
+            return "-macos-x64.pkg"
+    return ""
+
+
 def _release_asset(release: dict[str, Any]) -> dict[str, Any] | None:
-    suffix = "-windows-x64.zip" if sys.platform == "win32" else ".pkg" if sys.platform == "darwin" else ""
+    suffix = _desktop_platform_asset_suffix()
+    if not suffix:
+        return None
+    version = str(release.get("tag_name") or "").lstrip("v")
+    if _version_key(version) == (0, 0, 0):
+        return None
+    prefix = f"ZM_AIO_TOOL_v{version}"
     for asset in release.get("assets") or []:
-        if isinstance(asset, dict) and str(asset.get("name") or "").endswith(suffix):
+        if isinstance(asset, dict) and str(asset.get("name") or "").startswith(prefix) and str(asset.get("name") or "").endswith(suffix):
             return asset
     return None
+
+
+def _release_checksum_asset(release: dict[str, Any], asset_name: str) -> dict[str, Any] | None:
+    expected_name = f"{asset_name}.sha256"
+    for asset in release.get("assets") or []:
+        if isinstance(asset, dict) and str(asset.get("name") or "") == expected_name:
+            return asset
+    return None
+
+
+def _update_supported() -> bool:
+    """The browser/dev server must never replace a local development checkout."""
+    return os.environ.get("VIDEO_CLONE_DESKTOP") == "1" and bool(getattr(sys, "frozen", False))
+
+
+def _update_snapshot() -> dict[str, Any]:
+    with _UPDATE_LOCK:
+        return dict(_UPDATE_STATE)
+
+
+def _set_update_state(**values: Any) -> None:
+    with _UPDATE_LOCK:
+        _UPDATE_STATE.update(values)
+
+
+def _read_checksum(asset: dict[str, Any]) -> str:
+    url = str(asset.get("browser_download_url") or "")
+    if not url:
+        raise RuntimeError("Release thiếu file checksum")
+    with urllib.request.urlopen(url, timeout=30) as response:
+        text = response.read().decode("utf-8", "replace")
+    match = re.search(r"\b([a-fA-F0-9]{64})\b", text)
+    if not match:
+        raise RuntimeError("Checksum release không hợp lệ")
+    return match.group(1).lower()
+
+
+def _download_update(asset: dict[str, Any], checksum_asset: dict[str, Any], updates: Path, version: str) -> Path:
+    name = str(asset.get("name") or "")
+    url = str(asset.get("browser_download_url") or "")
+    if not name or not url:
+        raise RuntimeError("Release không có gói cài đặt phù hợp")
+    expected = _read_checksum(checksum_asset)
+    target = updates / name
+    partial = target.with_suffix(target.suffix + ".part")
+    digest = hashlib.sha256()
+    _set_update_state(phase="downloading", progress=0, message="Đang tải bản cập nhật…", assetName=name, latestVersion=version)
+    with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as output:
+        total = int(response.headers.get("Content-Length") or 0)
+        received = 0
+        while chunk := response.read(1024 * 1024):
+            output.write(chunk)
+            digest.update(chunk)
+            received += len(chunk)
+            progress = min(99, int(received * 100 / total)) if total else 0
+            _set_update_state(progress=progress)
+    actual = digest.hexdigest().lower()
+    if actual != expected:
+        partial.unlink(missing_ok=True)
+        raise RuntimeError("Checksum gói cập nhật không khớp")
+    partial.replace(target)
+    return target
+
+
+def _windows_update_script(updates: Path) -> Path:
+    script = updates / "apply-update.ps1"
+    script.write_text(
+        "param([int]$Pid,[string]$Zip,[string]$Target,[string]$Exe)\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        "Wait-Process -Id $Pid -ErrorAction SilentlyContinue\n"
+        "$parent = Split-Path $Target -Parent\n"
+        "$stamp = Get-Date -Format 'yyyyMMddHHmmss'\n"
+        "$next = Join-Path $parent ((Split-Path $Target -Leaf) + '.new-' + $stamp)\n"
+        "$backup = Join-Path $parent ((Split-Path $Target -Leaf) + '.old-' + $stamp)\n"
+        "Remove-Item $next -Recurse -Force -ErrorAction SilentlyContinue\n"
+        "Expand-Archive -Path $Zip -DestinationPath $next -Force\n"
+        "if (-not (Test-Path (Join-Path $next 'ZM AIO TOOL.exe'))) { throw 'Gói cập nhật thiếu ZM AIO TOOL.exe' }\n"
+        "$versions = Get-ChildItem $next -Filter VERSION -Recurse -File\n"
+        "if (-not $versions) { throw 'Gói cập nhật thiếu VERSION' }\n"
+        "try {\n"
+        "  Move-Item -LiteralPath $Target -Destination $backup\n"
+        "  Move-Item -LiteralPath $next -Destination $Target\n"
+        "} catch {\n"
+        "  if ((Test-Path $backup) -and -not (Test-Path $Target)) { Move-Item -LiteralPath $backup -Destination $Target }\n"
+        "  throw\n"
+        "}\n"
+        "Start-Process -FilePath $Exe\n"
+        "Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue\n",
+        encoding="utf-8",
+    )
+    return script
 
 
 def _start_checks_warm() -> None:
@@ -547,17 +669,22 @@ def api_system_restart():
 @router.get("/api/system/update/check")
 def api_update_check():
     if os.environ.get("VIDEO_CLONE_DESKTOP") != "1":
-        return {"desktop": False, "updateAvailable": False, "currentVersion": _desktop_version()}
+        return {"desktop": False, "supported": False, "updateAvailable": False, "currentVersion": _desktop_version()}
     try:
         release = _latest_release()
         tag = str(release.get("tag_name") or "")
         asset = _release_asset(release)
+        checksum = _release_checksum_asset(release, str(asset.get("name") or "")) if asset else None
         return {
             "desktop": True,
+            "supported": _update_supported(),
             "currentVersion": _desktop_version(),
             "latestVersion": tag.lstrip("v"),
-            "updateAvailable": bool(asset and _version_key(tag) > _version_key(_desktop_version())),
+            "releaseAvailable": _version_key(tag) > _version_key(_desktop_version()),
+            "updateAvailable": bool(asset and checksum and _version_key(tag) > _version_key(_desktop_version())),
             "assetAvailable": bool(asset),
+            "checksumAvailable": bool(checksum),
+            "assetName": str(asset.get("name") or "") if asset else "",
             "releaseUrl": str(release.get("html_url") or ""),
             "notes": str(release.get("body") or ""),
         }
@@ -567,45 +694,67 @@ def api_update_check():
 
 @router.post("/api/system/update/install")
 def api_update_install():
-    if os.environ.get("VIDEO_CLONE_DESKTOP") != "1":
+    if not _update_supported():
         raise HTTPException(400, "Chỉ bản desktop hỗ trợ cập nhật")
-    try:
-        release = _latest_release()
-        tag = str(release.get("tag_name") or "")
-        asset = _release_asset(release)
-        if not asset or _version_key(tag) <= _version_key(_desktop_version()):
-            return {"ok": True, "updated": False, "message": "Đã là phiên bản mới nhất"}
-        url = str(asset.get("browser_download_url") or "")
-        name = str(asset.get("name") or "")
-        if not url or not name:
-            raise RuntimeError("Release không có gói cài đặt phù hợp")
-        updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
-        updates.mkdir(parents=True, exist_ok=True)
-        package = updates / name
-        urllib.request.urlretrieve(url, package)
-        if sys.platform == "darwin":
-            subprocess.Popen(["open", str(package)])
-            return {"ok": True, "updated": True, "message": "Đã mở macOS Installer để cập nhật"}
-        target = Path(sys.executable).resolve().parent
-        script = updates / "apply-update.ps1"
-        script.write_text(
-            "param([int]$Pid,[string]$Zip,[string]$Target,[string]$Exe)\n"
-            "Wait-Process -Id $Pid -ErrorAction SilentlyContinue\n"
-            "$stage = Join-Path (Split-Path $Zip) 'stage'\n"
-            "Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue\n"
-            "Expand-Archive -Path $Zip -DestinationPath $stage -Force\n"
-            "Copy-Item (Join-Path $stage '*') $Target -Recurse -Force\n"
-            "Start-Process -FilePath $Exe\n",
-            encoding="utf-8",
-        )
-        subprocess.Popen([
-            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-            "-Pid", str(os.getpid()), "-Zip", str(package), "-Target", str(target), "-Exe", str(sys.executable),
-        ], creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)))
-        threading.Timer(0.8, lambda: os._exit(0)).start()
-        return {"ok": True, "updated": True, "message": "Đang tải và cài đặt bản cập nhật…"}
-    except Exception as exc:
-        raise HTTPException(502, f"Không thể tải bản cập nhật: {exc}") from exc
+    with _UPDATE_LOCK:
+        if _UPDATE_STATE["running"]:
+            return {"ok": True, "running": True, "message": _UPDATE_STATE["message"]}
+        _UPDATE_STATE.update(running=True, phase="checking", progress=0, message="Đang chuẩn bị cập nhật…", error="", packagePath="")
+
+    def work() -> None:
+        try:
+            release = _latest_release()
+            tag = str(release.get("tag_name") or "")
+            asset = _release_asset(release)
+            checksum = _release_checksum_asset(release, str(asset.get("name") or "")) if asset else None
+            if not asset or not checksum or _version_key(tag) <= _version_key(_desktop_version()):
+                _set_update_state(phase="complete", progress=100, message="Đã là phiên bản mới nhất")
+                return
+            updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
+            updates.mkdir(parents=True, exist_ok=True)
+            package = _download_update(asset, checksum, updates, tag.lstrip("v"))
+            _set_update_state(phase="ready", progress=100, message="Đã tải và xác minh gói cập nhật", packagePath=str(package))
+        except Exception as exc:
+            _set_update_state(phase="error", error=str(exc), message="Không thể tải bản cập nhật")
+        finally:
+            _set_update_state(running=False)
+
+    threading.Thread(target=work, name="desktop-update-download", daemon=True).start()
+    return {"ok": True, "running": True, "message": "Đang tải bản cập nhật…"}
+
+
+@router.get("/api/system/update/status")
+def api_update_status():
+    return {"desktop": os.environ.get("VIDEO_CLONE_DESKTOP") == "1", **_update_snapshot()}
+
+
+@router.post("/api/system/update/apply")
+def api_update_apply():
+    if not _update_supported():
+        raise HTTPException(400, "Chỉ bản desktop hỗ trợ cập nhật")
+    state = _update_snapshot()
+    if state["running"]:
+        raise HTTPException(409, "Gói cập nhật vẫn đang tải")
+    if state["phase"] != "ready" or not state["packagePath"]:
+        raise HTTPException(400, "Chưa có gói cập nhật đã xác minh")
+    package = Path(str(state["packagePath"]))
+    if not package.is_file():
+        raise HTTPException(404, "Không tìm thấy gói cập nhật đã tải")
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(package)])
+        _set_update_state(phase="complete", message="Đã mở macOS Installer để cập nhật")
+        return {"ok": True, "message": "Đã mở macOS Installer để cập nhật"}
+    if sys.platform != "win32":
+        raise HTTPException(400, "Nền tảng này chưa hỗ trợ cập nhật")
+    target = Path(sys.executable).resolve().parent
+    script = _windows_update_script(package.parent)
+    subprocess.Popen([
+        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+        "-Pid", str(os.getpid()), "-Zip", str(package), "-Target", str(target), "-Exe", str(sys.executable),
+    ], creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+    _set_update_state(phase="applying", message="Đang cài và khởi động lại ứng dụng…")
+    threading.Timer(0.8, lambda: os._exit(0)).start()
+    return {"ok": True, "message": "Đang cài và khởi động lại ứng dụng…"}
 
 
 @router.get("/api/system/logs")

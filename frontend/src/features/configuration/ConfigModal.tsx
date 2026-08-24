@@ -45,6 +45,12 @@ function nextAutoInstall(checks: SystemChecks): InstallKind | null {
 
 type Section = 'setup' | 'cloud' | 'tts' | 'license' | 'logs'
 type CloudTab = CloudProviderId
+type UpdateDialog = {
+  kind: 'available' | 'info' | 'downloading' | 'ready' | 'error' | 'complete'
+  title: string
+  detail: string
+  progress?: number
+}
 
 type CloudDraft = Record<
   CloudProviderId,
@@ -165,6 +171,7 @@ export default function ConfigModal({
   const [logErr, setLogErr] = useState('')
   const [logCopied, setLogCopied] = useState(false)
   const [updateChecking, setUpdateChecking] = useState(false)
+  const [updateDialog, setUpdateDialog] = useState<UpdateDialog | null>(null)
   const autoSetupLock = useRef(false)
   /** Install kinds already auto-attempted — prevents infinite retry when install
    *  succeeds but the underlying check item remains !ok (e.g. native lib missing). */
@@ -175,30 +182,81 @@ export default function ConfigModal({
     setUpdateChecking(true)
     try {
       const result = await api.checkAppUpdate()
-      if (!result.desktop) {
-        window.alert(t('Cập nhật chỉ áp dụng cho bản APP macOS/Windows.', 'Updates are available only in the macOS/Windows APP.'))
+      if (!result.desktop || !result.supported) {
+        setUpdateDialog({
+          kind: 'info',
+          title: t('Không thể cập nhật tại đây', 'Updates are unavailable here'),
+          detail: t('Cập nhật chỉ áp dụng cho bản APP macOS/Windows đã đóng gói.', 'Updates are available only in the packaged macOS/Windows APP.'),
+        })
         return
       }
       if (!result.updateAvailable) {
-        window.alert(t(
-          `Bạn đang dùng phiên bản mới nhất (v${result.currentVersion}).`,
-          `You are using the latest version (v${result.currentVersion}).`,
-        ))
+        setUpdateDialog({
+          kind: 'info',
+          title: result.releaseAvailable ? t('Chưa có gói phù hợp', 'No compatible package yet') : t('Đã là phiên bản mới nhất', 'You are up to date'),
+          detail: result.releaseAvailable
+            ? t('Bản phát hành chưa có gói hoặc checksum đúng cho thiết bị này.', 'The release has no package or checksum for this device yet.')
+            : t(`Bạn đang dùng v${result.currentVersion}.`, `You are using v${result.currentVersion}.`),
+        })
         return
       }
-      const approved = window.confirm(t(
-        `Đã có v${result.latestVersion}. Tải và cài đặt ngay?`,
-        `Version ${result.latestVersion} is available. Download and install now?`,
-      ))
-      if (!approved) return
-      const installed = await api.installAppUpdate()
-      window.alert(installed.message)
+      setUpdateDialog({
+        kind: 'available',
+        title: t(`Đã có bản v${result.latestVersion}`, `Version ${result.latestVersion} is available`),
+        detail: t('Gói đúng nền tảng sẽ được tải và xác minh trước khi cài.', 'The platform-specific package will be downloaded and verified before installation.'),
+      })
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : t('Không thể kiểm tra cập nhật.', 'Could not check for updates.'))
+      setUpdateDialog({
+        kind: 'error',
+        title: t('Không thể kiểm tra cập nhật', 'Could not check for updates'),
+        detail: error instanceof Error ? error.message : t('Vui lòng thử lại sau.', 'Please try again later.'),
+      })
     } finally {
       setUpdateChecking(false)
     }
   }
+
+  const downloadUpdate = async () => {
+    try {
+      await api.installAppUpdate()
+      setUpdateDialog({ kind: 'downloading', title: t('Đang tải cập nhật', 'Downloading update'), detail: t('Đang xác minh gói cài đặt…', 'Verifying the installation package…'), progress: 0 })
+    } catch (error) {
+      setUpdateDialog({ kind: 'error', title: t('Không thể tải cập nhật', 'Could not download update'), detail: error instanceof Error ? error.message : t('Vui lòng thử lại sau.', 'Please try again later.') })
+    }
+  }
+
+  const applyUpdate = async () => {
+    try {
+      const result = await api.applyAppUpdate()
+      void result
+      setUpdateDialog({ kind: 'complete', title: t('Cập nhật đã sẵn sàng', 'Update is ready'), detail: t('Trình cài đặt đã được mở hoặc ứng dụng sẽ tự khởi động lại.', 'The installer has opened or the app will restart automatically.') })
+    } catch (error) {
+      setUpdateDialog({ kind: 'error', title: t('Không thể cài cập nhật', 'Could not install update'), detail: error instanceof Error ? error.message : t('Vui lòng thử lại sau.', 'Please try again later.') })
+    }
+  }
+
+  useEffect(() => {
+    if (updateDialog?.kind !== 'downloading') return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const state = await api.getAppUpdateStatus()
+        if (cancelled) return
+        if (state.phase === 'error') {
+          setUpdateDialog({ kind: 'error', title: t('Không thể tải cập nhật', 'Could not download update'), detail: state.error || state.message })
+        } else if (state.phase === 'ready') {
+          setUpdateDialog({ kind: 'ready', title: t('Đã tải và xác minh', 'Downloaded and verified'), detail: t('Gói cập nhật đã sẵn sàng để cài.', 'The update package is ready to install.'), progress: 100 })
+        } else {
+          setUpdateDialog({ kind: 'downloading', title: t('Đang tải cập nhật', 'Downloading update'), detail: t('Đang xác minh gói cài đặt…', 'Verifying the installation package…'), progress: state.progress })
+        }
+      } catch (error) {
+        if (!cancelled) setUpdateDialog({ kind: 'error', title: t('Mất kết nối cập nhật', 'Update connection failed'), detail: error instanceof Error ? error.message : t('Vui lòng thử lại sau.', 'Please try again later.') })
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 800)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [t, updateDialog?.kind])
 
   const loadLogs = useCallback(() => {
     setLogLoading(true)
@@ -539,6 +597,23 @@ export default function ConfigModal({
             ) : null}
           </div>
         </header>
+
+        {updateDialog ? (
+          <div className="cfg-update-dialog" role="alertdialog" aria-live="polite" aria-label={updateDialog.title}>
+            <h3>{updateDialog.title}</h3>
+            <p>{updateDialog.detail}</p>
+            {updateDialog.kind === 'downloading' ? (
+              <div className="cfg-update-progress" aria-label={t('Tiến trình tải cập nhật', 'Update download progress')}>
+                <span style={{ width: `${updateDialog.progress || 0}%` }} />
+              </div>
+            ) : null}
+            <div className="cfg-update-actions">
+              {updateDialog.kind === 'available' ? <button type="button" className="primary" onClick={() => void downloadUpdate()}>{t('Tải cập nhật', 'Download update')}</button> : null}
+              {updateDialog.kind === 'ready' ? <button type="button" className="primary" onClick={() => void applyUpdate()}>{t('Cài cập nhật', 'Install update')}</button> : null}
+              {updateDialog.kind !== 'downloading' ? <button type="button" onClick={() => setUpdateDialog(null)}>{t('Đóng', 'Close')}</button> : null}
+            </div>
+          </div>
+        ) : null}
 
         <div className="cfg-section-tabs">
           <button

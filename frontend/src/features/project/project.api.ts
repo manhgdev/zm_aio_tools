@@ -145,19 +145,42 @@ export const api = {
   checkAppUpdate: () =>
     fetchJson<{
       desktop: boolean
+      supported?: boolean
       currentVersion: string
       latestVersion?: string
+      releaseAvailable?: boolean
       updateAvailable: boolean
       assetAvailable?: boolean
+      checksumAvailable?: boolean
+      assetName?: string
       releaseUrl?: string
       notes?: string
     }>(`${base}/system/update/check`, undefined, 20_000),
 
   installAppUpdate: () =>
-    fetchJson<{ ok: boolean; updated: boolean; message: string }>(
+    fetchJson<{ ok: boolean; running: boolean; message: string }>(
       `${base}/system/update/install`,
       { method: 'POST' },
-      90_000,
+      20_000,
+    ),
+
+  getAppUpdateStatus: () =>
+    fetchJson<{
+      desktop: boolean
+      running: boolean
+      phase: 'idle' | 'checking' | 'downloading' | 'ready' | 'applying' | 'complete' | 'error'
+      progress: number
+      message: string
+      error: string
+      latestVersion: string
+      assetName: string
+    }>(`${base}/system/update/status`, undefined, 20_000),
+
+  applyAppUpdate: () =>
+    fetchJson<{ ok: boolean; message: string }>(
+      `${base}/system/update/apply`,
+      { method: 'POST' },
+      20_000,
     ),
 
   /** Log app (job lỗi, crash) — tab Cấu hình → Log */

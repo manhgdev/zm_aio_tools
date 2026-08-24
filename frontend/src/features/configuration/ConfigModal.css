@@ -78,6 +78,22 @@
 
 .cfg-update:disabled { opacity: .55; }
 
+.cfg-update-dialog {
+  margin: 12px 14px 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 6%, var(--card));
+}
+
+.cfg-update-dialog h3 { margin: 0; font-size: .9rem; }
+.cfg-update-dialog p { margin: 5px 0 0; color: var(--muted-foreground); font-size: .78rem; }
+.cfg-update-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.cfg-update-actions button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: .76rem; font-weight: 700; }
+.cfg-update-actions button.primary { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.cfg-update-progress { height: 6px; margin-top: 10px; overflow: hidden; border-radius: 999px; background: var(--line); }
+.cfg-update-progress span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width .2s ease; }
+
 .cfg-section-tabs {
   display: flex;
   gap: 0;
