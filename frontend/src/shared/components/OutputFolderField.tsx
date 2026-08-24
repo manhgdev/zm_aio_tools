@@ -13,6 +13,14 @@ export function normalizeWebOutputName(value: string, appFolder: string) {
   return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : ''
 }
 
+/** Keep the selected directory recognizable when a narrow panel hides its full path. */
+export function compactOutputPrefix(prefix: string) {
+  const normalized = prefix.replace(/\\/g, '/').replace(/\/+$/, '')
+  const parts = normalized.split('/').filter(Boolean)
+  const tail = parts.slice(-2).join('/')
+  return tail ? `…/${tail}/` : prefix
+}
+
 function loadDesktopOutputRoot() {
   if (!desktopOutputRootRequest) {
     desktopOutputRootRequest = fetch('/api/config')
@@ -81,6 +89,7 @@ export function OutputFolderField({
   }, [appFolder, desktopOutputRoot, value])
   const webSuffix = useMemo(() => normalizeWebOutputName(value, appFolder), [appFolder, value])
   const outputPrefix = isDesktopApp ? appPath.prefix : webPathPrefix
+  const compactPrefix = useMemo(() => compactOutputPrefix(outputPrefix), [outputPrefix])
   const outputSuffix = isDesktopApp ? appPath.suffix : webSuffix
 
   useEffect(() => {
@@ -119,7 +128,7 @@ export function OutputFolderField({
         <div className="output-folder-combined">
           <span className="output-folder-prefix" aria-disabled="true" title={outputPrefix}>
             <span className="output-folder-prefix-full">{outputPrefix}</span>
-            <span className="output-folder-prefix-short" aria-hidden="true">…/{appFolder}/</span>
+            <span className="output-folder-prefix-short" aria-hidden="true">{compactPrefix}</span>
           </span>
           <input
             aria-label={t('Tên thư mục hoặc tệp đầu ra', 'Output subfolder or file name')}

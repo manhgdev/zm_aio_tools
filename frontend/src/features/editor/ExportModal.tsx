@@ -125,8 +125,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       const res = await fetch('/api/system/pick-folder', { method: 'POST' })
       const data = await res.json() as { ok: boolean; path: string }
       if (data.ok && data.path) {
-        setExportDir(data.path)
-        localStorage.setItem('exportOutputDir', data.path)
         return data.path
       }
     } catch {

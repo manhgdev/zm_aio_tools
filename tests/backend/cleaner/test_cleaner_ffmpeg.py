@@ -51,3 +51,18 @@ def test_clear_job_logs_keeps_cleaner_jobs_and_output(monkeypatch):
     assert cleaner_jobs.clear_job_logs() == 1
     assert jobs["job-1"]["logs"] == []
     assert jobs["job-1"]["output_path"] == "/tmp/output.mp4"
+
+
+def test_cleaner_file_uses_attachment_only_for_download(monkeypatch, tmp_path):
+    from api.routes import cleaner
+
+    output = tmp_path / "cleaned.mp4"
+    output.write_bytes(b"video")
+    monkeypatch.setattr(cleaner, "get_job_output_path", lambda _job_id: output)
+
+    inline = cleaner.api_cleaner_file("job-1")
+    downloaded = cleaner.api_cleaner_file("job-1", download=1)
+
+    assert "attachment" not in inline.headers.get("content-disposition", "")
+    assert downloaded.headers["content-disposition"].startswith("attachment;")
+    assert "cleaned.mp4" in downloaded.headers["content-disposition"]

@@ -349,8 +349,7 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
 
   async function pickOut() {
     const res = await studioApi.pickFolder()
-    if (res.path) set({ outputDir: res.path })
-    return res.path
+    return res.path || undefined
   }
 
   async function createAndRun() {

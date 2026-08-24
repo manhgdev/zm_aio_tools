@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 
 from pipeline.cleaner.cleaner_jobs import (
     CLEANER_TEMP_DIR,
@@ -15,6 +16,7 @@ from pipeline.cleaner.cleaner_jobs import (
     create_job,
     delete_job,
     get_job,
+    get_job_output_path,
     list_jobs,
     reveal_job_file,
 )
@@ -95,11 +97,8 @@ def api_cleaner_reveal(job_id: str):
         raise HTTPException(404, "Không tìm thấy file hoặc chưa hoàn thành")
     return {"ok": True}
 
-from fastapi.responses import FileResponse
-from pipeline.cleaner.cleaner_jobs import get_job_output_path
-
 @router.get("/api/cleaner/jobs/{job_id}/file")
-def api_cleaner_file(job_id: str):
+def api_cleaner_file(job_id: str, download: int = 0):
     p = get_job_output_path(job_id)
     if not p:
         raise HTTPException(404, "Chưa có file")
@@ -110,4 +109,9 @@ def api_cleaner_file(job_id: str):
     elif p.suffix.lower() == ".mkv":
         media = "video/x-matroska"
         
-    return FileResponse(p, media_type=media)
+    return FileResponse(
+        p,
+        media_type=media,
+        filename=p.name if download else None,
+        content_disposition_type="attachment" if download else "inline",
+    )

@@ -1,10 +1,12 @@
 """Unified job queue API."""
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 import subprocess
 import sys
+import uuid
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -51,6 +53,56 @@ def resolve_job_file(job: dict[str, Any], part: int | None = None) -> Path:
         if path.is_file():
             return path
     raise HTTPException(404, "Chưa có file video")
+
+
+def resolve_job_thumbnail_source(job: dict[str, Any]) -> Path:
+    """Use the render when present, otherwise a completed Clone project's source."""
+    try:
+        return resolve_job_file(job)
+    except HTTPException:
+        source = Path(str(job.get("source") or "")).expanduser()
+        if source.is_file():
+            return source
+    raise FileNotFoundError(str(job.get("id") or "queue job"))
+
+
+def _existing_thumbnail(video: Path) -> Path | None:
+    """Prefer a thumbnail already emitted next to an export before decoding it again."""
+    candidates = (
+        video.with_suffix(".jpg"),
+        video.with_suffix(".jpeg"),
+        video.with_name(f"{video.stem}_thumbnail.jpg"),
+        video.with_name(f"{video.stem}.thumb.jpg"),
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def ensure_job_thumbnail(job_id: str, job: dict[str, Any]) -> Path:
+    """Return a cached still frame for a completed Clone or Review queue job."""
+    output = resolve_job_thumbnail_source(job)
+    existing = _existing_thumbnail(output)
+    if existing:
+        return existing
+    cache_key = hashlib.sha256(job_id.encode("utf-8")).hexdigest()
+    thumbnail = DATA / "queue_thumbnails" / f"{cache_key}.jpg"
+    if thumbnail.is_file() and thumbnail.stat().st_mtime >= output.stat().st_mtime:
+        return thumbnail
+    thumbnail.parent.mkdir(parents=True, exist_ok=True)
+    temp = thumbnail.with_name(f"{cache_key}.{uuid.uuid4().hex}.jpg")
+    try:
+        command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1",
+                   "-i", str(output), "-frames:v", "1", "-vf", "scale=320:-2",
+                   "-q:v", "3", str(temp)]
+        try:
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        except subprocess.SubprocessError:
+            temp.unlink(missing_ok=True)
+            command[command.index("1")] = "0"
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        temp.replace(thumbnail)
+        return thumbnail
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _delete_review_part_cache(job: dict[str, Any], index: int) -> None:
@@ -119,6 +171,18 @@ def api_queue_file(job_id: str, part: int | None = None, download: int = 0):
     if download:
         return FileResponse(path, filename=name, media_type="video/mp4")
     return FileResponse(path, media_type="video/mp4", content_disposition_type="inline")
+
+
+@router.get("/api/queue/{job_id}/thumbnail")
+def api_queue_thumbnail(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Không thấy job")
+    try:
+        thumbnail = ensure_job_thumbnail(job_id, job)
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        raise HTTPException(404, "Không tạo được ảnh xem trước") from None
+    return FileResponse(thumbnail, media_type="image/jpeg")
 
 
 @router.post("/api/queue/{job_id}/reveal")

@@ -1482,6 +1482,38 @@ class ReviewQueueTests(unittest.TestCase):
             with self.assertRaises(HTTPException):
                 resolve_job_file(job, 9)
 
+    def test_queue_thumbnail_reuses_a_newer_cached_frame(self):
+        from api.routes import queue
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            output = root / "output.mp4"
+            output.write_bytes(b"video")
+            cache = root / "queue_thumbnails"
+            cache.mkdir()
+            expected = cache / "placeholder.jpg"
+            expected.write_bytes(b"thumbnail")
+            with patch.object(queue, "DATA", root), patch.object(queue, "hashlib") as digest:
+                digest.sha256.return_value.hexdigest.return_value = "placeholder"
+                with patch.object(queue.subprocess, "run") as run:
+                    thumbnail = queue.ensure_job_thumbnail("job-1", {"output": str(output)})
+            self.assertEqual(thumbnail, expected)
+            run.assert_not_called()
+
+    def test_queue_thumbnail_uses_clone_source_and_existing_companion_image(self):
+        from api.routes.queue import ensure_job_thumbnail
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "clone-source.mp4"
+            existing = root / "clone-source_thumbnail.jpg"
+            source.write_bytes(b"video")
+            existing.write_bytes(b"thumbnail")
+            self.assertEqual(
+                ensure_job_thumbnail("clone-job", {"output": "", "source": str(source)}),
+                existing,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

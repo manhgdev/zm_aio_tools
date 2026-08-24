@@ -37,4 +37,8 @@ export const cleanerApi = {
   async reveal(id: string): Promise<{ ok: boolean }> {
     return fetchJson(`${base}/${id}/reveal`, { method: 'POST' }, 5000)
   },
+
+  fileUrl(id: string, download = false): string {
+    return `${base}/${id}/file${download ? '?download=1' : ''}`
+  },
 }

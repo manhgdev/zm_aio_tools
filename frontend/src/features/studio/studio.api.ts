@@ -95,6 +95,7 @@ export const studioApi = {
     const qs = q.toString()
     return `/api/queue/${jobId}/file${qs ? `?${qs}` : ''}`
   },
+  thumbnailUrl: (jobId: string) => `/api/queue/${encodeURIComponent(jobId)}/thumbnail`,
   deletePart: (jobId: string, index: number) =>
     fetchJson<QueueSnapshot>(`/api/queue/${jobId}/parts/${index}`, { method: 'DELETE' }),
 }

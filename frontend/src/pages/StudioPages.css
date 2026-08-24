@@ -158,7 +158,19 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
 .clone-settings-inline input[type='range'] { width: 100%; }
 .studio-files { margin: 0; padding-left: 18px; font-size: .8rem; max-height: 140px; overflow: auto; }
 .studio-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.studio-queue-table { table-layout: fixed; }
 .studio-table th, .studio-table td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+.studio-queue-table--all .studio-queue-type-column { width: 7%; }
+.studio-queue-table--all .studio-queue-thumbnail-column { width: 10%; }
+.studio-queue-table--all .studio-queue-source-column { width: 23%; }
+.studio-queue-table--all .studio-queue-status-column { width: 15%; }
+.studio-queue-table--all .studio-queue-progress-column { width: 10%; }
+.studio-queue-table--all .studio-queue-actions-column { width: 35%; }
+.studio-queue-table--feature .studio-queue-thumbnail-column { width: 10%; }
+.studio-queue-table--feature .studio-queue-source-column { width: 32%; }
+.studio-queue-table--feature .studio-queue-status-column { width: 16%; }
+.studio-queue-table--feature .studio-queue-progress-column { width: 10%; }
+.studio-queue-table--feature .studio-queue-actions-column { width: 32%; }
 .studio-queue-source-column { width: 40%; }
 .studio-queue-status-column { width: 16%; }
 .studio-queue-progress-column { width: 12%; }
@@ -173,6 +185,13 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
   gap: 4px;
   min-width: 180px;
 }
+.studio-table td.studio-job-actions {
+  display: table-cell;
+  min-width: 0;
+  vertical-align: middle;
+  text-align: right;
+}
+.studio-table td.studio-job-actions > * { margin: 2px 0 2px 4px; }
 .studio-page.batch-page .studio-job-actions button,
 .studio-page.batch-page .studio-job-actions a {
   min-height: 28px;
@@ -203,6 +222,21 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
   outline: 2px solid color-mix(in srgb, var(--batch-action-strong) 62%, #fff);
   outline-offset: 2px;
 }
+.batch-page .drawing-job-actions .batch-action {
+  --batch-action-strong: #176c7b;
+  border-color: color-mix(in srgb, var(--batch-action-strong) 28%, var(--line));
+  color: var(--batch-action-strong);
+  background: #e4f7f8;
+  font-weight: 750;
+  transition: color 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.batch-page .drawing-job-actions .batch-action--edit { --batch-action-strong: #1769aa; background: #e9f4ff; }
+.batch-page .drawing-job-actions .batch-action--danger { --batch-action-strong: #bd2337; background: #fff0f2; }
+.batch-page .drawing-job-actions .batch-action:hover { border-color: var(--batch-action-strong); background: var(--batch-action-strong); color: #fff; box-shadow: 0 2px 8px color-mix(in srgb, var(--batch-action-strong) 24%, transparent); }
+.batch-page .drawing-job-actions .batch-action:focus-visible { outline: 2px solid color-mix(in srgb, var(--batch-action-strong) 62%, #fff); outline-offset: 2px; }
+html.dark .batch-page .drawing-job-actions .batch-action { --batch-action-strong: #7ddde8; color: #7ddde8; background: #0b3e47; }
+html.dark .batch-page .drawing-job-actions .batch-action--edit { --batch-action-strong: #79bcff; color: #79bcff; background: #102f4d; }
+html.dark .batch-page .drawing-job-actions .batch-action--danger { --batch-action-strong: #ff9baa; color: #ff9baa; background: #4b1720; }
 html.dark .batch-page .studio-job-actions .batch-action--pause { --batch-action-strong: #ffc266; color: #ffc266; background: #4a310d; }
 html.dark .batch-page .studio-job-actions .batch-action--resume { --batch-action-strong: #72d49b; color: #72d49b; background: #103d2a; }
 html.dark .batch-page .studio-job-actions .batch-action--retry { --batch-action-strong: #ffbc6b; color: #ffbc6b; background: #4a2c09; }

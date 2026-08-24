@@ -256,6 +256,11 @@ test('APP outputs share one documented root with feature subfolders', async () =
   assert.match(field, /className="output-folder-combined"/)
   assert.match(field, /className="output-folder-prefix"/)
   assert.match(field, /className="output-folder-prefix-short"/)
+  assert.match(field, /function compactOutputPrefix\(prefix: string\)/)
+  assert.match(field, /const tail = parts\.slice\(-2\)\.join\('\/'\)/)
+  assert.match(field, /…\/\$\{tail\}\//)
+  assert.match(field, /const compactPrefix = useMemo\(\(\) => compactOutputPrefix\(outputPrefix\)/)
+  assert.doesNotMatch(field, /…\/\{appFolder\}\//)
   assert.match(field, /aria-disabled="true"/)
   assert.match(field, /className="output-folder-suffix"/)
   assert.match(field, /function chooseOutputFolder\(\)/)
@@ -420,9 +425,26 @@ test('Batch navigation uses Flow-inspired color states', async () => {
 })
 
 test('Batch queue actions use compact Flow-sized controls', async () => {
-  const styles = await readFile(new URL('../frontend/src/pages/StudioPages.css', import.meta.url), 'utf8')
+  const [source, styles, api, route] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/StudioPages.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/studio/studio.api.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/api/routes/queue.py', import.meta.url), 'utf8'),
+  ])
   assert.match(styles, /\.batch-page \.studio-job-actions\s*\{[^}]*gap: 4px;[^}]*min-width: 180px;/s)
   assert.match(styles, /\.studio-page\.batch-page \.studio-job-actions button,[\s\S]*?height: 28px;[\s\S]*?padding: 0 7px;[\s\S]*?font-size: \.68rem;/)
+  assert.match(styles, /\.studio-table td\.studio-job-actions\s*\{[^}]*display: table-cell;/s)
+  assert.match(styles, /\.studio-queue-table--all \.studio-queue-actions-column\s*\{ width: 35%; \}/)
+  assert.match(source, /studio-queue-table--all/)
+  assert.match(source, /studio-queue-table--feature/)
+  assert.match(source, /drawingJobs\.map[\s\S]*batch-action--view[\s\S]*batch-action--open[\s\S]*batch-action--danger/)
+  assert.match(styles, /\.drawing-job-actions \.batch-action--danger/)
+  assert.equal((source.match(/studioApi\.thumbnailUrl\(job\.id\)/g) || []).length, 2)
+  assert.match(source, /studioApi\.thumbnailUrl\(job\.id\)/)
+  assert.match(api, /thumbnailUrl: \(jobId: string\)/)
+  assert.match(route, /@router\.get\("\/api\/queue\/\{job_id\}\/thumbnail"\)/)
+  assert.match(route, /resolve_job_thumbnail_source/)
+  assert.match(route, /_existing_thumbnail/)
 })
 
 test('Batch file selection creates localized queue jobs immediately', async () => {
@@ -508,10 +530,12 @@ test('macOS Video Cleaner and subtitle export selects match Clone Recognition me
   }
 })
 
-test('Download and Video Cleaner detailed logs are bilingual, copyable, and clearable', async () => {
-  const [download, cleaner] = await Promise.all([
+test('Download and Video Cleaner detailed logs are bilingual, copyable, clearable, and use compact actions', async () => {
+  const [download, cleaner, downloadStyles, cleanerStyles] = await Promise.all([
     readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/VideoCleanerPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/download/DownloadStudio.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/VideoCleanerPage.css', import.meta.url), 'utf8'),
   ])
   for (const source of [download, cleaner]) {
     assert.match(source, /copyDetailLog/)
@@ -523,6 +547,26 @@ test('Download and Video Cleaner detailed logs are bilingual, copyable, and clea
   }
   assert.match(download, /downloadApi\.clearLogs/)
   assert.match(cleaner, /cleanerApi\.clearLogs/)
+  assert.match(download, /downloadOutput/)
+  assert.match(download, /className="dl-result-action"/)
+  assert.match(cleaner, /className="vc-result-action"/)
+  assert.match(downloadStyles, /\.dl-log-actions button\s*\{[\s\S]*?min-height: 24px;/)
+  assert.match(cleanerStyles, /\.vc-log-action\s*\{[\s\S]*?min-height: 24px;/)
+  assert.match(downloadStyles, /\.dl-result-action\s*\{[\s\S]*?min-height: 25px;[\s\S]*?white-space: nowrap;/)
+  assert.match(cleanerStyles, /\.vc-result-action\s*\{[\s\S]*?min-height: 25px;[\s\S]*?white-space: nowrap;/)
+})
+
+test('Download and Video Cleaner results separate APP reveal from WEB download', async () => {
+  const [download, cleaner, cleanerApi] = await Promise.all([
+    readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/VideoCleanerPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/cleaner/cleaner.api.ts', import.meta.url), 'utf8'),
+  ])
+  assert.match(download, /!isDesktopApp[\s\S]*?Tải xuống[\s\S]*?isDesktopApp[\s\S]*?Mở thư mục/)
+  assert.match(cleaner, /isDesktopApp \? [\s\S]*?cleanerApi\.reveal\(job\.id\)[\s\S]*?: [\s\S]*?downloadCleanerOutput\(job\.id\)/)
+  assert.match(cleaner, /t\('Tải xuống', 'Download'\)/)
+  assert.match(cleanerApi, /fileUrl\(id: string, download = false\)/)
+  assert.match(cleanerApi, /\?download=1/)
 })
 
 test('Download output folder hint stays separated from option checkboxes', async () => {

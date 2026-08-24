@@ -635,6 +635,22 @@
   color: #b91c1c;
 }
 
+.dl-result-action {
+  min-height: 25px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--primary, #2563eb) 28%, var(--border, #dbe3ee));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary, #2563eb) 7%, var(--card, #fff));
+  color: var(--primary, #2563eb);
+  font: 700 .66rem/1 inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dl-result-action:hover { border-color: var(--primary, #2563eb); background: var(--primary, #2563eb); color: #fff; }
+.dl-result-action.danger { border-color: color-mix(in srgb, #b91c1c 35%, var(--border, #dbe3ee)); background: #fff0f2; color: #b91c1c; }
+.dl-result-action.danger:hover { border-color: #b91c1c; background: #b91c1c; color: #fff; }
+.dl-result-action:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary, #2563eb) 55%, #fff); outline-offset: 2px; }
+
 .dl-log {
   margin-top: 10px;
   flex-shrink: 0;
@@ -664,13 +680,13 @@
 }
 
 .dl-log-actions button {
-  min-height: 26px;
-  padding: 3px 8px;
+  min-height: 24px;
+  padding: 2px 7px;
   border: 1px solid var(--border, #dbe3ee);
   border-radius: 6px;
   background: var(--card, #fff);
   color: var(--primary, #2563eb);
-  font: 650 .72rem/1 inherit;
+  font: 700 .68rem/1 inherit;
   cursor: pointer;
 }
 

@@ -219,8 +219,7 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
     const response = await fetch('/api/system/pick-folder', { method: 'POST' })
     if (!response.ok) throw new Error(await response.text())
     const picked = await response.json() as { path?: string }
-    if (picked.path) setOutputDir(picked.path)
-    return picked.path
+    return picked.path || undefined
   }
   const statusText = job?.status === 'done' ? t('Video đã sẵn sàng', 'Video ready')
     : job?.status === 'error' ? t('Không thể tạo video', 'Could not create video')

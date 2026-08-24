@@ -956,11 +956,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
         "/api/system/pick-folder",
         { method: "POST" },
       );
-      if (result.path) {
-        setSettings((current) => ({ ...current, outputDir: result.path! }));
-        return result.path;
-      }
-      return undefined;
+      return result.path || undefined;
     } catch (error) {
       if (
         error &&

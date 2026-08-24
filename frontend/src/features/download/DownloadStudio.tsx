@@ -313,7 +313,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
       .catch(() => {})
   }, [refresh])
 
-  async function applySavePath(next?: string) {
+  async function applySavePath(next?: string, syncState = true) {
     const path = (next ?? savePath).trim()
     if (!path) {
       setPathMsg('Nhập đường dẫn thư mục trên máy chạy backend.')
@@ -326,7 +326,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
       localStorage.setItem(LS_PATH, path)
       const r = await downloadApi.setRoot(path)
       const p = r.path || r.display || path
-      setSavePath(p)
+      if (syncState) setSavePath(p)
       localStorage.setItem(LS_PATH, p)
       setPathMsg('Đã lưu thư mục.')
     } catch (err) {
@@ -340,8 +340,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
     try {
       const picked = await downloadApi.pickFolder()
       if (picked.path) {
-        setSavePath(picked.path)
-        await applySavePath(picked.path)
+        await applySavePath(picked.path, false)
         return picked.path
       }
       return undefined // user cancelled the native picker
@@ -356,8 +355,9 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
     }
     const next = window.prompt('Dán đường dẫn thư mục lưu trên máy server:', savePath || '')
     if (next != null && next.trim()) {
-      setSavePath(next.trim())
-      await applySavePath(next.trim())
+      const path = next.trim()
+      await applySavePath(path, false)
+      return path
     }
   }
 
@@ -491,7 +491,6 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
     for (const j of jobs.slice(0, 12)) {
       lines.push(`[${j.id.slice(0, 6)}] ${j.title || j.url}`)
       for (const L of j.log || []) lines.push(`  ${L}`)
-      if (j.message) lines.push(`  → ${j.message}`)
     }
     return lines
   }, [jobs])
@@ -512,9 +511,20 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
     try {
       await downloadApi.clearLogs()
       setJobs((previous) => previous.map((job) => ({ ...job, log: [] })))
+      setLogOpen(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('Không thể xóa log', 'Could not clear logs'))
     }
+  }
+
+  function downloadOutput(url: string) {
+    const link = document.createElement('a')
+    link.href = url
+    link.download = ''
+    link.hidden = true
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
   }
 
   return (
@@ -788,11 +798,11 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                         <span className="dl-c-act">
                           {j.status === 'done' && (
                             <>
-                              {!isDesktopApp && <a className="dl-link" href={j.downloadUrl || downloadApi.fileUrl(j.id)} download title={t('Tải file theo tên đầu ra đã chọn', 'Download using the selected output name')}>{t('Tải xuống', 'Download')}</a>}
+                              {!isDesktopApp && <button type="button" className="dl-result-action" title={t('Tải file theo tên đầu ra đã chọn', 'Download using the selected output name')} onClick={() => downloadOutput(j.downloadUrl || downloadApi.fileUrl(j.id))}>{t('Tải xuống', 'Download')}</button>}
                               <button
                                 type="button"
-                                className="dl-link"
-                                title="Dùng video này trong tab Clone Video"
+                                className="dl-result-action"
+                                title={t('Dùng video này trong tab Clone Video', 'Use this video in Clone Video')}
                                 disabled={useBusyId === j.id}
                                 onClick={() => void onUse(j.id)}
                               >
@@ -800,37 +810,37 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                               </button>
                               {isDesktopApp && <button
                                 type="button"
-                                className="dl-link"
-                                title="Mở thư mục / chọn file trên máy server"
+                                className="dl-result-action"
+                                title={t('Mở thư mục chứa file trên máy tính', 'Open the output folder on this computer')}
                                 onClick={() => {
                                   void downloadApi.openFile(j.id).catch((err) => {
                                     setError(
-                                      err instanceof Error ? err.message : 'Không mở được file',
+                                      err instanceof Error ? err.message : t('Không mở được file', 'Could not open file'),
                                     )
                                   })
                                 }}
                               >
-                                Mở
+                                {t('Mở thư mục', 'Open folder')}
                               </button>}
                             </>
                           )}
                           {ACTIVE.has(j.status) && (
                             <button
                               type="button"
-                              className="dl-link danger"
+                              className="dl-result-action danger"
                               onClick={() => void onCancel(j.id)}
                             >
-                              Hủy
+                              {t('Hủy', 'Cancel')}
                             </button>
                           )}
                           {(j.status === 'done' || j.status === 'error') && (
                             <button
                               type="button"
-                              className="dl-link danger"
-                              title="Xóa job và file trên disk"
+                              className="dl-result-action danger"
+                              title={t('Xóa job và file trên ổ đĩa', 'Delete the job and file from disk')}
                               onClick={() => void onRemove(j.id)}
                             >
-                              Xóa
+                              {t('Xóa', 'Delete')}
                             </button>
                           )}
                         </span>

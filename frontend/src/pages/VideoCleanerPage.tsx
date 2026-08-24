@@ -333,13 +333,22 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
     }
   }
 
+  const downloadCleanerOutput = (jobId: string) => {
+    const link = document.createElement('a')
+    link.href = cleanerApi.fileUrl(jobId, true)
+    link.download = ''
+    link.hidden = true
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
+
   const opt = (key: keyof AdvancedOptions, val: unknown) => setOptions(o => ({ ...o, [key]: val }))
   const pickOutputDir = async () => {
     const response = await fetch('/api/system/pick-folder', { method: 'POST' })
     if (!response.ok) throw new Error(await response.text())
     const picked = await response.json() as { path?: string }
-    if (picked.path) setOutputDir(picked.path)
-    return picked.path
+    return picked.path || undefined
   }
 
   return (
@@ -589,19 +598,19 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                           <td>
                             {job.status === 'done' ? (
                               <div style={{ display: 'flex', gap: '10px' }}>
-                                <button className="vc-btn-link" type="button" title={t('Xem trước file kết quả', 'Preview output file')} onClick={() => setPreviewJobId(job.id)}>{t('Xem', 'Preview')}</button>
-                                <button className="vc-btn-link" type="button" title={t('Mở thư mục chứa file trên máy tính', 'Open the output folder')} onClick={async () => {
+                                <button className="vc-result-action" type="button" title={t('Xem trước file kết quả', 'Preview output file')} onClick={() => setPreviewJobId(job.id)}>{t('Xem', 'Preview')}</button>
+                                {isDesktopApp ? <button className="vc-result-action" type="button" title={t('Mở thư mục chứa file trên máy tính', 'Open the output folder')} onClick={async () => {
                                   try {
                                     await cleanerApi.reveal(job.id)
                                   } catch (e: any) {
                                     alert(t(`Lỗi mở file: ${e.message}`, `Could not open file: ${e.message}`))
                                   }
-                                }}>{t('Mở thư mục', 'Open folder')}</button>
-                                <button className="vc-btn-link" type="button" style={{ color: '#dc2626' }} onClick={() => void deleteJob(job.id)}>{t('Xóa', 'Delete')}</button>
+                                }}>{t('Mở thư mục', 'Open folder')}</button> : <button className="vc-result-action" type="button" title={t('Tải file kết quả', 'Download output file')} onClick={() => downloadCleanerOutput(job.id)}>{t('Tải xuống', 'Download')}</button>}
+                                <button className="vc-result-action danger" type="button" onClick={() => void deleteJob(job.id)}>{t('Xóa', 'Delete')}</button>
                               </div>
                             ) : ACTIVE_STATES.has(job.status) ? (
                               <div style={{ display: 'flex', gap: '10px' }}>
-                                <button className="vc-btn-link" type="button" style={{ color: '#ef4444' }} onClick={async () => {
+                                <button className="vc-result-action danger" type="button" onClick={async () => {
                                   try {
                                     await cleanerApi.cancel(job.id)
                                   } catch (e: any) {
@@ -610,7 +619,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                                 }}>Hủy</button>
                               </div>
                             ) : job.status === 'error' || job.status === 'cancelled' ? (
-                              <button className="vc-btn-link" type="button" style={{ color: '#dc2626' }} onClick={() => void deleteJob(job.id)}>{t('Xóa', 'Delete')}</button>
+                              <button className="vc-result-action danger" type="button" onClick={() => void deleteJob(job.id)}>{t('Xóa', 'Delete')}</button>
                             ) : (
                               '—'
                             )}
@@ -627,10 +636,10 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                 <div className="vc-log-header" onClick={() => setLogExpanded(!logExpanded)}>
                   <span>{t('Log chi tiết', 'Detailed log')}</span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-                    <button className="vc-btn-link" type="button" onClick={(event) => { event.stopPropagation(); void copyDetailLog() }}>
+                    <button className="vc-log-action" type="button" onClick={(event) => { event.stopPropagation(); void copyDetailLog() }}>
                       {t('Sao chép', 'Copy')}
                     </button>
-                    <button className="vc-btn-link vc-log-clear" type="button" disabled={!detailLog} onClick={(event) => { event.stopPropagation(); void clearDetailLog() }}>
+                    <button className="vc-log-action vc-log-clear" type="button" disabled={!detailLog} onClick={(event) => { event.stopPropagation(); void clearDetailLog() }}>
                       {t('Xóa', 'Clear')}
                     </button>
                     <SvgChevron open={logExpanded} />
