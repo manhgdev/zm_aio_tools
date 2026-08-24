@@ -31,7 +31,7 @@ test('English catalog has no empty entries', () => {
   assert.deepEqual(missing, [])
 })
 
-test('desktop update check uses bilingual in-app dialog and verified updater API', async () => {
+test('desktop update check uses bilingual in-app dialog and platform updater API', async () => {
   const [config, api, system] = await Promise.all([
     readFile(new URL('../frontend/src/features/configuration/ConfigModal.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/features/project/project.api.ts', import.meta.url), 'utf8'),
@@ -52,8 +52,7 @@ test('desktop update check uses bilingual in-app dialog and verified updater API
   assert.match(system, /\/api\/system\/update\/check/)
   assert.match(system, /\/api\/system\/update\/install/)
   assert.match(system, /\/api\/system\/update\/status/)
-  assert.match(system, /_release_checksum/)
-  assert.match(system, /Checksum gói cập nhật không khớp/)
+  assert.match(system, /_desktop_platform_asset_suffix/)
 })
 
 test('interface locale is persisted through the app API', async () => {

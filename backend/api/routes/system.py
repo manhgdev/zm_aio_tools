@@ -1,7 +1,6 @@
 """Domain API routes."""
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -149,13 +148,6 @@ def _release_asset(release: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _release_checksum(asset: dict[str, Any] | None) -> str | None:
-    """GitHub supplies an immutable sha256 digest for each release asset."""
-    digest = str((asset or {}).get("digest") or "")
-    match = re.fullmatch(r"sha256:([a-fA-F0-9]{64})", digest)
-    return match.group(1).lower() if match else None
-
-
 def _update_supported() -> bool:
     """The browser/dev server must never replace a local development checkout."""
     return os.environ.get("VIDEO_CLONE_DESKTOP") == "1" and bool(getattr(sys, "frozen", False))
@@ -171,28 +163,22 @@ def _set_update_state(**values: Any) -> None:
         _UPDATE_STATE.update(values)
 
 
-def _download_update(asset: dict[str, Any], expected: str, updates: Path, version: str) -> Path:
+def _download_update(asset: dict[str, Any], updates: Path, version: str) -> Path:
     name = str(asset.get("name") or "")
     url = str(asset.get("browser_download_url") or "")
     if not name or not url:
         raise RuntimeError("Release không có gói cài đặt phù hợp")
     target = updates / name
     partial = target.with_suffix(target.suffix + ".part")
-    digest = hashlib.sha256()
     _set_update_state(phase="downloading", progress=0, message="Đang tải bản cập nhật…", assetName=name, latestVersion=version)
     with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as output:
         total = int(response.headers.get("Content-Length") or 0)
         received = 0
         while chunk := response.read(1024 * 1024):
             output.write(chunk)
-            digest.update(chunk)
             received += len(chunk)
             progress = min(99, int(received * 100 / total)) if total else 0
             _set_update_state(progress=progress)
-    actual = digest.hexdigest().lower()
-    if actual != expected:
-        partial.unlink(missing_ok=True)
-        raise RuntimeError("Checksum gói cập nhật không khớp")
     partial.replace(target)
     return target
 
@@ -660,16 +646,14 @@ def api_update_check():
         release = _latest_release()
         tag = str(release.get("tag_name") or "")
         asset = _release_asset(release)
-        checksum = _release_checksum(asset)
         return {
             "desktop": True,
             "supported": _update_supported(),
             "currentVersion": _desktop_version(),
             "latestVersion": tag.lstrip("v"),
             "releaseAvailable": _version_key(tag) > _version_key(_desktop_version()),
-            "updateAvailable": bool(asset and checksum and _version_key(tag) > _version_key(_desktop_version())),
+            "updateAvailable": bool(asset and _version_key(tag) > _version_key(_desktop_version())),
             "assetAvailable": bool(asset),
-            "checksumAvailable": bool(checksum),
             "assetName": str(asset.get("name") or "") if asset else "",
             "releaseUrl": str(release.get("html_url") or ""),
             "notes": str(release.get("body") or ""),
@@ -692,14 +676,13 @@ def api_update_install():
             release = _latest_release()
             tag = str(release.get("tag_name") or "")
             asset = _release_asset(release)
-            checksum = _release_checksum(asset)
-            if not asset or not checksum or _version_key(tag) <= _version_key(_desktop_version()):
+            if not asset or _version_key(tag) <= _version_key(_desktop_version()):
                 _set_update_state(phase="complete", progress=100, message="Đã là phiên bản mới nhất")
                 return
             updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
             updates.mkdir(parents=True, exist_ok=True)
-            package = _download_update(asset, checksum, updates, tag.lstrip("v"))
-            _set_update_state(phase="ready", progress=100, message="Đã tải và xác minh gói cập nhật", packagePath=str(package))
+            package = _download_update(asset, updates, tag.lstrip("v"))
+            _set_update_state(phase="ready", progress=100, message="Đã tải gói cập nhật", packagePath=str(package))
         except Exception as exc:
             _set_update_state(phase="error", error=str(exc), message="Không thể tải bản cập nhật")
         finally:
@@ -722,7 +705,7 @@ def api_update_apply():
     if state["running"]:
         raise HTTPException(409, "Gói cập nhật vẫn đang tải")
     if state["phase"] != "ready" or not state["packagePath"]:
-        raise HTTPException(400, "Chưa có gói cập nhật đã xác minh")
+        raise HTTPException(400, "Chưa có gói cập nhật đã tải")
     package = Path(str(state["packagePath"]))
     if not package.is_file():
         raise HTTPException(404, "Không tìm thấy gói cập nhật đã tải")

@@ -13,17 +13,15 @@ def test_update_selects_only_matching_macos_architecture():
     )
     assert system._desktop_platform_asset_suffix("darwin", "arm64") == "-macos-arm64.pkg"
     assert system._desktop_platform_asset_suffix("darwin", "x86_64") == "-macos-x64.pkg"
-    assert system._release_checksum(None) is None
 
 
-def test_windows_asset_and_checksum_are_paired(monkeypatch):
+def test_windows_asset_is_selected_for_windows(monkeypatch):
     release = _release(
-        {"name": "ZM_AIO_TOOL_v3.5.7-windows-x64.zip", "digest": "sha256:" + "a" * 64},
+        {"name": "ZM_AIO_TOOL_v3.5.7-windows-x64.zip"},
     )
     monkeypatch.setattr(system.sys, "platform", "win32")
     asset = system._release_asset(release)
     assert asset and asset["name"].endswith("-windows-x64.zip")
-    assert system._release_checksum(asset) == "a" * 64
 
 
 def test_update_rejects_asset_with_a_different_version(monkeypatch):
@@ -32,7 +30,7 @@ def test_update_rejects_asset_with_a_different_version(monkeypatch):
     assert system._release_asset(release) is None
 
 
-def test_update_check_needs_a_matching_checksum(monkeypatch):
+def test_update_check_accepts_matching_platform_asset_without_checksum(monkeypatch):
     monkeypatch.setenv("VIDEO_CLONE_DESKTOP", "1")
     monkeypatch.setattr(system.sys, "frozen", True, raising=False)
     monkeypatch.setattr(system.sys, "platform", "win32")
@@ -40,12 +38,11 @@ def test_update_check_needs_a_matching_checksum(monkeypatch):
     monkeypatch.setattr(system, "_latest_release", lambda: _release({"name": "ZM_AIO_TOOL_v3.5.7-windows-x64.zip"}))
     result = system.api_update_check()
     assert result["assetAvailable"] is True
-    assert result["checksumAvailable"] is False
     assert result["releaseAvailable"] is True
-    assert result["updateAvailable"] is False
+    assert result["updateAvailable"] is True
 
 
-def test_download_update_rejects_bad_checksum(monkeypatch, tmp_path):
+def test_download_update_writes_the_release_asset(monkeypatch, tmp_path):
     payload = b"desktop-package"
 
     class Response(io.BytesIO):
@@ -59,12 +56,8 @@ def test_download_update_rejects_bad_checksum(monkeypatch, tmp_path):
 
     monkeypatch.setattr(system.urllib.request, "urlopen", lambda *_args, **_kwargs: Response(payload))
     asset = {"name": "app.zip", "browser_download_url": "https://example.invalid/app.zip"}
-    try:
-        system._download_update(asset, "0" * 64, tmp_path, "3.5.7")
-    except RuntimeError as exc:
-        assert "Checksum" in str(exc)
-    else:
-        raise AssertionError("bad checksum must fail")
+    target = system._download_update(asset, tmp_path, "3.5.9")
+    assert target.read_bytes() == payload
     assert not (tmp_path / "app.zip.part").exists()
 
 

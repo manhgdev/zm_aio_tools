@@ -151,7 +151,6 @@ export const api = {
       releaseAvailable?: boolean
       updateAvailable: boolean
       assetAvailable?: boolean
-      checksumAvailable?: boolean
       assetName?: string
       releaseUrl?: string
       notes?: string

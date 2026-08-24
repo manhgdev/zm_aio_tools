@@ -195,7 +195,7 @@ export default function ConfigModal({
           kind: 'info',
           title: result.releaseAvailable ? t('Chưa có gói phù hợp', 'No compatible package yet') : t('Đã là phiên bản mới nhất', 'You are up to date'),
           detail: result.releaseAvailable
-            ? t('Bản phát hành chưa có gói hoặc checksum đúng cho thiết bị này.', 'The release has no package or checksum for this device yet.')
+            ? t('Bản phát hành chưa có gói đúng cho thiết bị này.', 'The release has no package for this device yet.')
             : t(`Bạn đang dùng v${result.currentVersion}.`, `You are using v${result.currentVersion}.`),
         })
         return
@@ -203,7 +203,7 @@ export default function ConfigModal({
       setUpdateDialog({
         kind: 'available',
         title: t(`Đã có bản v${result.latestVersion}`, `Version ${result.latestVersion} is available`),
-        detail: t('Gói đúng nền tảng sẽ được tải và xác minh trước khi cài.', 'The platform-specific package will be downloaded and verified before installation.'),
+        detail: t('Gói đúng nền tảng sẽ được tải trước khi cài.', 'The platform-specific package will be downloaded before installation.'),
       })
     } catch (error) {
       setUpdateDialog({
@@ -219,7 +219,7 @@ export default function ConfigModal({
   const downloadUpdate = async () => {
     try {
       await api.installAppUpdate()
-      setUpdateDialog({ kind: 'downloading', title: t('Đang tải cập nhật', 'Downloading update'), detail: t('Đang xác minh gói cài đặt…', 'Verifying the installation package…'), progress: 0 })
+      setUpdateDialog({ kind: 'downloading', title: t('Đang tải cập nhật', 'Downloading update'), detail: t('Đang tải gói cài đặt…', 'Downloading the installation package…'), progress: 0 })
     } catch (error) {
       setUpdateDialog({ kind: 'error', title: t('Không thể tải cập nhật', 'Could not download update'), detail: error instanceof Error ? error.message : t('Vui lòng thử lại sau.', 'Please try again later.') })
     }
@@ -245,9 +245,9 @@ export default function ConfigModal({
         if (state.phase === 'error') {
           setUpdateDialog({ kind: 'error', title: t('Không thể tải cập nhật', 'Could not download update'), detail: state.error || state.message })
         } else if (state.phase === 'ready') {
-          setUpdateDialog({ kind: 'ready', title: t('Đã tải và xác minh', 'Downloaded and verified'), detail: t('Gói cập nhật đã sẵn sàng để cài.', 'The update package is ready to install.'), progress: 100 })
+          setUpdateDialog({ kind: 'ready', title: t('Đã tải xong', 'Download complete'), detail: t('Gói cập nhật đã sẵn sàng để cài.', 'The update package is ready to install.'), progress: 100 })
         } else {
-          setUpdateDialog({ kind: 'downloading', title: t('Đang tải cập nhật', 'Downloading update'), detail: t('Đang xác minh gói cài đặt…', 'Verifying the installation package…'), progress: state.progress })
+          setUpdateDialog({ kind: 'downloading', title: t('Đang tải cập nhật', 'Downloading update'), detail: t('Đang tải gói cài đặt…', 'Downloading the installation package…'), progress: state.progress })
         }
       } catch (error) {
         if (!cancelled) setUpdateDialog({ kind: 'error', title: t('Mất kết nối cập nhật', 'Update connection failed'), detail: error instanceof Error ? error.message : t('Vui lòng thử lại sau.', 'Please try again later.') })
