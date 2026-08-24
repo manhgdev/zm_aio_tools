@@ -103,6 +103,20 @@ jobs:
           exit 0
           SCRIPT
           chmod 755 "$scripts/preinstall"
+          cat > "$scripts/postinstall" <<'SCRIPT'
+          #!/bin/bash
+          set -u
+          app="/Applications/ZM AIO TOOL.app"
+          console_user="$(/usr/bin/stat -f '%Su' /dev/console)"
+          if [ -d "$app" ] && [ "$console_user" != "root" ] && [ "$console_user" != "loginwindow" ]; then
+            user_id="$(/usr/bin/id -u "$console_user" || true)"
+            if [ -n "$user_id" ]; then
+              /bin/launchctl asuser "$user_id" /usr/bin/open "$app" >/dev/null 2>&1 || true
+            fi
+          fi
+          exit 0
+          SCRIPT
+          chmod 755 "$scripts/postinstall"
           pkg="build_app/release/ZM_AIO_TOOL_v${version}-macos-arm64.pkg"
           pkgbuild --component "$payload" --scripts "$scripts" --install-location /Applications "$pkg"
           echo "app=$app" >> "$GITHUB_OUTPUT"

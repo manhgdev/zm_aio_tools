@@ -185,6 +185,8 @@ def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     assert 'close_running_bundle "/Applications/ZM AIO TOOL.app"' in workflow
     assert 'local executable="$1/Contents/MacOS/ZM AIO TOOL"' in workflow
     assert '/bin/kill -TERM $pids || true' in workflow
+    assert 'cat > "$scripts/postinstall"' in workflow
+    assert '/bin/launchctl asuser "$user_id" /usr/bin/open "$app"' in workflow
     assert 'for legacy in /Applications/ZM_AIO_TOOL_v*.app; do' in workflow
     assert 'if [ -d "$legacy" ]; then' in workflow
     assert '/bin/rm -rf "$legacy" || true' in workflow
