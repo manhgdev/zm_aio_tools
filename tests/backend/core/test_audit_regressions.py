@@ -177,6 +177,15 @@ def test_desktop_bundle_exposes_embedded_ytdlp_cli() -> None:
     assert "yt-dlp embedded CLI" in check
 
 
+def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
+    """A stable payload prevents every update from adding another .app."""
+    workflow = Path(".github/workflows/release-macos.yml").read_text(encoding="utf-8")
+    assert 'payload="$stage/ZM AIO TOOL.app"' in workflow
+    assert 'pkgbuild --component "$payload" --scripts "$scripts" --install-location /Applications "$pkg"' in workflow
+    assert 'for legacy in /Applications/ZM_AIO_TOOL_v*.app; do' in workflow
+    assert '[ -d "$legacy" ] && rm -rf "$legacy"' in workflow
+
+
 def test_render_delete_is_safe_when_the_output_disappears() -> None:
     source = Path("backend/api/routes/rendered.py").read_text(encoding="utf-8")
     assert "path.unlink(missing_ok=True)" in source

@@ -62,9 +62,26 @@ jobs:
             exit 1
           }
           version="$(basename "$app" | sed -E 's/^ZM_AIO_TOOL_v|\.app$//g')"
-          codesign --force --deep --sign - "$app"
+          stage="build_app/release/pkg-stage"
+          payload="$stage/ZM AIO TOOL.app"
+          scripts="$stage/scripts"
+          rm -rf "$stage"
+          mkdir -p "$scripts"
+          ditto "$app" "$payload"
+          # The installed bundle must keep a stable name; versioned bundle
+          # names make Installer leave every previous app beside the new one.
+          codesign --force --deep --sign - "$payload"
+          cat > "$scripts/preinstall" <<'SCRIPT'
+          #!/bin/bash
+          set -eu
+          # Clean only legacy versioned bundles produced by earlier releases.
+          for legacy in /Applications/ZM_AIO_TOOL_v*.app; do
+            [ -d "$legacy" ] && rm -rf "$legacy"
+          done
+          SCRIPT
+          chmod 755 "$scripts/preinstall"
           pkg="build_app/release/ZM_AIO_TOOL_v${version}-macos-arm64.pkg"
-          pkgbuild --component "$app" --install-location /Applications "$pkg"
+          pkgbuild --component "$payload" --scripts "$scripts" --install-location /Applications "$pkg"
           echo "app=$app" >> "$GITHUB_OUTPUT"
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
 
