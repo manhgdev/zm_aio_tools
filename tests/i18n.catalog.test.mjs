@@ -559,6 +559,13 @@ test('Flow creation falls back to the connected account when an old saved label 
   assert.match(source, /const account = selectedFlowAccount\(accounts, settings\.account\);/)
 })
 
+test('Flow default account selection updates the account cards immediately', async () => {
+  const source = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /const setDefaultAccount = async \(id: string\)/)
+  assert.match(source, /account\.id === saved\.id\s*\? \{ \.\.\.saved, isDefault: true \}\s*:\s*\{ \.\.\.account, isDefault: false \}/s)
+  assert.match(source, /onClick=\{\(\) => void setDefaultAccount\(account\.id\)\}/)
+})
+
 test('Flow manual prompt provides bilingual paste and clear actions', async () => {
   const [source, styles] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),

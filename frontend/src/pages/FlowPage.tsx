@@ -912,11 +912,11 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       ))),
     });
   };
-  const setDefaultAccount = (id: string) => {
+  const setDefaultAccount = async (id: string) => {
     const selected = accounts.find((account) => account.id === id);
-    if (selected) {
-      setSettings((current) => ({ ...current, account: selected.label }));
-      void flowRequest(`/api/flow/accounts/${id}`, {
+    if (!selected) return;
+    try {
+      const saved = await flowRequest<FlowAccount>(`/api/flow/accounts/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -926,9 +926,16 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
           projectId: selected.projectId || "",
           isDefault: true,
         }),
-      }).catch((error) =>
-        setApiError(error instanceof Error ? error.message : String(error)),
-      );
+      });
+      setAccounts((current) => current.map((account) =>
+        account.id === saved.id
+          ? { ...saved, isDefault: true }
+          : { ...account, isDefault: false },
+      ));
+      setSettings((current) => ({ ...current, account: saved.label }));
+      setApiError("");
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : String(error));
     }
   };
   const connectAccount = (account: FlowAccount) =>
@@ -1295,7 +1302,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setDefaultAccount(account.id)}
+                        onClick={() => void setDefaultAccount(account.id)}
                       >
                         {t("Đặt mặc định", "Set default")}
                       </button>
