@@ -1958,6 +1958,13 @@ html.dark .tts-wave-box {
   gap: 2px;
 }
 
+/* Action menus live in the final history row, so open toward available space
+   above the trigger instead of forcing the user to scroll to reach them. */
+.tts-history .tts-dl-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 .tts-dl-menu button {
   width: 100% !important;
   height: auto !important;
@@ -1994,6 +2001,7 @@ html.dark .tts-wave-box {
 
 .tts-dl-submenu {
   top: 0;
+  bottom: auto;
   right: calc(100% + 4px);
   min-width: 190px;
 }
