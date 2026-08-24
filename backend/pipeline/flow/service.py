@@ -151,7 +151,9 @@ class FlowService:
             # artifacts belonging to this job, then remove the folder if empty.
             for raw_output in job.get("outputs") or []:
                 try:
-                    Path(str(raw_output)).unlink(missing_ok=True)
+                    output = Path(str(raw_output))
+                    if output.is_file():
+                        output.unlink()
                 except OSError:
                     pass
             try:

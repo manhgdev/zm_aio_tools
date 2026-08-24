@@ -114,12 +114,14 @@ const CREATE_KIND_KEY = "zm-flow-veo:create-kind:v1";
 const IMAGE_MODE_KEY = "zm-flow-veo:image-mode:v1";
 
 type BrowserFileHandle = {
+  getFile: () => Promise<File>;
   createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
 };
 type BrowserDirectoryHandle = {
   name: string;
   getDirectoryHandle: (name: string, options?: { create?: boolean }) => Promise<BrowserDirectoryHandle>;
   getFileHandle: (name: string, options?: { create?: boolean }) => Promise<BrowserFileHandle>;
+  removeEntry: (name: string) => Promise<void>;
   queryPermission?: (descriptor?: { mode: "readwrite" }) => Promise<"granted" | "denied" | "prompt">;
 };
 type BrowserDirectoryWindow = Window & {
@@ -159,6 +161,16 @@ async function loadWebOutputRoot(key: string) {
 
 function flowOutputFolderName(value: string) {
   return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "").slice(0, 96) || "results";
+}
+
+async function flowOutputDirectory(root: BrowserDirectoryHandle, outputFolder: string, create: boolean) {
+  const appRoot = root.name === "flow" || root.name === "ZM_AIO_TOOL"
+    ? root
+    : await root.getDirectoryHandle("ZM_AIO_TOOL", { create });
+  const flowRoot = root.name === "flow"
+    ? root
+    : await appRoot.getDirectoryHandle("flow", { create });
+  return flowRoot.getDirectoryHandle(flowOutputFolderName(outputFolder), { create });
 }
 
 function readText(key: string, fallback: string) {
@@ -273,17 +285,30 @@ async function writeFlowOutputToDirectory(
   const sourceName = String(job.outputs?.[outputIndex] || "").split(/[\\/]/).pop();
   const extension = job.kind === "video" ? "mp4" : "png";
   const filename = sourceName || `flow_${job.id}_${outputIndex + 1}.${extension}`;
-  const appRoot = root.name === "flow" || root.name === "ZM_AIO_TOOL"
-    ? root
-    : await root.getDirectoryHandle("ZM_AIO_TOOL", { create: true });
-  const flowRoot = root.name === "flow"
-    ? root
-    : await appRoot.getDirectoryHandle("flow", { create: true });
-  const target = await flowRoot.getDirectoryHandle(flowOutputFolderName(outputFolder), { create: true });
+  const target = await flowOutputDirectory(root, outputFolder, true);
   const file = await target.getFileHandle(filename, { create: true });
   const writable = await file.createWritable();
   await writable.write(await response.blob());
   await writable.close();
+}
+
+async function deleteFlowOutputFromDirectory(
+  job: FlowJob,
+  outputIndex: number,
+  root: BrowserDirectoryHandle,
+) {
+  const sourceName = String(job.outputs?.[outputIndex] || "").split(/[\\/]/).pop();
+  if (!sourceName) return false;
+  try {
+    const target = await flowOutputDirectory(root, job.settings.outputDir, false);
+    const file = await target.getFileHandle(sourceName);
+    await file.getFile();
+    await target.removeEntry(sourceName);
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && "name" in error && error.name === "NotFoundError") return false;
+    throw error;
+  }
 }
 
 function normalizeFlowJobs(
@@ -824,13 +849,26 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     void flowRequest<Record<string, unknown>>(`/api/flow/jobs/${id}/retry`, { method: "POST" })
       .then(updateJob)
       .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+  const deleteWebFlowOutputs = async (job: FlowJob) => {
+    const root = webOutputRootRef.current;
+    if (isDesktopApp || !root) return;
+    for (let outputIndex = 0; outputIndex < (job.outputs?.length || 0); outputIndex += 1) {
+      await deleteFlowOutputFromDirectory(job, outputIndex, root);
+    }
+  };
   const deleteJob = (id: string) => {
+    const job = jobs.find((item) => item.id === id);
     setConfirmAction({
       message: t("Xóa job này khỏi danh sách?", "Delete this job from the list?"),
       confirmLabel: t("Xóa job", "Delete job"),
-      run: () => void flowRequest(`/api/flow/jobs/${id}`, { method: "DELETE" })
-        .then(() => setJobs((current) => current.filter((item) => item.id !== id)))
-        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+      run: () => void (async () => {
+        await flowRequest(`/api/flow/jobs/${id}`, { method: "DELETE" });
+        if (job) await deleteWebFlowOutputs(job);
+        setJobs((current) => current.filter((item) => item.id !== id));
+      })().catch(() => setApiError(t(
+        "Không thể xóa đầy đủ job và file output của nó.",
+        "Could not fully delete the job and its output files.",
+      ))),
     });
   };
   const cancelAllJobs = () => {
@@ -852,12 +890,15 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     setConfirmAction({
       message: t(`Xóa toàn bộ ${jobs.length} job khỏi hàng đợi?`, `Delete all ${jobs.length} jobs from the queue?`),
       confirmLabel: t("Xóa tất cả", "Delete all"),
-      run: () => void flowRequest<{ jobs: Array<Record<string, unknown>> }>("/api/flow/jobs", { method: "DELETE" })
-        .then(({ jobs: rows }) => {
-          setJobs(normalizeFlowJobs(rows, accounts));
-          setApiError("");
-        })
-        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+      run: () => void (async () => {
+        const { jobs: rows } = await flowRequest<{ jobs: Array<Record<string, unknown>> }>("/api/flow/jobs", { method: "DELETE" });
+        for (const job of jobs) await deleteWebFlowOutputs(job);
+        setJobs(normalizeFlowJobs(rows, accounts));
+        setApiError("");
+      })().catch(() => setApiError(t(
+        "Không thể xóa đầy đủ hàng đợi và file output.",
+        "Could not fully delete the queue and its output files.",
+      ))),
     });
   };
   const setDefaultAccount = (id: string) => {
