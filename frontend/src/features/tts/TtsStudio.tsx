@@ -208,6 +208,7 @@ export default function TtsStudio({
   const [isPlaying, setIsPlaying] = useState(false)
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [historyPage, setHistoryPage] = useState(1)
+  const [playingHistoryId, setPlayingHistoryId] = useState<string | null>(null)
   /** Menu chọn định dạng tải trong cột Hành động */
   const [downloadMenuId, setDownloadMenuId] = useState<string | null>(null)
   const [historySrtMenuId, setHistorySrtMenuId] = useState<string | null>(null)
@@ -245,6 +246,21 @@ export default function TtsStudio({
   const dashRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null)
+  const historyAudioRef = useRef<HTMLAudioElement | null>(null)
+
+  function stopHistoryPlayback() {
+    const player = historyAudioRef.current
+    if (player) {
+      player.onended = null
+      player.onerror = null
+      player.pause()
+      player.currentTime = 0
+      historyAudioRef.current = null
+    }
+    setPlayingHistoryId(null)
+  }
+
+  useEffect(() => () => stopHistoryPlayback(), [])
 
   function isVoiceFavorite(v: Voice) {
     if (v.favorite) return true
@@ -590,6 +606,14 @@ export default function TtsStudio({
   /** Phát trong player / Audio() — không mở tab mới, không nhảy giao diện. */
   function playHistoryItem(h: HistoryItem) {
     if (!h.audioUrl) return
+    if (playingHistoryId === h.id) {
+      stopHistoryPlayback()
+      return
+    }
+    stopHistoryPlayback()
+    audioRef.current?.pause()
+    voicePreviewRef.current?.pause()
+    setPreviewingVoiceId(null)
     const t = Date.now()
     const base = h.audioUrl.replace(/([?&])download=1/, '').replace(/([?&])t=\d+/, '')
     const inlineUrl = `${base}${base.includes('?') ? '&' : '?'}t=${t}`
@@ -597,21 +621,20 @@ export default function TtsStudio({
     setAudioUrl(inlineUrl)
     setDuration(h.duration || 0)
     if (h.mp3Url) setMp3Url(downloadWavHref(h.mp3Url) || null)
-    // Dashboard: dùng <audio> panel 5; tab lịch sử: phát ẩn không đổi section
-    if (isFullDash) {
-      requestAnimationFrame(() => {
-        const el = audioRef.current
-        if (!el) return
-        el.load()
-        void el.play().catch(() => {})
-      })
-      return
-    }
     try {
-      const a = new Audio(inlineUrl)
-      void a.play().catch(() => {})
+      const player = new Audio(inlineUrl)
+      historyAudioRef.current = player
+      setPlayingHistoryId(h.id)
+      const reset = () => {
+        if (historyAudioRef.current !== player) return
+        historyAudioRef.current = null
+        setPlayingHistoryId(null)
+      }
+      player.onended = reset
+      player.onerror = reset
+      void player.play().catch(reset)
     } catch {
-      /* ignore */
+      setPlayingHistoryId(null)
     }
   }
 
@@ -1085,8 +1108,12 @@ export default function TtsStudio({
         setHistorySrtMenuId(null)
       }}
       onToggleSrtMenu={(id) => setHistorySrtMenuId((cur) => (cur === id ? null : id))}
+      playingHistoryId={playingHistoryId}
       onPlay={playHistoryItem}
-      onDelete={(h) => { void api.ttsStudioDelete(h.id).then(loadHistory) }}
+      onDelete={(h) => {
+        if (playingHistoryId === h.id) stopHistoryPlayback()
+        void api.ttsStudioDelete(h.id).then(loadHistory)
+      }}
       isDesktopApp={isDesktopApp}
       onReveal={(id, kind, style) => {
         setDownloadMenuId(null)

@@ -6,7 +6,7 @@ import { engineLabel, voiceDisplayName } from './lib/voiceDisplay'
 import { HISTORY_MAX, HISTORY_PAGE_SIZE, fmtDur } from './lib/format'
 import { SRT_STYLE_OPTIONS } from './lib/srt'
 import { historyDownloadUrl } from './lib/download'
-import { IconDownload, IconFile, IconPlay, IconTrash } from './TtsIcons'
+import { IconDownload, IconFile, IconPlay, IconStop, IconTrash } from './TtsIcons'
 
 type Props = {
   history: HistoryItem[]
@@ -18,6 +18,7 @@ type Props = {
   historySrtMenuId: string | null
   onToggleDownloadMenu: (id: string) => void
   onToggleSrtMenu: (id: string) => void
+  playingHistoryId: string | null
   onPlay: (h: HistoryItem) => void
   onDelete: (h: HistoryItem) => void
   isDesktopApp?: boolean
@@ -36,6 +37,7 @@ export default function TtsHistoryPanel({
   historySrtMenuId,
   onToggleDownloadMenu,
   onToggleSrtMenu,
+  playingHistoryId,
   onPlay,
   onDelete,
   isDesktopApp = false,
@@ -81,7 +83,9 @@ export default function TtsHistoryPanel({
                 <td colSpan={10} className="tts-empty">Chưa có lịch sử — tạo giọng nói để bắt đầu</td>
               </tr>
             )}
-            {pageItems.map((h, i) => (
+            {pageItems.map((h, i) => {
+              const isPlaying = playingHistoryId === h.id
+              return (
               <tr key={h.id}>
                 <td>{offset + i + 1}</td>
                 <td style={{ fontWeight: 600 }}>{h.title || h.id}</td>
@@ -111,8 +115,14 @@ export default function TtsHistoryPanel({
                 <td>
                   <div className="tts-act" data-dl-menu>
                     {h.audioUrl && (
-                      <button type="button" title="Nghe" onClick={() => onPlay(h)}>
-                        <IconPlay size={12} />
+                      <button
+                        type="button"
+                        className={isPlaying ? 'is-playing' : undefined}
+                        title={isPlaying ? t('Dừng phát', 'Stop playback') : t('Nghe', 'Play')}
+                        aria-label={isPlaying ? t('Dừng phát', 'Stop playback') : t('Nghe', 'Play')}
+                        onClick={() => onPlay(h)}
+                      >
+                        {isPlaying ? <IconStop size={12} /> : <IconPlay size={12} />}
                       </button>
                     )}
                     {h.audioUrl && (
@@ -211,7 +221,8 @@ export default function TtsHistoryPanel({
                   </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

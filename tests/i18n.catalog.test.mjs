@@ -616,6 +616,21 @@ test('TTS history action menu layers above its pager', async () => {
   assert.match(styles, /\.tts-dl-submenu\s*\{\s*top: 0;\s*bottom: auto;/s)
 })
 
+test('TTS history playback toggles a bilingual stop action while audio is playing', async () => {
+  const [studio, history] = await Promise.all([
+    readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/tts/TtsHistoryPanel.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(studio, /const \[playingHistoryId, setPlayingHistoryId\] = useState<string \| null>\(null\)/)
+  assert.match(studio, /function stopHistoryPlayback\(\)/)
+  assert.match(studio, /if \(playingHistoryId === h\.id\)/)
+  assert.match(studio, /player\.onended = reset/)
+  assert.match(history, /playingHistoryId: string \| null/)
+  assert.match(history, /IconStop/)
+  assert.match(history, /t\('Dừng phát', 'Stop playback'\)/)
+  assert.match(history, /\{isPlaying \? <IconStop size=\{12\} \/> : <IconPlay size=\{12\} \/>\}/)
+})
+
 test('Flow manual prompt provides bilingual paste and clear actions', async () => {
   const [source, styles] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
