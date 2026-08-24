@@ -74,11 +74,29 @@ jobs:
           cat > "$scripts/preinstall" <<'SCRIPT'
           #!/bin/bash
           set -u
+          close_running_bundle() {
+            local executable="$1/Contents/MacOS/ZM AIO TOOL"
+            local pids
+            pids="$(/usr/bin/pgrep -f "$executable" || true)"
+            if [ -n "$pids" ]; then
+              /bin/kill -TERM $pids || true
+              for _ in 1 2 3 4 5; do
+                /usr/bin/pgrep -f "$executable" >/dev/null || break
+                /bin/sleep 1
+              done
+            fi
+          }
+
+          # Stop the existing app first. Installer otherwise replaces files on
+          # disk while the old process remains open in the user's session.
+          close_running_bundle "/Applications/ZM AIO TOOL.app"
+
           # Clean only legacy versioned bundles produced by earlier releases.
           for legacy in /Applications/ZM_AIO_TOOL_v*.app; do
             if [ -d "$legacy" ]; then
-              # Never turn a successful app replacement into an installer
-              # failure merely because macOS has an old bundle in use.
+              close_running_bundle "$legacy"
+              # Keep cleanup non-fatal: a locked legacy file must not prevent
+              # the stable replacement from installing.
               /bin/rm -rf "$legacy" || true
             fi
           done
