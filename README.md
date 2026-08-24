@@ -2,7 +2,7 @@
 
 Ứng dụng desktop/web để dịch, lồng tiếng, biên tập timeline và tạo video review phim. ZM AIO TOOL ưu tiên xử lý cục bộ; dịch vụ cloud chỉ được dùng khi bạn chủ động chọn và cấu hình chúng.
 
-[![Version](https://img.shields.io/badge/version-3.4.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-3.5.5-blue.svg)](package.json)
 [![Node](https://img.shields.io/badge/node-20%2B-green.svg)](https://nodejs.org/)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -15,8 +15,9 @@
 | **Live Preview** | Chỉnh caption, BBox che chữ, âm thanh, tốc độ, overlay, logo và timeline. |
 | **Review Phim** | Phân cảnh, phân tích nội dung, tạo lời bình, ghép TTS và xuất recap. |
 | **Hàng loạt** | Áp dụng cấu hình cho nhiều video trong hàng đợi. |
+| **Flow (Veo 3)** | Tạo ảnh hoặc video bằng tài khoản Google Flow đã kết nối, có hàng đợi, lịch sử và preview kết quả. |
 | **Text to Speech** | Tổng hợp TTS từ text/SRT; dùng giọng có sẵn hoặc giọng clone. |
-| **Tải video & Tools** | Tải video, Cleaner, ghép video/ảnh + audio + SRT. |
+| **Tải video & Tools** | Tải video, Cleaner, ghép video/ảnh + audio + SRT và tạo video vẽ tay. |
 
 ## Clone Video
 
@@ -66,6 +67,29 @@ Review Phim dùng pipeline riêng, không thay đổi project Clone Video:
 Tiến trình hiển thị theo stage và số mục hoàn thành. Các tác vụ dài có thể hủy; backend nhận cờ hủy và dừng tiến trình con liên quan.
 
 ![Review Phim](previews/review-phim.png)
+
+## Flow (Veo 3)
+
+Flow tạo ảnh và video qua tài khoản Google Pro/Ultra đã kết nối. Chọn model, tỷ lệ, độ phân giải, số lượng và tài khoản trước khi gửi prompt vào hàng đợi.
+
+- Hỗ trợ **Text → Ảnh**, **Ảnh → Ảnh**, **Tham chiếu → Ảnh** và tạo video từ prompt/khung hình.
+- Prompt có thể nhập tay, dán từ clipboard hoặc import TXT, CSV, JSON.
+- Mỗi job lưu lại model, tỷ lệ, thời lượng, tài khoản, output và trạng thái để xem lại/chạy lại.
+- WEB: chọn thư mục một lần để tự ghi output vào `ZM_AIO_TOOL/flow/<tên-thư-mục>/` khi hoàn thành. APP lưu vào thư mục output đã chọn.
+- Có preview video mới nhất, hàng đợi, lịch sử, log, hủy/xóa từng job hoặc toàn bộ hàng đợi.
+
+![Flow (Veo 3)](previews/flow.png)
+
+## Vẽ tay
+
+Công cụ Vẽ tay biến ảnh thành video mô phỏng quá trình vẽ. Chọn ảnh nguồn, kiểu nét và preset xuất; sau đó kiểm tra preview trước khi tạo video.
+
+- Hỗ trợ chế độ tay cầm bút vẽ nét, bút chì, marker và cọ.
+- Tinh chỉnh thời lượng, độ chi tiết, độ dày nét, FPS, độ phân giải và thứ tự đường nét.
+- Xem preview, bản đồ nét và đường nét trước khi render.
+- Có thể đưa nhiều ảnh vào **Vẽ tay hàng loạt** để tạo job và chạy theo hàng đợi.
+
+![Công cụ Vẽ tay](previews/draw.png)
 
 ## TTS và phần cứng
 
