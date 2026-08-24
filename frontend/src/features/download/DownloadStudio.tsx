@@ -342,9 +342,9 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
       if (picked.path) {
         setSavePath(picked.path)
         await applySavePath(picked.path)
-        return
+        return picked.path
       }
-      return // user cancelled the native picker
+      return undefined // user cancelled the native picker
     } catch {
       // Browser/remote backend fallback below.
     }

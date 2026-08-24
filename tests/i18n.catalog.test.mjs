@@ -258,6 +258,9 @@ test('APP outputs share one documented root with feature subfolders', async () =
   assert.match(field, /className="output-folder-prefix-short"/)
   assert.match(field, /aria-disabled="true"/)
   assert.match(field, /className="output-folder-suffix"/)
+  assert.match(field, /function chooseOutputFolder\(\)/)
+  assert.match(field, /onChange\(`\$\{selected\.replace/)
+  assert.match(field, /if \(\/\[\\\\\/]\$\/\.test\(entered\)\)/)
   assert.match(field, /appFolder: string/)
   for (const source of [flow, drawing, batch, cleaner, subtitles, review, tts, download]) {
     assert.match(source, /appFolder=/)
@@ -545,7 +548,7 @@ test('Flow output options render as separate parent rows', async () => {
   ])
   assert.match(styles, /\.flow-output-row\s*\{[^}]*display: grid;[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s)
   assert.match(styles, /\.flow-output-row > label:first-child\s*\{[^}]*grid-column: 1 \/ -1;[^}]*width: 100%;/s)
-  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : \(\) => void pickWebOutputFolder\(\)\}/)
+  assert.match(source, /onChoose=\{isDesktopApp \? pickOutputFolder : \(\) => void pickWebOutputFolder\(\)\}/)
 })
 
 test('Flow prompt file import is always visible and compact', async () => {
@@ -715,7 +718,7 @@ test('Flow WEB output saves automatically into a user-authorized folder', async 
   assert.match(source, /await target\.removeEntry\(sourceName\)/)
   assert.match(source, /await deleteWebFlowOutputs\(job\)/)
   assert.match(source, /WEB_AUTO_DOWNLOAD_DEFAULT_KEY/)
-  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : \(\) => void pickWebOutputFolder\(\)\}/)
+  assert.match(source, /onChoose=\{isDesktopApp \? pickOutputFolder : \(\) => void pickWebOutputFolder\(\)\}/)
   assert.match(field, /const webPathPrefix/)
   assert.match(field, /value=\{outputSuffix\}/)
 })

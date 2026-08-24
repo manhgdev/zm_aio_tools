@@ -339,6 +339,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
     if (!response.ok) throw new Error(await response.text())
     const picked = await response.json() as { path?: string }
     if (picked.path) setOutputDir(picked.path)
+    return picked.path
   }
 
   return (

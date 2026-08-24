@@ -1858,6 +1858,7 @@ export default function TtsStudio({
                 onChoose={isDesktopApp ? async () => {
                   const result = await studioApi.pickFolder()
                   if (result.path) setOutputDir(result.path)
+                  return result.path
                 } : undefined}
                 onSave={() => localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)}
                 defaultPath={t('Ví dụ: du-an-01 hoặc giong-doc.mp3', 'Example: project-01 or narration.mp3')}

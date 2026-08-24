@@ -127,10 +127,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       if (data.ok && data.path) {
         setExportDir(data.path)
         localStorage.setItem('exportOutputDir', data.path)
+        return data.path
       }
     } catch {
       // user cancel hoặc backend lỗi — ignore
     }
+    return undefined
   }
 
   // ponytail: capture frame video qua canvas — <img> không render được video URL

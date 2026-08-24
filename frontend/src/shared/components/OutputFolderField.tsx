@@ -27,7 +27,7 @@ type Props = {
   isDesktopApp: boolean
   value: string
   onChange: (value: string) => void
-  onChoose?: () => void | Promise<void>
+  onChoose?: () => string | null | undefined | Promise<string | null | undefined | void>
   onSave?: () => void | Promise<void>
   defaultPath: string
   appFolder: string
@@ -73,6 +73,7 @@ export function OutputFolderField({
     const entered = value.trim()
     if (!entered || !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(entered)) return { prefix: `${defaultRoot}/`, suffix: value }
     const normalized = entered.replace(/[\\/]+$/, '')
+    if (/[\\/]$/.test(entered)) return { prefix: `${normalized}/`, suffix: '' }
     const separatorIndex = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
     return separatorIndex < 0
       ? { prefix: `${defaultRoot}/`, suffix: value }
@@ -100,6 +101,15 @@ export function OutputFolderField({
         : t('Đã lưu tên thư mục con / tên đầu ra.', 'Subfolder / output name saved.'))
   }
 
+  async function chooseOutputFolder() {
+    const selected = await onChoose?.()
+    if (!isDesktopApp || !selected) return
+    // A picker result is the new locked base path. Keep a trailing separator
+    // so the editable input becomes a child/file name rather than hiding the
+    // final selected folder in the suffix.
+    onChange(`${selected.replace(/[\\/]+$/, '')}/`)
+  }
+
   return (
     <label className="output-folder-field">
       <span className="output-folder-label">
@@ -125,7 +135,7 @@ export function OutputFolderField({
         </div>
         {isDesktopApp || onChoose ? (
           <>
-            <button type="button" disabled={disabled || !onChoose} onClick={() => void onChoose?.()} title={t('Chọn thư mục', 'Choose folder')}>
+            <button type="button" disabled={disabled || !onChoose} onClick={() => void chooseOutputFolder()} title={t('Chọn thư mục', 'Choose folder')}>
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
               {t('Chọn', 'Choose')}
             </button>

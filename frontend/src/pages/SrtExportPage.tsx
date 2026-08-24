@@ -116,6 +116,7 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
   async function pickOutputDir() {
     const picked = await fetchJson<{ path?: string }>('/api/system/pick-folder', { method: 'POST' }, 300_000)
     if (picked.path) setOutputDir(picked.path)
+    return picked.path
   }
 
   return <main className="srt-export-page">
