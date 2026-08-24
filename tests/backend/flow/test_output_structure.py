@@ -19,6 +19,25 @@ def test_flow_desktop_browser_uses_installed_chrome_not_playwright_download():
     assert "from flow._browser" not in Path(service_module.__file__).read_text(encoding="utf-8")
 
 
+def test_flow_jobs_keep_first_created_prompt_at_top(monkeypatch):
+    """The Flow queue must remain FIFO instead of showing newest jobs first."""
+    monkeypatch.setattr(
+        service_module.store,
+        "list_rows",
+        lambda name: [
+            {"id": "job-010", "createdAt": 10},
+            {"id": "job-001", "createdAt": 1},
+            {"id": "job-005", "createdAt": 5},
+        ] if name == "jobs" else [],
+    )
+
+    assert [job["id"] for job in service_module.FlowService().jobs()] == [
+        "job-001",
+        "job-005",
+        "job-010",
+    ]
+
+
 def test_shared_nested_output_folder_sanitizes_every_component(tmp_path):
     folder = nested_output_folder(tmp_path, "Campaign August", "job / 123")
 

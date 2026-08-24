@@ -479,6 +479,13 @@
 .flow-queue-list {
   display: grid;
   gap: 8px;
+  /* Keep large batches usable: actions and the first queued job remain in
+     view while the list itself scrolls. */
+  max-height: min(68vh, 680px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 3px;
 }
 .flow-queue-job {
   display: grid;
@@ -591,6 +598,11 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+  max-height: min(58vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 3px;
 }
 .flow-result-grid article {
   display: grid;
@@ -860,7 +872,10 @@
   color: #fff;
 }
 .flow-history-scroll {
+  max-height: min(62vh, 620px);
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .flow-history table {
   width: 100%;

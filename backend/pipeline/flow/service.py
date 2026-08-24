@@ -57,7 +57,10 @@ class FlowService:
         return store.list_rows("accounts")
 
     def jobs(self) -> list[dict[str, Any]]:
-        return sorted(store.list_rows("jobs"), key=lambda row: row.get("createdAt", 0), reverse=True)
+        # Queue order is FIFO: the first prompt stays at the top and is the
+        # first job resumed after an app restart.  History can still sort by
+        # timestamp in the UI when a newest-first view is appropriate.
+        return sorted(store.list_rows("jobs"), key=lambda row: row.get("createdAt", 0))
 
     def logs(self) -> list[dict[str, Any]]:
         return sorted(store.list_rows("logs"), key=lambda row: row.get("createdAt", 0), reverse=True)[:1000]

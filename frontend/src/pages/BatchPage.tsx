@@ -384,6 +384,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
             <div><h2>{t('Tất cả hàng đợi', 'All queues')}</h2><p className="muted">{t('Clone, Review và Vẽ tay trong một danh sách.', 'Clone, Review, and Drawing in one list.')}</p></div>
             <span className="drawing-queue-count">{jobs.length + drawingJobs.length}</span>
           </div>
+          <div className="studio-queue-scroll">
           <table className="studio-table studio-queue-table studio-queue-table--all">
             <colgroup>
               <col className="studio-queue-type-column" />
@@ -399,6 +400,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
               {drawingJobs.map((job) => <tr key={job.id}><td>{t('Vẽ tay', 'Drawing')}</td><td><button type="button" className="queue-thumbnail" onClick={() => setDrawingPreview(job)}><img loading="lazy" src={`/api/drawing/jobs/${job.id}/input`} alt={t(`Ảnh nguồn ${job.filename}`, `Source image ${job.filename}`)} /></button></td><td title={job.filename}>{job.filename}</td><td>{job.status}</td><td>{job.progress}%</td><td className="studio-job-actions"><button type="button" className="batch-action batch-action--view" onClick={() => setDrawingPreview(job)}>{t('Xem trước', 'Preview')}</button>{job.status === 'queued' ? <button type="button" className="batch-action batch-action--edit" onClick={() => editDrawingJob(job)}>{t('Sửa', 'Edit')}</button> : null}{job.status === 'done' ? <>{isDesktopApp ? <button type="button" className="batch-action batch-action--open" onClick={() => void fetch(`/api/drawing/jobs/${job.id}/reveal`, { method: 'POST' }).then(async (r) => { if (!r.ok) throw new Error(await r.text()) }).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>{t('Mở thư mục', 'Open folder')}</button> : null}<a className="batch-action batch-action--open" href={`/api/drawing/jobs/${job.id}/output`} download>{t('Tải MP4', 'Download MP4')}</a></> : null}{job.status === 'queued' || job.status === 'processing' ? <button type="button" className="batch-action batch-action--danger" onClick={() => void cancelDrawingJob(job.id)}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="studio-job-delete batch-action batch-action--danger" onClick={() => void deleteDrawingJob(job.id)}>{t('Xóa', 'Delete')}</button></td></tr>)}
             </tbody>
           </table>
+          </div>
           {!jobs.length && !drawingJobs.length ? <p className="muted">{t('Chưa có job.', 'No jobs yet.')}</p> : null}
         </section>
       </> : tab === 'drawing' ? <>
@@ -495,6 +497,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
             </button>
           ) : null}
         </div>
+        <div className="studio-queue-scroll">
         <table className="studio-table studio-queue-table studio-queue-table--feature">
           <colgroup>
             <col className="studio-queue-thumbnail-column" />
@@ -552,6 +555,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
             ))}
           </tbody>
         </table>
+        </div>
         {!tabJobs.length ? <p className="muted">{t('Chưa có job.', 'No jobs yet.')}</p> : null}
       </section>
       </>}

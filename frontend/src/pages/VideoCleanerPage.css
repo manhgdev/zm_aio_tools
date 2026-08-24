@@ -201,7 +201,7 @@
 .vc-tab:hover { color: var(--ink); }
 .vc-tab.is-active { color: var(--primary, #3b82f6); border-bottom-color: var(--primary, #3b82f6); font-weight: 650; }
 
-.vc-table-wrap { overflow-x: auto; }
+.vc-table-wrap { max-height: min(62vh, 620px); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .vc-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
 .vc-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border, #e8eef5); color: var(--muted-foreground); font-weight: 550; font-size: .74rem; }
 .vc-table td { padding: 9px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); vertical-align: middle; }

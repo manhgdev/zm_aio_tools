@@ -778,6 +778,22 @@ test('Flow create-video screen exposes the latest completed video preview', asyn
   assert.match(styles, /\.flow-preview-latest/)
 })
 
+test('Flow queue confines large batches to its own scroll area', async () => {
+  const [flowStyles, studioStyles, cleanerStyles, batch] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/StudioPages.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/VideoCleanerPage.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(flowStyles, /\.flow-queue-list\s*\{[\s\S]*max-height:\s*min\(68vh, 680px\)/)
+  assert.match(flowStyles, /\.flow-result-grid\s*\{[\s\S]*max-height:\s*min\(58vh, 560px\)/)
+  assert.match(flowStyles, /\.flow-history-scroll\s*\{[\s\S]*max-height:\s*min\(62vh, 620px\)/)
+  assert.match(studioStyles, /\.studio-queue-scroll\s*\{[\s\S]*max-height:\s*min\(62vh, 620px\)/)
+  assert.match(studioStyles, /\.drawing-job-list\{[\s\S]*max-height:min\(62vh,620px\)/)
+  assert.match(cleanerStyles, /\.vc-table-wrap\s*\{\s*max-height:\s*min\(62vh, 620px\);\s*overflow:\s*auto/)
+  assert.equal((batch.match(/className="studio-queue-scroll"/g) || []).length, 2)
+})
+
 test('Flow never presents an empty-output job as a localized success', async () => {
   const [source, service] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
