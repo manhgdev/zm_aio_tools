@@ -131,7 +131,7 @@ export default function TtsHistoryPanel({
                           {isDesktopApp ? <IconFile size={12} /> : <IconDownload size={12} />}
                         </button>
                         {downloadMenuId === h.id && (
-                          <div className="tts-dl-menu" role="menu">
+                          <div className="tts-dl-menu tts-history-dl-menu" role="menu">
                             <button
                               type="button"
                               role="menuitem"

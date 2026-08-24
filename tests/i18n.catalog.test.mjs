@@ -581,7 +581,8 @@ test('TTS history action menu layers above its pager', async () => {
   assert.match(styles, /\.tts-history-wrap:has\(\.tts-dl-wrap\.is-open\)\s*\{\s*z-index: 20;/s)
   assert.match(styles, /\.tts-dl-wrap\.is-open\s*\{\s*z-index: 30;/s)
   assert.match(styles, /\.tts-pager\s*\{\s*position: relative;\s*z-index: 1;/s)
-  assert.match(styles, /\.tts-history \.tts-dl-menu\s*\{\s*top: auto;\s*bottom: calc\(100% \+ 4px\);/s)
+  assert.match(panel, /className="tts-dl-menu tts-history-dl-menu"/)
+  assert.match(styles, /\.tts-history-dl-menu\s*\{\s*top: auto;\s*bottom: calc\(100% \+ 8px\);/s)
   assert.match(styles, /\.tts-dl-submenu\s*\{\s*top: 0;\s*bottom: auto;/s)
 })
 
