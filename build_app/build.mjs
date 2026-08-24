@@ -207,6 +207,7 @@ const args = [
   '--add-data', `${versionFilePath}${dataSep}.`,
   '--collect-all', 'webview',
   '--collect-all', 'yt_dlp',
+  '--collect-all', 'flow',
   // Hidden imports: stdlib + third-party hay bị PyInstaller miss
   '--hidden-import', 'timeit',
   '--hidden-import', 'pickletools',

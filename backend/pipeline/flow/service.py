@@ -187,7 +187,7 @@ class FlowService:
 
     async def _login(self, account_id: str) -> None:
         try:
-            from flow._browser import BrowserManager, FLOW_BASE_URL
+            from .browser import BrowserManager, FLOW_BASE_URL
             browser = BrowserManager(headless=False, profile_dir=store.profile_dir(account_id))
             await browser.start()
             page = await browser.page()
@@ -547,7 +547,7 @@ class FlowService:
             if account.get("status") != "online" or not account.get("projectId"):
                 raise RuntimeError("FLOW_LOGIN_REQUIRED: connect the Google Flow account first")
             from flow._api import FlowAPI
-            from flow._browser import BrowserManager
+            from .browser import BrowserManager
             from flow._client import FlowClient
             # Generation uses the already-authenticated persistent profile in
             # background mode. Only the explicit account-connect flow opens a

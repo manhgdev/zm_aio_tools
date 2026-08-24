@@ -2,11 +2,21 @@ import importlib
 import asyncio
 import threading
 import time
+from pathlib import Path
 
 from pipeline.core.output_paths import nested_output_folder
 
 service_module = importlib.import_module("pipeline.flow.service")
 output_paths_module = importlib.import_module("pipeline.core.output_paths")
+
+
+def test_flow_desktop_browser_uses_installed_chrome_not_playwright_download():
+    browser = importlib.import_module("pipeline.flow.browser")
+    source = Path(browser.__file__).read_text(encoding="utf-8")
+    assert "executable_path=str(executable)" in source
+    assert "Google Chrome.app/Contents/MacOS/Google Chrome" in source
+    assert "FLOW_CHROME_REQUIRED" in source
+    assert "from flow._browser" not in Path(service_module.__file__).read_text(encoding="utf-8")
 
 
 def test_shared_nested_output_folder_sanitizes_every_component(tmp_path):
