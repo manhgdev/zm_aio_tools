@@ -93,10 +93,17 @@ export function OutputFolderField({
       <div className={`output-folder-row ${isDesktopApp ? 'is-app' : 'is-web-editable'} ${onChoose ? 'has-choose' : ''}`}>
         {isDesktopApp ? (
           <div className="output-folder-app-path">
-            <span className="output-folder-prefix" title={appPath.prefix}>
-              <small>{t('Cố định', 'Fixed')}</small>
-              <span>{appPath.prefix}</span>
-            </span>
+            <input
+              aria-label={t('Đường dẫn thư mục cố định', 'Fixed output folder path')}
+              className="output-folder-prefix"
+              type="text"
+              value={appPath.prefix}
+              title={appPath.prefix}
+              disabled
+              readOnly
+              spellCheck={false}
+            />
+            <span className="output-folder-separator" aria-hidden="true">—</span>
             <input
               aria-label={t('Tên thư mục hoặc tệp đầu ra', 'Output subfolder or file name')}
               className="output-folder-suffix"
