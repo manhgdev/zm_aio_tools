@@ -106,11 +106,60 @@ const isImageModel = (model: string) =>
 const DRAFT_KEY = "zm-flow-veo:draft:v1";
 const SETTINGS_KEY = "zm-flow-veo:settings:v1";
 const WEB_AUTO_DOWNLOAD_DEFAULT_KEY = "zm-flow-veo:web-auto-download:v1";
+const WEB_OUTPUT_ROOT_KEY = "zm-flow-veo:web-output-root:v1";
 const TAB_KEY = "zm-flow-veo:tab:v1";
 const RAIL_KEY = "zm-flow-veo:rail:v1";
 const ACCOUNTS_KEY = "zm-flow-veo:accounts:v1";
 const CREATE_KIND_KEY = "zm-flow-veo:create-kind:v1";
 const IMAGE_MODE_KEY = "zm-flow-veo:image-mode:v1";
+
+type BrowserFileHandle = {
+  createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
+};
+type BrowserDirectoryHandle = {
+  name: string;
+  getDirectoryHandle: (name: string, options?: { create?: boolean }) => Promise<BrowserDirectoryHandle>;
+  getFileHandle: (name: string, options?: { create?: boolean }) => Promise<BrowserFileHandle>;
+  queryPermission?: (descriptor?: { mode: "readwrite" }) => Promise<"granted" | "denied" | "prompt">;
+};
+type BrowserDirectoryWindow = Window & {
+  showDirectoryPicker?: (options?: { mode?: "readwrite" }) => Promise<BrowserDirectoryHandle>;
+};
+
+function openWebOutputDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("zm-aio-web-output", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("directories");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveWebOutputRoot(key: string, handle: BrowserDirectoryHandle) {
+  const database = await openWebOutputDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction("directories", "readwrite");
+    transaction.objectStore("directories").put(handle, key);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
+async function loadWebOutputRoot(key: string) {
+  const database = await openWebOutputDatabase();
+  const handle = await new Promise<BrowserDirectoryHandle | null>((resolve, reject) => {
+    const request = database.transaction("directories", "readonly").objectStore("directories").get(key);
+    request.onsuccess = () => resolve((request.result as BrowserDirectoryHandle | undefined) || null);
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return handle;
+}
+
+function flowOutputFolderName(value: string) {
+  return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "").slice(0, 96) || "results";
+}
 
 function readText(key: string, fallback: string) {
   try {
@@ -213,13 +262,28 @@ async function flowRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function downloadFlowOutput(job: FlowJob, outputIndex: number) {
-  const link = document.createElement("a");
-  link.href = `/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`;
-  link.download = "";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+async function writeFlowOutputToDirectory(
+  job: FlowJob,
+  outputIndex: number,
+  root: BrowserDirectoryHandle,
+  outputFolder: string,
+) {
+  const response = await fetch(`/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`);
+  if (!response.ok) throw new Error(String(response.status));
+  const sourceName = String(job.outputs?.[outputIndex] || "").split(/[\\/]/).pop();
+  const extension = job.kind === "video" ? "mp4" : "png";
+  const filename = sourceName || `flow_${job.id}_${outputIndex + 1}.${extension}`;
+  const appRoot = root.name === "flow" || root.name === "ZM_AIO_TOOL"
+    ? root
+    : await root.getDirectoryHandle("ZM_AIO_TOOL", { create: true });
+  const flowRoot = root.name === "flow"
+    ? root
+    : await appRoot.getDirectoryHandle("flow", { create: true });
+  const target = await flowRoot.getDirectoryHandle(flowOutputFolderName(outputFolder), { create: true });
+  const file = await target.getFileHandle(filename, { create: true });
+  const writable = await file.createWritable();
+  await writable.write(await response.blob());
+  await writable.close();
 }
 
 function normalizeFlowJobs(
@@ -352,6 +416,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
   const [backendReady, setBackendReady] = useState(false);
   const [isDesktopApp, setIsDesktopApp] = useState(false);
   const [runtimeKnown, setRuntimeKnown] = useState(false);
+  const webOutputRootRef = useRef<BrowserDirectoryHandle | null>(null);
   const completedOutputsRef = useRef<Set<string> | null>(null);
   const [preview, setPreview] = useState<{
     job: FlowJob;
@@ -483,6 +548,20 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
   }, []);
   useEffect(() => {
     if (!runtimeKnown || isDesktopApp) return;
+    let active = true;
+    void loadWebOutputRoot(WEB_OUTPUT_ROOT_KEY)
+      .then(async (handle) => {
+        if (!handle || !active) return;
+        const permission = await handle.queryPermission?.({ mode: "readwrite" });
+        if (active && permission === "granted") {
+          webOutputRootRef.current = handle;
+        }
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [isDesktopApp, runtimeKnown]);
+  useEffect(() => {
+    if (!runtimeKnown || isDesktopApp) return;
     try {
       if (localStorage.getItem(WEB_AUTO_DOWNLOAD_DEFAULT_KEY)) return;
       localStorage.setItem(WEB_AUTO_DOWNLOAD_DEFAULT_KEY, "1");
@@ -510,10 +589,22 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       if (completedOutputsRef.current.has(item.key)) continue;
       completedOutputsRef.current.add(item.key);
       if (!isDesktopApp && settings.autoDownload) {
-        downloadFlowOutput(item.job, item.outputIndex);
+        const root = webOutputRootRef.current;
+        if (!root) {
+          setApiError(t(
+            "Chọn thư mục tải xuống trước để Flow lưu vào ZM_AIO_TOOL/flow.",
+            "Choose a download folder first so Flow can save into ZM_AIO_TOOL/flow.",
+          ));
+          continue;
+        }
+        void writeFlowOutputToDirectory(item.job, item.outputIndex, root, settings.outputDir)
+          .catch(() => setApiError(t(
+            "Không thể lưu output Flow vào thư mục đã chọn.",
+            "Could not save the Flow output to the selected folder.",
+          )));
       }
     }
-  }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload]);
+  }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload, settings.outputDir, locale]);
   useEffect(() => {
     if (!preview) return;
     const close = (event: KeyboardEvent) => {
@@ -821,6 +912,25 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       }
       setApiError(error instanceof Error ? error.message : String(error));
       return null;
+    }
+  };
+  const pickWebOutputFolder = async () => {
+    const picker = (window as BrowserDirectoryWindow).showDirectoryPicker;
+    if (!picker) {
+      setApiError(t(
+        "Chrome hiện tại không hỗ trợ chọn thư mục tải xuống.",
+        "This Chrome version does not support choosing a download folder.",
+      ));
+      return;
+    }
+    try {
+      const handle = await picker({ mode: "readwrite" });
+      await saveWebOutputRoot(WEB_OUTPUT_ROOT_KEY, handle);
+      webOutputRootRef.current = handle;
+      setApiError("");
+    } catch (error) {
+      if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
+      setApiError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -1592,7 +1702,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
                 </div>
               )}
               <div className="flow-output-row">
-                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? () => void pickOutputFolder() : undefined} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')} appFolder="flow" label={t("3. Thư mục kết quả", "3. Output folder")} />
+                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? () => void pickOutputFolder() : () => void pickWebOutputFolder()} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')} appFolder="flow" label={t("3. Thư mục kết quả", "3. Output folder")} />
                 {!isDesktopApp && (
                   <label className="flow-check">
                     <input

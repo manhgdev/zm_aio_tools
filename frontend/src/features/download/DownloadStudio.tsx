@@ -259,6 +259,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
   useEffect(() => {
     try {
       if (savePath.trim()) localStorage.setItem(LS_PATH, savePath.trim())
+      else localStorage.removeItem(LS_PATH)
     } catch {
       /* ignore */
     }

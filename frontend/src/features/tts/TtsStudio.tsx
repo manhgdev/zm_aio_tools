@@ -178,6 +178,14 @@ export default function TtsStudio({
   const [autoSplit, setAutoSplit] = useState(saved.autoSplit)
   const [outputFormat, setOutputFormat] = useState<TtsOutputFormat>(saved.outputFormat)
   const [outputDir, setOutputDir] = useState(() => localStorage.getItem(OUTPUT_DIR_LS_KEY) || '')
+  useEffect(() => {
+    if (isDesktopApp || !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir.trim())) return
+    try {
+      localStorage.removeItem(OUTPUT_DIR_LS_KEY)
+    } catch {
+      /* ignore */
+    }
+  }, [isDesktopApp, outputDir])
   const webOutputStem = (outputDir.trim().split(/[/\\]/).filter(Boolean).pop() || 'tts-output')
     .replace(/\.(?:wav|mp3|srt|zip)$/i, '')
     .replace(/[<>:"/\\|?*]+/g, '-')

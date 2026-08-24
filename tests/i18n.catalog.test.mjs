@@ -229,12 +229,12 @@ test('APP outputs share one documented root with feature subfolders', async () =
   ])
   assert.match(paths, /APP_OUTPUT_ROOT_NAME = "ZM_AIO_TOOL"/)
   assert.match(config, /"desktopOutputRoot"/)
+  assert.match(field, /className="output-folder-combined"/)
   assert.match(field, /className="output-folder-prefix"/)
-  assert.match(field, /disabled/)
-  assert.match(field, /output-folder-separator/)
+  assert.match(field, /className="output-folder-prefix-short"/)
+  assert.match(field, /aria-disabled="true"/)
   assert.match(field, /className="output-folder-suffix"/)
   assert.match(field, /appFolder: string/)
-  assert.match(field, /Nhập tên thư mục con hoặc tên file; phần đường dẫn đầu là cố định/)
   for (const source of [flow, drawing, batch, cleaner, subtitles, review, tts, download]) {
     assert.match(source, /appFolder=/)
   }
@@ -329,7 +329,7 @@ test('Tools output folders use bilingual labels', async () => {
   assert.match(field, /t\('Thư mục lưu', 'Save folder'\)/)
   assert.match(field, /t\('Chọn', 'Choose'\)/)
   assert.match(field, /t\('Lưu', 'Save'\)/)
-  assert.match(field, /isDesktopApp \? 'APP' : 'WEB'/)
+  assert.doesNotMatch(field, /isDesktopApp \? 'APP' : 'WEB'/)
   for (const source of [cleaner, exporter, drawing, flow, review, batch, editor]) {
     assert.match(source, /OutputFolderField/)
   }
@@ -342,17 +342,23 @@ test('Download Video uses editable WEB output names without legacy Chrome copy',
   ])
   assert.match(source, /isDesktopApp/)
   assert.match(source, /OutputFolderField/)
-  assert.match(field, /Nhập thư mục con hoặc tên file đầu ra do bạn muốn/)
-  assert.match(field, /Enter your preferred output subfolder or file name/)
-  assert.match(field, /Ví dụ: du-an-01 hoặc video-01\.mp4/)
+  assert.doesNotMatch(field, /Nhập thư mục con hoặc tên file đầu ra do bạn muốn/)
+  assert.doesNotMatch(field, /Enter your preferred output subfolder or file name/)
+  assert.match(field, /placeholder=\{defaultPath\}/)
+  assert.match(field, /const webPathPrefix/)
+  assert.match(field, /export function normalizeWebOutputName/)
+  assert.match(field, /if \(trimmed === appFolder\) return ''/)
+  assert.match(field, /return normalized\.startsWith\(prefix\) \? normalized\.slice\(prefix\.length\) : ''/)
   assert.doesNotMatch(field, /Theo cài đặt tải xuống của/)
   assert.doesNotMatch(source, /Theo cài đặt tải xuống của Chrome/)
   assert.doesNotMatch(source, /Vị trí thực tế do Chrome quản lý/)
   assert.doesNotMatch(source, /Downloads của trình duyệt/)
   assert.doesNotMatch(source, /browser Downloads folder/)
-  assert.match(field, /\{isDesktopApp \? \(/)
-  assert.match(field, /disabled\n\s+readOnly/)
-  assert.doesNotMatch(field, /\/Downloads\//, 'web UI must not invent a browser download path')
+  assert.match(field, /\/Users\/manhg\/Downloads\/ZM_AIO_TOOL\/\$\{appFolder/)
+  assert.match(field, /value=\{outputSuffix\}/)
+  assert.match(field, /function changeOutputSuffix/)
+  assert.doesNotMatch(field, /Choose download folder/)
+  assert.doesNotMatch(field, /showDirectoryPicker/)
   assert.match(source, /Tải xuống/, 'web result provides browser download action')
 })
 
@@ -363,6 +369,8 @@ test('Batch Drawing queue uses bilingual localized UI', async () => {
   assert.match(source, /Clone, Review, and Drawing in one list/)
   assert.match(source, /Vẽ tay hàng loạt/)
   assert.match(source, /Drawing batch/)
+  assert.match(source, /Thêm ảnh rồi bấm Chạy để xử lý hàng loạt/)
+  assert.match(source, /Add images, then press Run to process the batch/)
   assert.match(source, /Xem trước/)
   assert.match(source, /Preview/)
   assert.match(source, /Đường đi nét/)
@@ -393,7 +401,7 @@ test('Batch queue actions use compact Flow-sized controls', async () => {
 test('Batch file selection creates localized queue jobs immediately', async () => {
   const source = await readFile(new URL('../frontend/src/pages/BatchPage.tsx', import.meta.url), 'utf8')
   assert.match(source, /create jobs in the queue below, then press Run/)
-  assert.match(source, /It only runs after you press Run/)
+  assert.doesNotMatch(source, /It only runs after you press Run/)
   assert.match(source, /Run \$\{readyQueueJobs\.length\} jobs/)
 })
 
@@ -424,6 +432,7 @@ test('ZM AIO TOOL branding keeps the SRT logo label bilingual', async () => {
 test('TTS exposes a bilingual APP/WEB output folder selector', async () => {
   const source = await readFile(new URL('../frontend/src/features/tts/TtsStudio.tsx', import.meta.url), 'utf8')
   assert.match(source, /OutputFolderField/)
+  assert.match(source, /className="tts-output-folder"/)
   assert.match(source, /Thư mục đầu ra/)
   assert.match(source, /Output folder/)
   assert.match(source, /publishOutput: isDesktopApp/)
@@ -482,7 +491,7 @@ test('Flow output options render as separate parent rows', async () => {
   ])
   assert.match(styles, /\.flow-output-row\s*\{[^}]*display: grid;[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s)
   assert.match(styles, /\.flow-output-row > label:first-child\s*\{[^}]*grid-column: 1 \/ -1;[^}]*width: 100%;/s)
-  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : undefined\}/)
+  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : \(\) => void pickWebOutputFolder\(\)\}/)
 })
 
 test('Flow prompt file import is always visible and compact', async () => {
@@ -582,7 +591,7 @@ test("Flow queue renders each job's persisted generation settings", async () => 
   assert.doesNotMatch(source, /Imagen 3 Fast · 1:1 · 1K/)
 })
 
-test('Flow WEB output accepts an output name without requesting filesystem access', async () => {
+test('Flow WEB output saves automatically into a user-authorized folder', async () => {
   const [source, field] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
@@ -590,13 +599,18 @@ test('Flow WEB output accepts an output name without requesting filesystem acces
   assert.match(source, /function defaultFlowOutputFolder/)
   assert.match(source, /outputDir: defaultFlowOutputFolder\(\)/)
   assert.match(source, /settings: effectiveSettings/)
-  assert.match(source, /function downloadFlowOutput/)
-  assert.match(source, /downloadFlowOutput\(item\.job, item\.outputIndex\)/)
+  assert.match(source, /function flowOutputFolderName/)
+  assert.match(source, /async function writeFlowOutputToDirectory/)
+  assert.match(source, /ZM_AIO_TOOL/)
+  assert.match(source, /root\.name === "ZM_AIO_TOOL"/)
+  assert.match(source, /showDirectoryPicker/)
+  assert.match(source, /saveWebOutputRoot/)
+  assert.match(source, /loadWebOutputRoot/)
+  assert.match(source, /writeFlowOutputToDirectory\(item\.job, item\.outputIndex, root, settings\.outputDir\)/)
   assert.match(source, /WEB_AUTO_DOWNLOAD_DEFAULT_KEY/)
-  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : undefined\}/)
-  assert.doesNotMatch(source, /showDirectoryPicker/)
-  assert.doesNotMatch(source, /writeFlowOutputToDirectory/)
-  assert.match(field, /Ví dụ: du-an-01 hoặc video-01\.mp4/)
+  assert.match(source, /onChoose=\{isDesktopApp \? \(\) => void pickOutputFolder\(\) : \(\) => void pickWebOutputFolder\(\)\}/)
+  assert.match(field, /const webPathPrefix/)
+  assert.match(field, /value=\{outputSuffix\}/)
 })
 
 test('Flow create-video screen exposes the latest completed video preview', async () => {

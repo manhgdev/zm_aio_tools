@@ -4,6 +4,15 @@ import './OutputFolderField.css'
 
 let desktopOutputRootRequest: Promise<string> | undefined
 
+export function normalizeWebOutputName(value: string, appFolder: string) {
+  const trimmed = value.trim()
+  if (trimmed === appFolder) return ''
+  if (!/^(?:[A-Za-z]:[\\/]|[\\/])/.test(trimmed)) return value
+  const prefix = `/Users/manhg/Downloads/ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`
+  const normalized = trimmed.replace(/\\/g, '/')
+  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : ''
+}
+
 function loadDesktopOutputRoot() {
   if (!desktopOutputRootRequest) {
     desktopOutputRootRequest = fetch('/api/config')
@@ -24,7 +33,6 @@ type Props = {
   appFolder: string
   label?: string
   disabled?: boolean
-  selectedRootName?: string
   webFolderOnly?: boolean
 }
 
@@ -38,7 +46,6 @@ export function OutputFolderField({
   appFolder,
   label,
   disabled = false,
-  selectedRootName = '',
   webFolderOnly = false,
 }: Props) {
   const { locale } = useLocale()
@@ -57,22 +64,31 @@ export function OutputFolderField({
     return () => { active = false }
   }, [isDesktopApp])
 
+  const webPathPrefix = useMemo(
+    () => `/Users/manhg/Downloads/ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`,
+    [appFolder],
+  )
   const appPath = useMemo(() => {
-    const fallbackRoot = `Downloads/ZM_AIO_TOOL/${appFolder}`
-    const defaultRoot = `${desktopOutputRoot || fallbackRoot}`.replace(/[\\/]+$/, '')
+    const defaultRoot = `${desktopOutputRoot || `Downloads/ZM_AIO_TOOL/${appFolder}`}`.replace(/[\\/]+$/, '')
     const entered = value.trim()
-    if (!entered || !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(entered)) {
-      return { prefix: `${defaultRoot}/`, suffix: value }
-    }
+    if (!entered || !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(entered)) return { prefix: `${defaultRoot}/`, suffix: value }
     const normalized = entered.replace(/[\\/]+$/, '')
     const separatorIndex = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
-    if (separatorIndex < 0) return { prefix: `${defaultRoot}/`, suffix: value }
-    return { prefix: `${normalized.slice(0, separatorIndex + 1)}`, suffix: normalized.slice(separatorIndex + 1) }
+    return separatorIndex < 0
+      ? { prefix: `${defaultRoot}/`, suffix: value }
+      : { prefix: normalized.slice(0, separatorIndex + 1), suffix: normalized.slice(separatorIndex + 1) }
   }, [appFolder, desktopOutputRoot, value])
+  const webSuffix = useMemo(() => normalizeWebOutputName(value, appFolder), [appFolder, value])
+  const outputPrefix = isDesktopApp ? appPath.prefix : webPathPrefix
+  const outputSuffix = isDesktopApp ? appPath.suffix : webSuffix
 
-  function changeAppSuffix(nextSuffix: string) {
+  useEffect(() => {
+    if (!isDesktopApp && webSuffix !== value) onChange(webSuffix)
+  }, [isDesktopApp, onChange, value, webSuffix])
+
+  function changeOutputSuffix(nextSuffix: string) {
     const suffix = nextSuffix.trimStart()
-    onChange(suffix ? `${appPath.prefix}${suffix}` : '')
+    onChange(isDesktopApp ? (suffix ? `${appPath.prefix}${suffix}` : '') : suffix)
   }
 
   async function save() {
@@ -88,87 +104,44 @@ export function OutputFolderField({
     <label className="output-folder-field">
       <span className="output-folder-label">
         {label || t('Thư mục lưu', 'Save folder')}
-        <small>{isDesktopApp ? 'APP' : 'WEB'}</small>
       </span>
       <div className={`output-folder-row ${isDesktopApp ? 'is-app' : 'is-web-editable'} ${onChoose ? 'has-choose' : ''}`}>
-        {isDesktopApp ? (
-          <div className="output-folder-app-path">
-            <input
-              aria-label={t('Đường dẫn thư mục cố định', 'Fixed output folder path')}
-              className="output-folder-prefix"
-              type="text"
-              value={appPath.prefix}
-              title={appPath.prefix}
-              disabled
-              readOnly
-              spellCheck={false}
-            />
-            <span className="output-folder-separator" aria-hidden="true">—</span>
-            <input
-              aria-label={t('Tên thư mục hoặc tệp đầu ra', 'Output subfolder or file name')}
-              className="output-folder-suffix"
-              type="text"
-              value={appPath.suffix}
-              onChange={(event) => changeAppSuffix(event.target.value)}
-              placeholder={defaultPath}
-              title={t('Nhập tên thư mục con hoặc tên file; phần đường dẫn đầu là cố định.', 'Enter a subfolder or file name; the base path is fixed.')}
-              disabled={disabled}
-              spellCheck={false}
-            />
-          </div>
-        ) : (
+        <div className="output-folder-combined">
+          <span className="output-folder-prefix" aria-disabled="true" title={outputPrefix}>
+            <span className="output-folder-prefix-full">{outputPrefix}</span>
+            <span className="output-folder-prefix-short" aria-hidden="true">…/{appFolder}/</span>
+          </span>
           <input
+            aria-label={t('Tên thư mục hoặc tệp đầu ra', 'Output subfolder or file name')}
+            className="output-folder-suffix"
             type="text"
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder={webFolderOnly
-              ? t('Ví dụ: du-an-01', 'Example: project-01')
-              : t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')}
-            title={webFolderOnly
-              ? t('Tên thư mục con chứa kết quả', 'Result subfolder name')
-              : t('Tên thư mục con hoặc tên file đầu ra', 'Output subfolder or file name')}
+            value={outputSuffix}
+            onChange={(event) => changeOutputSuffix(event.target.value)}
+            placeholder={defaultPath}
+            title={t('Nhập tên thư mục con hoặc tên tệp sau đường dẫn cố định.', 'Enter a subfolder or file name after the fixed path.')}
             disabled={disabled}
             spellCheck={false}
           />
-        )}
-        {isDesktopApp ? (
+        </div>
+        {isDesktopApp || onChoose ? (
           <>
             <button type="button" disabled={disabled || !onChoose} onClick={() => void onChoose?.()} title={t('Chọn thư mục', 'Choose folder')}>
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
               {t('Chọn', 'Choose')}
             </button>
-            <button type="button" disabled={disabled || !value.trim()} onClick={() => void save()} title={t('Lưu thư mục', 'Save folder')}>
+            <button type="button" disabled={disabled || !value.trim()} onClick={() => void save()} title={t(isDesktopApp ? 'Lưu thư mục' : 'Lưu tên đầu ra', isDesktopApp ? 'Save folder' : 'Save output name')}>
               {t('Lưu', 'Save')}
             </button>
           </>
         ) : (
           <>
-            {onChoose && (
-              <button type="button" disabled={disabled} onClick={() => void onChoose()} title={t('Chọn thư mục tải xuống', 'Choose download folder')}>
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
-                {t('Chọn', 'Choose')}
-              </button>
-            )}
             <button type="button" disabled={disabled || !value.trim()} onClick={() => void save()} title={t('Lưu tên đầu ra', 'Save output name')}>
               {t('Lưu', 'Save')}
             </button>
           </>
         )}
       </div>
-      <span className="output-folder-hint">
-        {message || (!isDesktopApp && selectedRootName
-          ? t(`Sẽ lưu vào ${selectedRootName}/${value || 'flow'}.`, `Will save to ${selectedRootName}/${value || 'flow'}.`)
-          : isDesktopApp
-            ? t('Phần đầu là thư mục mặc định của APP; chỉ sửa tên thư mục hoặc tệp phía sau.', 'The APP base folder is fixed; edit only the subfolder or file name after it.')
-          : t(
-              webFolderOnly
-                ? 'Nhập tên thư mục con; ảnh và video sẽ được lưu bên trong.'
-                : 'Nhập thư mục con hoặc tên file đầu ra do bạn muốn.',
-              webFolderOnly
-                ? 'Enter a subfolder name; images and videos will be saved inside.'
-                : 'Enter your preferred output subfolder or file name.',
-            ))}
-      </span>
+      {message ? <span className="output-folder-hint">{message}</span> : null}
     </label>
   )
 }
