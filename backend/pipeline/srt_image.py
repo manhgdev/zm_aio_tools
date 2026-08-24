@@ -116,6 +116,46 @@ def parse_timeline_times(path: Path) -> list[tuple[float, float]]:
     return times
 
 
+def parse_timing_times(path: Path) -> list[tuple[float, float]]:
+    """Read either prompt TXT ranges or SRT cue ranges as media timing."""
+    if path.suffix.lower() == ".srt":
+        return parse_srt_times(path)
+    try:
+        return parse_timeline_times(path)
+    except ValueError:
+        # Pasted SRT arrives as ``timeline.txt`` from the browser.  Accept it
+        # too, rather than forcing the user to save a temporary file first.
+        return parse_srt_times(path)
+
+
+def media_duration(path: Path, image_duration: float = 5.0) -> float:
+    """Return a natural clip duration, with a stable default for still images."""
+    if not is_video(path):
+        return image_duration
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=15, check=True,
+        )
+        duration = float(json.loads(result.stdout).get("format", {}).get("duration") or 0)
+        if duration > 0:
+            return duration
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+        pass
+    return image_duration
+
+
+def sequential_media_times(media: list[Path], image_duration: float = 5.0) -> list[tuple[float, float]]:
+    """Build a no-timeline sequence: clips keep duration; images last five seconds."""
+    start = 0.0
+    cues: list[tuple[float, float]] = []
+    for source in media:
+        end = start + max(0.04, media_duration(source, image_duration))
+        cues.append((start, end))
+        start = end
+    return cues
+
+
 def image_resolution(path: Path) -> tuple[int, int]:
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -224,7 +264,7 @@ def _prepare_video_segments(
 
 def create_job(
     name: str, work: Path, images: list[Path], audio: Path | None,
-    timeline: Path, srt: Path | None, options: dict, watermark: Path | None = None,
+    timeline: Path | None, srt: Path | None, options: dict, watermark: Path | None = None,
     output_target: Path | None = None,
 ) -> dict:
     job_id = uuid.uuid4().hex[:10]
@@ -235,7 +275,7 @@ def create_job(
         "error": "", "outputSize": 0, "output": str(output), "work": str(work),
         "logs": [f"[{time.strftime('%H:%M:%S')}] Đã tạo job: {name}"],
         "images": [str(p) for p in images], "audio": str(audio) if audio else "",
-        "timeline": str(timeline), "srt": str(srt) if srt else "", "watermark": str(watermark) if watermark else "",
+        "timeline": str(timeline) if timeline else "", "srt": str(srt) if srt else "", "watermark": str(watermark) if watermark else "",
         "options": options,
     }
     with _LOCK:
@@ -618,8 +658,9 @@ def run(job_id: str) -> None:
     try:
         _log(job_id, "Đang đọc timeline và kiểm tra media…")
         media = [Path(p) for p in job["images"]]
-        cues = parse_timeline_times(Path(job["timeline"]))
-        if len(media) < len(cues):
+        timeline = str(job.get("timeline") or "")
+        cues = parse_timing_times(Path(timeline)) if timeline else sequential_media_times(media)
+        if timeline and len(media) < len(cues):
             raise ValueError(f"Thiếu ảnh/video: cần ít nhất {len(cues)} file, hiện có {len(media)}")
         durations = [
             max(0.04, (cues[i + 1][0] if i + 1 < len(cues) else end) - start)
@@ -640,6 +681,8 @@ def run(job_id: str) -> None:
             job_id,
             f"Đầu vào: {len(media)} media · {len(cues)} cảnh · {width}x{height} · {fps} FPS",
         )
+        if not timeline:
+            _log(job_id, "Không có timeline: ghép tuần tự, giữ thời lượng clip và 5 giây mỗi ảnh")
         _log(job_id, f"Encoder: {gpu_encoder or 'CPU libx264'} · quality {crf}")
         zoom_mode = str(opts.get("zoom", "off"))
         # ponytail: delogo — xóa watermark AI trước scale/zoom, tính trên frame gốc

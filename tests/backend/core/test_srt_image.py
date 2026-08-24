@@ -9,8 +9,11 @@ from pipeline.srt_image import (
     create_job,
     image_resolution,
     is_video,
+    media_duration,
     parse_srt_times,
+    parse_timing_times,
     parse_timeline_times,
+    sequential_media_times,
     shift_srt,
 )
 
@@ -116,6 +119,38 @@ def test_parse_dot_timecode_timeline(tmp_path):
         encoding="utf-8",
     )
     assert parse_timeline_times(timeline) == [(0.0, 4.0), (4.0, 10.0)]
+
+
+def test_srt_can_supply_media_timing(tmp_path):
+    timeline = tmp_path / "timeline.srt"
+    timeline.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nMột\n\n"
+        "2\n00:00:02,000 --> 00:00:05,000\nHai\n",
+        encoding="utf-8",
+    )
+
+    assert parse_timing_times(timeline) == [(0.0, 2.0), (2.0, 5.0)]
+
+
+def test_sequential_media_times_works_without_a_timeline(monkeypatch, tmp_path):
+    image = tmp_path / "001.jpg"
+    video = tmp_path / "002.mp4"
+    image.touch()
+    video.touch()
+    monkeypatch.setattr(
+        "pipeline.srt_image.media_duration",
+        lambda path, image_duration=5.0: 7.5 if path == video else image_duration,
+    )
+
+    assert sequential_media_times([image, video]) == [(0.0, 5.0), (5.0, 12.5)]
+
+
+def test_video_duration_falls_back_to_default_when_probe_fails(monkeypatch, tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.touch()
+    monkeypatch.setattr("pipeline.srt_image.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(OSError()))
+
+    assert media_duration(video) == 5.0
 
 
 def test_image_resolution_is_even(monkeypatch, tmp_path):

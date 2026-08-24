@@ -62,6 +62,8 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
   const [mediaFolder, setMediaFolder] = useState(String(cached.mediaFolder ?? ''))
   const [audioPath, setAudioPath] = useState(String(cached.audioPath ?? ''))
   const [timelinePath, setTimelinePath] = useState(String(cached.timelinePath ?? ''))
+  const [timelineText, setTimelineText] = useState(String(cached.timelineText ?? ''))
+  const [timelineMode, setTimelineMode] = useState<'file' | 'paste'>('file')
   const [srtPath, setSrtPath] = useState(String(cached.srtPath ?? ''))
   const [subtitleSize, setSubtitleSize] = useState(Number(cached.subtitleSize ?? 8))
   const [subtitleOffset, setSubtitleOffset] = useState(Number(cached.subtitleOffset ?? 0))
@@ -173,7 +175,7 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      mediaFolder, audioPath, timelinePath, srtPath, watermarkPath, outputName, outputPath,
+      mediaFolder, audioPath, timelinePath, timelineText, srtPath, watermarkPath, outputName, outputPath,
       resolution, targetPlatform, fps, crf, effect, transitionDuration, zoom, speed, volume,
       previewSeconds, encoder, removeMetadata, delogoEnabled, delogoAuto, delogoRect,
       drawingEnabled, drawingMode, drawingTool, drawingDetail, drawingThickness,
@@ -185,7 +187,7 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
       logoFadeSec, logoSafeMargin,
     }))
   }, [
-    mediaFolder, audioPath, timelinePath, srtPath, watermarkPath, outputName, outputPath,
+    mediaFolder, audioPath, timelinePath, timelineText, srtPath, watermarkPath, outputName, outputPath,
     resolution, targetPlatform, fps, crf, effect, transitionDuration, zoom, speed, volume,
     previewSeconds, encoder, removeMetadata, delogoEnabled, delogoAuto, delogoRect,
     drawingEnabled, drawingMode, drawingTool, drawingDetail, drawingThickness,
@@ -198,12 +200,16 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
   ])
 
   async function start(preview = false) {
-    if (!mediaFolder || !timelinePath) return
+    if (!mediaFolder) return
     setSending(true)
     try {
       const form = new FormData()
       form.append('media_folder', mediaFolder)
-      form.append('timeline_path', timelinePath)
+      if (timelineMode === 'paste' && timelineText.trim()) {
+        form.append('timeline', new Blob([timelineText], { type: 'text/plain;charset=utf-8' }), 'timeline.txt')
+      } else if (timelinePath) {
+        form.append('timeline_path', timelinePath)
+      }
       if (srtPath) form.append('srt_path', srtPath)
       if (audioPath) form.append('audio_path', audioPath)
       if (watermarkPath) form.append('watermark_path', watermarkPath)
@@ -275,7 +281,11 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
       if (!result.ok || !result.path) return
       const path = String(result.path)
       if (kind === 'audio') setAudioPath(path)
-      else if (kind === 'timeline') setTimelinePath(path)
+      else if (kind === 'timeline') {
+        setTimelinePath(path)
+        setTimelineText('')
+        setTimelineMode('file')
+      }
       else if (kind === 'srt') setSrtPath(path)
       else setWatermarkPath(path)
     } catch (error) {
@@ -384,7 +394,7 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
       <header>
         <div>
           <BackTitle onBack={onBack}>Ghép ảnh/video SRT</BackTitle>
-          <p>Ghép ảnh hoặc clip theo timeline, kèm audio narration và phụ đề SRT.</p>
+          <p>{t('Ghép tuần tự ảnh hoặc clip; timeline, audio và phụ đề là tùy chọn.', 'Merge images or clips sequentially; timeline, audio, and subtitles are optional.')}</p>
         </div>
       </header>
 
@@ -411,11 +421,32 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
                 <button onClick={() => chooseInputFile('audio')}>Chọn</button>
                 <button onClick={() => setAudioPath('')} disabled={!audioPath}>Xóa</button>
               </div>
-              <div className="siv-row">
-                <label>File timeline <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('timeline') }}>i</span></label>
-                <div className="siv-input"><span title={timelinePath}>{timelinePath || 'Chưa chọn file timeline (.txt)'}</span></div>
-                <button onClick={() => chooseInputFile('timeline')}>Chọn</button>
-                <button onClick={() => setTimelinePath('')} disabled={!timelinePath}>Xóa</button>
+              <div className="siv-row siv-row--timeline">
+                <label>{t('File timeline', 'Timeline file')} <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('timeline') }}>i</span></label>
+                {timelineMode === 'paste'
+                  ? <textarea
+                      className="siv-timeline-input"
+                      aria-label={t('Dán nội dung TXT hoặc SRT', 'Paste TXT or SRT content')}
+                      value={timelineText}
+                      placeholder={t('Dán nội dung TXT hoặc SRT', 'Paste TXT or SRT content')}
+                      onChange={(event) => setTimelineText(event.target.value)}
+                    />
+                  : <div className="siv-input"><span title={timelinePath}>{timelinePath || t('Không dùng timeline · ghép tuần tự', 'No timeline · merge sequentially')}</span></div>}
+                <div className="siv-row-actions" role="group" aria-label={t('Nguồn timeline', 'Timeline source')}>
+                  <div className="siv-source-switch">
+                    <button
+                      className={timelineMode === 'paste' ? 'active' : ''}
+                      aria-pressed={timelineMode === 'paste'}
+                      aria-label={timelineMode === 'paste' ? t('Đổi sang chọn file', 'Switch to file selection') : t('Đổi sang dán nội dung', 'Switch to pasted content')}
+                      onClick={() => {
+                        if (timelineMode === 'paste') setTimelineMode('file')
+                        else { setTimelinePath(''); setTimelineMode('paste') }
+                      }}
+                    >{t('Đổi', 'Switch')}</button>
+                  </div>
+                  <button onClick={() => { setTimelineMode('file'); void chooseInputFile('timeline') }}>{t('Chọn', 'Choose')}</button>
+                  <button onClick={() => { setTimelinePath(''); setTimelineText(''); setTimelineMode('file') }} disabled={!timelinePath && !timelineText}>{t('Xóa', 'Clear')}</button>
+                </div>
               </div>
               <div className="siv-row">
                 <label>File xuất <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('output') }}>i</span></label>
@@ -473,8 +504,8 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
               )}
               <p className="siv-hint">{localize(
                 locale,
-                'Timeline quyết định thời lượng từng ảnh/clip; SRT chỉ dùng để chèn phụ đề.',
-                'Timeline controls each image/clip duration; SRT is used only to insert subtitles.',
+                'Có timeline: dùng mốc thời gian trong file. Không có: ghép theo tên file, clip giữ thời lượng thật và mỗi ảnh 5 giây. SRT chỉ dùng để chèn phụ đề.',
+                'With a timeline: use its timecodes. Without one: merge by filename, keep clip duration, and show each image for 5 seconds. SRT is only for captions.',
               )}</p>
             </div>
           ) : (
@@ -600,10 +631,10 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
               <pre ref={logRef}>{logText}</pre>
             </div>
             <footer className="siv-actions">
-              <button className="primary" disabled={busy || !mediaFolder || !timelinePath} onClick={() => start(false)}>
+              <button className="primary" disabled={busy || !mediaFolder} onClick={() => start(false)}>
                 {sending ? 'ĐANG TẢI…' : 'RENDER'}
               </button>
-              <button disabled={busy || !mediaFolder || !timelinePath} onClick={() => start(true)}>Preview</button>
+              <button disabled={busy || !mediaFolder} onClick={() => start(true)}>Preview</button>
               <button disabled={!job || !['processing', 'paused'].includes(job.status)} onClick={togglePause}>
                 {job?.status === 'paused' ? 'Tiếp tục' : 'Tạm dừng'}
               </button>
@@ -687,12 +718,12 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
             <header>
               <div>
                 <small>Hướng dẫn sử dụng</small>
-                <h2 id="siv-help-title">{HELP[helpKey][0]}</h2>
+                <h2 id="siv-help-title">{helpKey === 'timeline' ? t('File timeline', 'Timeline file') : HELP[helpKey][0]}</h2>
               </div>
               <button type="button" aria-label="Đóng hướng dẫn" onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>×</button>
             </header>
-            <p>{HELP[helpKey][1]}</p>
-            <div><strong>File hoặc thiết lập cần dùng</strong><p>{HELP[helpKey][2]}</p></div>
+            <p>{helpKey === 'timeline' ? t('Có thể bỏ trống để ghép tuần tự toàn bộ media theo tên file.', 'Leave empty to merge all media sequentially by filename.') : HELP[helpKey][1]}</p>
+            <div><strong>{t('File hoặc thiết lập cần dùng', 'Required file or setting')}</strong><p>{helpKey === 'timeline' ? t('Tùy chọn. Khi dùng, mỗi timecode xác định cảnh và thời lượng tương ứng.', 'Optional. When provided, each timecode determines the matching scene and duration.') : HELP[helpKey][2]}</p></div>
             <button type="button" className="siv-help-close" onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>Đã hiểu</button>
           </section>
         </div>

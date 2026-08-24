@@ -947,7 +947,7 @@ export default function App() {
           onOpenReviewProjects={() => navigateToMode('film')}
         />
       ) : appMode === 'flow' ? (
-        <FlowPage onBack={goBackTab} />
+        <FlowPage onBack={goBackTab} onOpenSrtImage={() => navigateToMode('srt-image')} />
       ) : appMode === 'cleaner' ? (
         <VideoCleanerPage onBack={goBackTab} />
       ) : appMode === 'srt-image' ? (

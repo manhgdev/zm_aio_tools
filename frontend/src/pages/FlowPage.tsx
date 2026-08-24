@@ -399,7 +399,7 @@ function loadFlowSnapshot(): Promise<FlowSnapshot> {
   return promise;
 }
 
-export default function FlowPage({ onBack }: { onBack: () => void }) {
+export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => void; onOpenSrtImage: () => void }) {
   const { locale } = useLocale();
   const t = (vi: string, en: string) => localize(locale, vi, en);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1818,7 +1818,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
             <div className="flow-card-title">
               <b>{t(`Hàng đợi (${jobs.length})`, `Queue (${jobs.length})`)}</b>
               <div className="flow-queue-tools">
-                <button className="flow-text-button" type="button" onClick={() => setTab("queue")}>{t("Xem tất cả", "View all")}</button>
+                <button className="flow-text-button" type="button" onClick={onOpenSrtImage}>{t("Ghép thư mục media", "Merge media folder")}</button>
                 <button className="flow-text-button" type="button" disabled={!jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={cancelAllJobs}>{t("Hủy tất cả", "Cancel all")}</button>
                 <button className="flow-text-button is-danger" type="button" disabled={!jobs.length} onClick={deleteAllJobs}>{t("Xóa tất cả", "Delete all")}</button>
               </div>

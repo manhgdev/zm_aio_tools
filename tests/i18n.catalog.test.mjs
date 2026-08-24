@@ -318,6 +318,9 @@ test('Flow/Veo backend workspace uses bilingual localized UI', async () => {
   assert.match(source, /Tiền tố tên file/)
   assert.match(source, /Filename prefix/)
   assert.match(source, /3\. Thư mục kết quả/)
+  assert.match(source, /Ghép thư mục media/)
+  assert.match(source, /Merge media folder/)
+  assert.match(source, /onClick=\{onOpenSrtImage\}/)
   assert.match(source, /3\. Output folder/)
   assert.match(source, /OutputFolderField/)
   assert.match(styles, /\.flow-check input[\s\S]*width: 16px/)
@@ -792,6 +795,40 @@ test('Flow queue confines large batches to its own scroll area', async () => {
   assert.match(studioStyles, /\.drawing-job-list\{[\s\S]*max-height:min\(62vh,620px\)/)
   assert.match(cleanerStyles, /\.vc-table-wrap\s*\{\s*max-height:\s*min\(62vh, 620px\);\s*overflow:\s*auto/)
   assert.equal((batch.match(/className="studio-queue-scroll"/g) || []).length, 2)
+})
+
+test('SRT image merge accepts a media folder without a timeline file', async () => {
+  const [page, route, pipeline] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/SrtImagePage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/api/routes/srt_image.py', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/srt_image.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /if \(!mediaFolder\) return/)
+  assert.doesNotMatch(page, /!mediaFolder \|\| !timelinePath/)
+  assert.match(page, /File timeline/)
+  assert.match(page, /Timeline file/)
+  assert.match(page, /Dán nội dung TXT hoặc SRT/)
+  assert.match(page, /Paste TXT or SRT content/)
+  assert.match(page, /timelineMode === 'paste'/)
+  assert.match(page, /Đổi', 'Switch'/)
+  assert.match(page, /Đổi sang dán nội dung', 'Switch to pasted content'/)
+  assert.match(page, /if \(timelineMode === 'paste'\) setTimelineMode\('file'\)/)
+  assert.match(page, /setTimelineMode\('file'\); void chooseInputFile\('timeline'\)/)
+  assert.match(page, /timelineMode === 'paste'\s*\? <textarea/)
+  assert.match(page, /: <div className="siv-input">/)
+  assert.match(page, /useState<'file' \| 'paste'>\('file'\)/)
+  assert.match(page, /timelineMode === 'paste' && timelineText\.trim\(\)/)
+  assert.match(page, /siv-row siv-row--timeline/)
+  assert.match(page, /Đổi', 'Switch'[\s\S]*Chọn', 'Choose'[\s\S]*Xóa', 'Clear'/)
+  assert.match(page, /Nguồn timeline', 'Timeline source'/)
+  assert.match(page, /aria-label=\{timelineMode === 'paste' \? t\('Đổi sang chọn file'/)
+  const styles = await readFile(new URL('../frontend/src/pages/SrtImagePage.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.siv-source-switch\s*\{[\s\S]*gap:\s*6px/)
+  assert.match(page, /form\.append\('timeline', new Blob\(\[timelineText\]/)
+  assert.match(route, /copy_input\(timeline_path, timeline, "timeline", \{"\.txt", "\.srt"\}\)/)
+  assert.match(pipeline, /def parse_timing_times/)
+  assert.match(pipeline, /def sequential_media_times/)
+  assert.match(pipeline, /parse_timing_times\(Path\(timeline\)\) if timeline else sequential_media_times\(media\)/)
 })
 
 test('Flow never presents an empty-output job as a localized success', async () => {

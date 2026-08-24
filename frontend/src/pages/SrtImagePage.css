@@ -109,6 +109,35 @@
   align-items: center;
   gap: 8px;
 }
+.siv-row--timeline {
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+}
+.siv-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.siv-row-actions > button,
+.siv-source-switch button {
+  min-width: 58px;
+  padding: 0 9px;
+}
+.siv-source-switch {
+  display: flex;
+  gap: 6px;
+}
+.siv-source-switch button {
+  border-radius: 6px;
+  margin-left: 0;
+}
+.siv-source-switch button.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--background));
+  color: var(--primary);
+  font-weight: 700;
+  position: relative;
+  z-index: 1;
+}
 .siv-row > label:first-child {
   font-size: 0.82rem;
 }
@@ -138,6 +167,19 @@
 .siv-actions button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+.siv-timeline-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 62px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--ink);
+  padding: 8px;
+  font: 0.74rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .siv-input {
   height: 34px;
@@ -303,6 +345,13 @@
 @media (max-width: 760px) {
   .siv-row {
     grid-template-columns: 1fr 60px 52px;
+  }
+  .siv-row--timeline {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .siv-row-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-end;
   }
   .siv-row > label:first-child {
     grid-column: 1/-1;

@@ -864,7 +864,7 @@ $owner.Close()
 def api_pick_srt_image_file(kind: str):
     choices = {
         "audio": ("Chọn file audio", "Audio|*.mp3;*.wav;*.m4a;*.aac;*.flac;*.ogg|Tất cả tệp|*.*"),
-        "timeline": ("Chọn file timeline", "Timeline TXT|*.txt|Tất cả tệp|*.*"),
+        "timeline": ("Chọn file timeline", "Timeline TXT hoặc SRT|*.txt;*.srt|Tất cả tệp|*.*"),
         "srt": ("Chọn file phụ đề", "Phụ đề SRT|*.srt|Tất cả tệp|*.*"),
         "watermark": ("Chọn ảnh logo", "Ảnh|*.png;*.jpg;*.jpeg;*.jfif;*.webp;*.bmp|Tất cả tệp|*.*"),
     }

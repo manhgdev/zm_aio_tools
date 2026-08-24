@@ -163,7 +163,7 @@ async def create(
             raise HTTPException(400, f"Chưa chọn file {target_name}")
         return None
 
-    timeline_file = copy_input(timeline_path, timeline, "timeline", {".txt"}, True)
+    timeline_file = copy_input(timeline_path, timeline, "timeline", {".txt", ".srt"})
     srt_file = copy_input(srt_path, srt, "subtitles", {".srt"})
     audio_file = copy_input(
         audio_path, audio, "audio", {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"},
