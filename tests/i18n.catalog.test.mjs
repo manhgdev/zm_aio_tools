@@ -492,6 +492,19 @@ test('macOS Download and TTS selects match Clone Recognition metrics', async () 
   }
 })
 
+test('macOS Video Cleaner and subtitle export selects match Clone Recognition metrics', async () => {
+  const [cleaner, subtitleExport] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/VideoCleanerPage.css', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/SrtExportPage.css', import.meta.url), 'utf8'),
+  ])
+  for (const styles of [cleaner, subtitleExport]) {
+    assert.match(styles, /\.platform-macos[\s\S]*height: 35px;/)
+    assert.match(styles, /padding: 0 30px 0 10px;/)
+    assert.match(styles, /font-size: \.84rem;/)
+    assert.match(styles, /calc\(100% - 16px\) 50%/)
+  }
+})
+
 test('Download output folder hint stays separated from option checkboxes', async () => {
   const styles = await readFile(new URL('../frontend/src/features/download/DownloadStudio.css', import.meta.url), 'utf8')
   assert.match(styles, /\.dl-studio \.output-folder-field\s*\{[^}]*margin-bottom: 10px;/s)
