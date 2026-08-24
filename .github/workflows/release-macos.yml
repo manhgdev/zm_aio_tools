@@ -73,11 +73,16 @@ jobs:
           codesign --force --deep --sign - "$payload"
           cat > "$scripts/preinstall" <<'SCRIPT'
           #!/bin/bash
-          set -eu
+          set -u
           # Clean only legacy versioned bundles produced by earlier releases.
           for legacy in /Applications/ZM_AIO_TOOL_v*.app; do
-            [ -d "$legacy" ] && rm -rf "$legacy"
+            if [ -d "$legacy" ]; then
+              # Never turn a successful app replacement into an installer
+              # failure merely because macOS has an old bundle in use.
+              /bin/rm -rf "$legacy" || true
+            fi
           done
+          exit 0
           SCRIPT
           chmod 755 "$scripts/preinstall"
           pkg="build_app/release/ZM_AIO_TOOL_v${version}-macos-arm64.pkg"

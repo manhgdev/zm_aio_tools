@@ -183,7 +183,9 @@ def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     assert 'payload="$stage/ZM AIO TOOL.app"' in workflow
     assert 'pkgbuild --component "$payload" --scripts "$scripts" --install-location /Applications "$pkg"' in workflow
     assert 'for legacy in /Applications/ZM_AIO_TOOL_v*.app; do' in workflow
-    assert '[ -d "$legacy" ] && rm -rf "$legacy"' in workflow
+    assert 'if [ -d "$legacy" ]; then' in workflow
+    assert '/bin/rm -rf "$legacy" || true' in workflow
+    assert 'exit 0' in workflow
 
 
 def test_render_delete_is_safe_when_the_output_disappears() -> None:
