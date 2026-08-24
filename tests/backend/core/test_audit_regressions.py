@@ -193,6 +193,15 @@ def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     assert 'exit 0' in workflow
 
 
+def test_desktop_launcher_never_inherits_installer_temp_directory() -> None:
+    """Playwright must not write artifacts into a deleted PKInstallSandbox."""
+    launcher = Path("build_app/launcher.py").read_text(encoding="utf-8")
+    assert "configure_stable_temp_directory" in launcher
+    assert 'temp_dir = app_data / "tmp"' in launcher
+    assert 'for name in ("TMPDIR", "TMP", "TEMP")' in launcher
+    assert "os.environ[name] = str(temp_dir)" in launcher
+
+
 def test_render_delete_is_safe_when_the_output_disappears() -> None:
     source = Path("backend/api/routes/rendered.py").read_text(encoding="utf-8")
     assert "path.unlink(missing_ok=True)" in source

@@ -93,6 +93,25 @@ def app_home() -> Path:
 
 home = app_home()
 home.mkdir(parents=True, exist_ok=True)
+
+
+def configure_stable_temp_directory(app_data: Path) -> Path:
+    """Keep desktop work files outside a transient macOS Installer sandbox.
+
+    ``postinstall`` can launch the app while macOS still exports a TMPDIR such
+    as ``/private/tmp/PKInstallSandbox...``.  That directory disappears as
+    soon as Installer exits; Playwright then fails before opening Chrome while
+    creating its ``playwright-artifacts-*`` directory.  A private, persistent
+    app temp directory is safe for both the first launch and normal launches.
+    """
+    temp_dir = app_data / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("TMPDIR", "TMP", "TEMP"):
+        os.environ[name] = str(temp_dir)
+    return temp_dir
+
+
+configure_stable_temp_directory(home)
 os.environ["VIDEO_CLONE_DESKTOP"] = "1"
 os.environ.setdefault("VIDEO_CLONE_HOME", str(home))
 os.environ.setdefault("VIDEO_CLONE_DATA", str(home / "data"))
