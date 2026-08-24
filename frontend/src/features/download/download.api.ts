@@ -82,6 +82,10 @@ export const downloadApi = {
     return fetchJson(`${base}/jobs/clear-done`, { method: 'POST' }, 8000)
   },
 
+  async clearLogs(): Promise<{ ok: boolean; cleared: number }> {
+    return fetchJson(`${base}/logs`, { method: 'DELETE' }, 8000)
+  },
+
   fileUrl(id: string): string {
     return `${base}/jobs/${id}/file`
   },

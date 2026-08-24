@@ -51,3 +51,13 @@ def test_copy_job_subtitles_keeps_download_source_label(tmp_path: Path) -> None:
     copied = _copy_job_subtitles(project, job_dir)
     assert copied == [{"name": "captions.vi.srt", "label": "Từ Download · captions.vi.srt", "origin": "download"}]
     assert (project / "subtitles" / "captions.vi.srt").is_file()
+
+
+def test_clear_job_logs_keeps_download_jobs_and_output(monkeypatch) -> None:
+    jobs = {"job-1": {"id": "job-1", "log": ["started", "finished"], "_absPath": "/tmp/output.mp4"}}
+    monkeypatch.setattr(ytdlp_jobs, "_JOBS", jobs)
+    monkeypatch.setattr(ytdlp_jobs, "_schedule_persist", lambda: None)
+
+    assert ytdlp_jobs.clear_job_logs() == 1
+    assert jobs["job-1"]["log"] == []
+    assert jobs["job-1"]["_absPath"] == "/tmp/output.mp4"

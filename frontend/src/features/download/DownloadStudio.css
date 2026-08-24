@@ -655,6 +655,34 @@
   background: #fafbfc;
 }
 
+.dl-log-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.dl-log-actions button {
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #dbe3ee);
+  border-radius: 6px;
+  background: var(--card, #fff);
+  color: var(--primary, #2563eb);
+  font: 650 .72rem/1 inherit;
+  cursor: pointer;
+}
+
+.dl-log-actions button.danger {
+  color: #b91c1c;
+}
+
+.dl-log-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
 .dl-log summary::-webkit-details-marker {
   display: none;
 }
@@ -683,6 +711,9 @@
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   scrollbar-width: thin;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .dl-tip {

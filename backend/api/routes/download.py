@@ -21,6 +21,7 @@ from pipeline import (
 )
 from pipeline.download.ytdlp_jobs import (
     cancel_job,
+    clear_job_logs,
     clear_done_jobs,
     delete_job,
     download_root_info,
@@ -130,6 +131,12 @@ def api_download_start(body: DownloadStartIn):
 def api_download_clear_done():
     n = clear_done_jobs()
     return {"ok": True, "removed": n}
+
+
+@router.delete("/api/download/logs")
+def api_download_clear_logs():
+    """Clear diagnostics without removing queued jobs or downloaded files."""
+    return {"ok": True, "cleared": clear_job_logs()}
 
 
 @router.get("/api/download/jobs/{job_id}")

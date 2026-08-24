@@ -1,5 +1,6 @@
 from pipeline.cleaner import cleaner_ffmpeg
 import zlib
+from pipeline.cleaner import cleaner_jobs
 
 
 def test_logo_filter_uses_icon_only_fallback_when_ocr_finds_nothing(monkeypatch):
@@ -41,3 +42,12 @@ def test_logo_filter_retries_transient_runtime_decompression_error(monkeypatch):
 
     assert cleaner_ffmpeg._logo_filter("video.mp4") == "delogo=x=100:y=100:w=300:h=50:show=0"
     assert calls == 2
+
+
+def test_clear_job_logs_keeps_cleaner_jobs_and_output(monkeypatch):
+    jobs = {"job-1": {"id": "job-1", "logs": ["queued", "done"], "output_path": "/tmp/output.mp4"}}
+    monkeypatch.setattr(cleaner_jobs, "_JOBS", jobs)
+
+    assert cleaner_jobs.clear_job_logs() == 1
+    assert jobs["job-1"]["logs"] == []
+    assert jobs["job-1"]["output_path"] == "/tmp/output.mp4"

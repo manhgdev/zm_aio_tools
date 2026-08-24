@@ -505,6 +505,23 @@ test('macOS Video Cleaner and subtitle export selects match Clone Recognition me
   }
 })
 
+test('Download and Video Cleaner detailed logs are bilingual, copyable, and clearable', async () => {
+  const [download, cleaner] = await Promise.all([
+    readFile(new URL('../frontend/src/features/download/DownloadStudio.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/VideoCleanerPage.tsx', import.meta.url), 'utf8'),
+  ])
+  for (const source of [download, cleaner]) {
+    assert.match(source, /copyDetailLog/)
+    assert.match(source, /clearDetailLog/)
+    assert.match(source, /Log chi tiết/)
+    assert.match(source, /Detailed log/)
+    assert.match(source, /Sao chép/)
+    assert.match(source, /Copy/)
+  }
+  assert.match(download, /downloadApi\.clearLogs/)
+  assert.match(cleaner, /cleanerApi\.clearLogs/)
+})
+
 test('Download output folder hint stays separated from option checkboxes', async () => {
   const styles = await readFile(new URL('../frontend/src/features/download/DownloadStudio.css', import.meta.url), 'utf8')
   assert.match(styles, /\.dl-studio \.output-folder-field\s*\{[^}]*margin-bottom: 10px;/s)

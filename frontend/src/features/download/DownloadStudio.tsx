@@ -10,6 +10,7 @@ import { downloadApi } from './download.api'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { localize, useLocale } from '@/app/i18n'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
+import { copyText } from '@/shared/lib/clipboard'
 import './DownloadStudio.css'
 
 const ACTIVE = new Set(['queued', 'running'])
@@ -495,6 +496,27 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
     return lines
   }, [jobs])
 
+  const detailLog = logLines.join('\n')
+
+  async function copyDetailLog() {
+    if (!detailLog) return
+    try {
+      await copyText(detailLog)
+      alert(t('Đã sao chép log chi tiết', 'Detailed log copied'))
+    } catch {
+      setError(t('Không thể sao chép log', 'Could not copy log'))
+    }
+  }
+
+  async function clearDetailLog() {
+    try {
+      await downloadApi.clearLogs()
+      setJobs((previous) => previous.map((job) => ({ ...job, log: [] })))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('Không thể xóa log', 'Could not clear logs'))
+    }
+  }
+
   return (
     <div className="dl-studio">
       <div className="dl-shell">
@@ -823,8 +845,18 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
                 open={logOpen}
                 onToggle={(e) => setLogOpen((e.target as HTMLDetailsElement).open)}
               >
-                <summary>Log chi tiết</summary>
-                <pre>{logLines.length ? logLines.join('\n') : 'Chưa có log.'}</pre>
+                <summary>
+                  <span>{t('Log chi tiết', 'Detailed log')}</span>
+                  <span className="dl-log-actions" onClick={(event) => event.preventDefault()}>
+                    <button type="button" onClick={() => void copyDetailLog()} disabled={!detailLog}>
+                      {t('Sao chép', 'Copy')}
+                    </button>
+                    <button type="button" className="danger" onClick={() => void clearDetailLog()} disabled={!detailLog}>
+                      {t('Xóa', 'Clear')}
+                    </button>
+                  </span>
+                </summary>
+                <pre>{detailLog || t('Chưa có log.', 'No logs yet.')}</pre>
               </details>
             </section>
           </div>

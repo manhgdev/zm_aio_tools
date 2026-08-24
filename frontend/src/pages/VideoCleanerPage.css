@@ -236,6 +236,7 @@
 .vc-log-header { padding: 8px 12px; font-size: .78rem; font-weight: 550; cursor: pointer; display: flex; align-items: center; justify-content: space-between; background: var(--background, #fafbfc); }
 .vc-log-header:hover { background: #f1f5f9; }
 .vc-log-content { padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .72rem; color: #334155; border-top: 1px solid var(--border); max-height: 180px; overflow-y: auto; white-space: pre-wrap; line-height: 1.55; background: #fafbfc; cursor: text; user-select: text; -webkit-user-select: text; }
+.vc-log-clear { color: #b91c1c; }
 
 /* ── Guide ── */
 .vc-guide-wrap { margin-top: 14px; }

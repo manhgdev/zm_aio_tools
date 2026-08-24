@@ -92,6 +92,14 @@ def append_job_log(job_id: str, message: str) -> None:
         if len(logs) > 80:
             del logs[:-80]
 
+
+def clear_job_logs() -> int:
+    """Clear diagnostic lines while retaining every cleaner job and its files."""
+    with _LOCK:
+        for job in _JOBS.values():
+            job["logs"] = []
+        return len(_JOBS)
+
 def register_proc(job_id: str, proc: subprocess.Popen) -> None:
     with _LOCK:
         _PROCS[job_id] = proc

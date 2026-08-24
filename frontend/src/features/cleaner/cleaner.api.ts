@@ -30,6 +30,10 @@ export const cleanerApi = {
     return fetchJson(`${base}/${id}`, { method: 'DELETE' }, 5000)
   },
 
+  async clearLogs(): Promise<{ ok: boolean; cleared: number }> {
+    return fetchJson('/api/cleaner/logs', { method: 'DELETE' }, 5000)
+  },
+
   async reveal(id: string): Promise<{ ok: boolean }> {
     return fetchJson(`${base}/${id}/reveal`, { method: 'POST' }, 5000)
   },

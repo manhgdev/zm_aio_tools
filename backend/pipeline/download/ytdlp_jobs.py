@@ -527,6 +527,16 @@ def clear_done_jobs() -> int:
     return n
 
 
+def clear_job_logs() -> int:
+    """Clear diagnostics while retaining download jobs and their output files."""
+    with _LOCK:
+        for job in _JOBS.values():
+            job["log"] = []
+        count = len(_JOBS)
+    _schedule_persist()
+    return count
+
+
 def delete_job(job_id: str, *, delete_files: bool = True) -> bool:
     """Xóa hẳn 1 job: khỏi list, kill process, xóa thư mục file (+ parent host rỗng)."""
     with _LOCK:

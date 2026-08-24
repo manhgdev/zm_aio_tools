@@ -11,6 +11,7 @@ from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 from pipeline.cleaner.cleaner_jobs import (
     CLEANER_TEMP_DIR,
     cancel_job,
+    clear_job_logs,
     create_job,
     delete_job,
     get_job,
@@ -62,6 +63,12 @@ async def api_cleaner_start(
         start_cleaner_job(job["id"])
         
     return created_jobs
+
+
+@router.delete("/api/cleaner/logs")
+def api_cleaner_clear_logs():
+    """Clear visible diagnostics without removing queued jobs or media files."""
+    return {"ok": True, "cleared": clear_job_logs()}
 
 @router.get("/api/cleaner/jobs/{job_id}")
 def api_cleaner_get(job_id: str):

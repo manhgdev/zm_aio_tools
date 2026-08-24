@@ -309,6 +309,16 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
     }
   }
 
+  const clearDetailLog = async () => {
+    try {
+      await cleanerApi.clearLogs()
+      setLogs([])
+      setJobs((previous) => previous.map((job) => ({ ...job, logs: [] })))
+    } catch {
+      alert(t('Không thể xóa log', 'Could not clear logs'))
+    }
+  }
+
   const deleteJob = async (jobId: string) => {
     try {
       // DELETE removes the owned source cache and output on the backend, not
@@ -614,10 +624,13 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
               {/* Log chi tiết */}
               <div className="vc-log">
                 <div className="vc-log-header" onClick={() => setLogExpanded(!logExpanded)}>
-                  <span>Log chi tiết</span>
+                  <span>{t('Log chi tiết', 'Detailed log')}</span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
                     <button className="vc-btn-link" type="button" onClick={(event) => { event.stopPropagation(); void copyDetailLog() }}>
                       {t('Sao chép', 'Copy')}
+                    </button>
+                    <button className="vc-btn-link vc-log-clear" type="button" disabled={!detailLog} onClick={(event) => { event.stopPropagation(); void clearDetailLog() }}>
+                      {t('Xóa', 'Clear')}
                     </button>
                     <SvgChevron open={logExpanded} />
                   </span>
