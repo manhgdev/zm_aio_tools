@@ -566,6 +566,12 @@ test('Flow default account selection updates the account cards immediately', asy
   assert.match(source, /onClick=\{\(\) => void setDefaultAccount\(account\.id\)\}/)
 })
 
+test('Flow opens advanced quick settings by default for Veo video creation', async () => {
+  const source = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /useState\(\(\) => createKind === "video"\)/)
+  assert.match(source, /if \(item === "createVideo"\) setAdvancedOpen\(true\);/)
+})
+
 test('TTS history action menu layers above its pager', async () => {
   const [panel, styles] = await Promise.all([
     readFile(new URL('../frontend/src/features/tts/TtsHistoryPanel.tsx', import.meta.url), 'utf8'),

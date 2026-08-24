@@ -432,7 +432,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     return saved === "edit" || saved === "reference" ? saved : "text";
   });
   const [sourceFiles, setSourceFiles] = useState<File[]>([]);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(() => createKind === "video");
   const [utilityView, setUtilityView] = useState<"accounts" | "help" | null>(
     null,
   );
@@ -689,6 +689,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
     if (item === "createImage" || item === "createVideo") {
       setUtilityView(null);
       setCreateKind(item === "createImage" ? "image" : "video");
+      if (item === "createVideo") setAdvancedOpen(true);
       setSettings((current) => ({
         ...current,
         model:
