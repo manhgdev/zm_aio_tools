@@ -40,6 +40,7 @@ test('desktop update check uses bilingual in-app dialog and verified updater API
   assert.match(config, /Kiểm tra cập nhật/)
   assert.match(config, /Check for updates/)
   assert.match(config, /cfg-update-dialog/)
+  assert.match(config, /cfg-update-layer/)
   assert.match(config, /Đã là phiên bản mới nhất/)
   assert.match(config, /You are up to date/)
   assert.match(config, /Tải cập nhật/)

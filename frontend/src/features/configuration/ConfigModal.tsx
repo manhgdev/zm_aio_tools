@@ -598,23 +598,6 @@ export default function ConfigModal({
           </div>
         </header>
 
-        {updateDialog ? (
-          <div className="cfg-update-dialog" role="alertdialog" aria-live="polite" aria-label={updateDialog.title}>
-            <h3>{updateDialog.title}</h3>
-            <p>{updateDialog.detail}</p>
-            {updateDialog.kind === 'downloading' ? (
-              <div className="cfg-update-progress" aria-label={t('Tiến trình tải cập nhật', 'Update download progress')}>
-                <span style={{ width: `${updateDialog.progress || 0}%` }} />
-              </div>
-            ) : null}
-            <div className="cfg-update-actions">
-              {updateDialog.kind === 'available' ? <button type="button" className="primary" onClick={() => void downloadUpdate()}>{t('Tải cập nhật', 'Download update')}</button> : null}
-              {updateDialog.kind === 'ready' ? <button type="button" className="primary" onClick={() => void applyUpdate()}>{t('Cài cập nhật', 'Install update')}</button> : null}
-              {updateDialog.kind !== 'downloading' ? <button type="button" onClick={() => setUpdateDialog(null)}>{t('Đóng', 'Close')}</button> : null}
-            </div>
-          </div>
-        ) : null}
-
         <div className="cfg-section-tabs">
           <button
             type="button"
@@ -1044,6 +1027,40 @@ export default function ConfigModal({
           onRestore={() => setInstallProgressMinimized(false)}
         />
       </div>
+      {updateDialog ? (
+        <div
+          className="cfg-update-layer"
+          role="presentation"
+          onMouseDown={() => updateDialog.kind !== 'downloading' && setUpdateDialog(null)}
+        >
+          <section
+            className={`cfg-update-dialog is-${updateDialog.kind}`}
+            role="dialog"
+            aria-modal="true"
+            aria-live="polite"
+            aria-label={updateDialog.title}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="cfg-update-status" aria-hidden="true">
+              <span />
+            </div>
+            <div className="cfg-update-copy">
+              <h3>{updateDialog.title}</h3>
+              <p>{updateDialog.detail}</p>
+            </div>
+            {updateDialog.kind === 'downloading' ? (
+              <div className="cfg-update-progress" aria-label={t('Tiến trình tải cập nhật', 'Update download progress')}>
+                <span style={{ width: `${updateDialog.progress || 0}%` }} />
+              </div>
+            ) : null}
+            <div className="cfg-update-actions">
+              {updateDialog.kind === 'available' ? <button type="button" className="primary" onClick={() => void downloadUpdate()}>{t('Tải cập nhật', 'Download update')}</button> : null}
+              {updateDialog.kind === 'ready' ? <button type="button" className="primary" onClick={() => void applyUpdate()}>{t('Cài cập nhật', 'Install update')}</button> : null}
+              {updateDialog.kind !== 'downloading' ? <button type="button" onClick={() => setUpdateDialog(null)}>{t('Đóng', 'Close')}</button> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>,
     document.body,
   )
