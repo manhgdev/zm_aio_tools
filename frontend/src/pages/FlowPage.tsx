@@ -368,6 +368,15 @@ function normalizeFlowAccounts(rows: FlowAccount[]): FlowAccount[] {
   }));
 }
 
+function selectedFlowAccount(accounts: FlowAccount[], accountLabel: string) {
+  return (
+    accounts.find((account) => account.label === accountLabel) ||
+    accounts.find((account) => account.isDefault) ||
+    accounts.find((account) => account.status === "online") ||
+    accounts[0]
+  );
+}
+
 type FlowSnapshot = {
   accountData: { accounts: FlowAccount[] };
   jobData: { jobs: Array<Record<string, unknown>> };
@@ -488,6 +497,13 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       localStorage.setItem(IMAGE_MODE_KEY, imageMode);
     } catch {}
   }, [imageMode]);
+  useEffect(() => {
+    if (!accounts.length || accounts.some((account) => account.label === settings.account)) return;
+    const fallback = selectedFlowAccount(accounts, settings.account);
+    if (fallback) {
+      setSettings((current) => ({ ...current, account: fallback.label }));
+    }
+  }, [accounts, settings.account]);
   useEffect(() => {
     let active = true;
     const loadInitialSnapshot = async () => {
@@ -650,10 +666,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
   const latestCompletedVideo = jobs.find(
     (job) => job.kind === "video" && job.status === "done" && job.outputs?.length,
   );
-  const displayedAccount =
-    accounts.find((account) => account.label === settings.account) ||
-    accounts.find((account) => account.isDefault) ||
-    accounts[0];
+  const displayedAccount = selectedFlowAccount(accounts, settings.account);
   const statusText = (status: JobStatus) =>
     status === "processing"
       ? t("Đang xử lý", "Processing")
@@ -734,9 +747,7 @@ export default function FlowPage({ onBack }: { onBack: () => void }) {
       .split(/\n\s*\n/)
       .map((item) => item.trim())
       .filter(Boolean);
-    const account =
-      accounts.find((item) => item.label === settings.account) ||
-      accounts.find((item) => item.isDefault);
+    const account = selectedFlowAccount(accounts, settings.account);
     if (!prompts.length || !account) {
       setApiError(
         t(

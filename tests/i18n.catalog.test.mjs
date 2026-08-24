@@ -552,6 +552,13 @@ test('Flow heading keeps description and backend state compact', async () => {
   assert.match(source, /Create images and videos with Google Pro\/Ultra accounts\./)
 })
 
+test('Flow creation falls back to the connected account when an old saved label is missing', async () => {
+  const source = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
+  assert.match(source, /function selectedFlowAccount\(accounts: FlowAccount\[\], accountLabel: string\)/)
+  assert.match(source, /accounts\.find\(\(account\) => account\.status === "online"\)/)
+  assert.match(source, /const account = selectedFlowAccount\(accounts, settings\.account\);/)
+})
+
 test('Flow manual prompt provides bilingual paste and clear actions', async () => {
   const [source, styles] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
