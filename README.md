@@ -2,7 +2,7 @@
 
 Ứng dụng desktop/web để dịch, lồng tiếng, biên tập timeline và tạo video review phim. ZM AIO TOOL ưu tiên xử lý cục bộ; dịch vụ cloud chỉ được dùng khi bạn chủ động chọn và cấu hình chúng.
 
-[![Version](https://img.shields.io/badge/version-3.6.4-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-3.7.3-blue.svg)](package.json)
 [![Node](https://img.shields.io/badge/node-20%2B-green.svg)](https://nodejs.org/)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -16,7 +16,7 @@
 | **Review Phim** | Phân cảnh, phân tích nội dung, tạo lời bình, ghép TTS và xuất recap. |
 | **Hàng loạt** | Áp dụng cấu hình cho nhiều video trong hàng đợi. |
 | **Flow (Veo 3)** | Tạo ảnh hoặc video bằng tài khoản Google Flow đã kết nối, có hàng đợi, lịch sử và preview kết quả. |
-| **Text to Speech** | Tổng hợp TTS từ text/SRT; dùng giọng có sẵn hoặc giọng clone. |
+| **Text to Speech** | Tổng hợp TTS từ text/SRT; 413+ giọng từ zmAI, VieNeu, CapCut, ElevenLabs và hệ thống. |
 | **Tải video & Tools** | Tải video, Cleaner, ghép video/ảnh + audio + SRT và tạo video vẽ tay. |
 
 ## Clone Video
@@ -70,13 +70,23 @@ Tiến trình hiển thị theo stage và số mục hoàn thành. Các tác v�
 
 ## Flow (Veo 3)
 
-Flow tạo ảnh và video qua tài khoản Google Pro/Ultra đã kết nối. Chọn model, tỷ lệ, độ phân giải, số lượng và tài khoản trước khi gửi prompt vào hàng đợi.
+Flow tạo ảnh và video qua tài khoản Google **Pro** hoặc **Ultra** đã kết nối. Chọn model, tỷ lệ, độ phân giải, số lượng và tài khoản trước khi gửi prompt vào hàng đợi.
 
 - Hỗ trợ **Text → Ảnh**, **Ảnh → Ảnh**, **Tham chiếu → Ảnh** và tạo video từ prompt/khung hình.
 - Prompt có thể nhập tay, dán từ clipboard hoặc import TXT, CSV, JSON.
 - Mỗi job lưu lại model, tỷ lệ, thời lượng, tài khoản, output và trạng thái để xem lại/chạy lại.
 - WEB: chọn thư mục một lần để tự ghi output vào `ZM_AIO_TOOL/flow/<tên-thư-mục>/` khi hoàn thành. APP lưu vào thư mục output đã chọn.
 - Có preview video mới nhất, hàng đợi, lịch sử, log, hủy/xóa từng job hoặc toàn bộ hàng đợi.
+
+### Model theo gói tài khoản
+
+| Model | Pro | Ultra |
+|---|:---:|:---:|
+| Veo 3.1 - Lite | ✅ | ✅ |
+| Veo 3.1 - Fast | ✅ | ✅ |
+| Veo 3.1 - Quality | ✅ | ✅ |
+| Omni Flash | ✅ | ✅ |
+| Veo 3.1 - Lite [Lower Priority] | ❌ | ✅ |
 
 ![Flow (Veo 3)](previews/flow.png)
 
@@ -93,7 +103,7 @@ Công cụ Vẽ tay biến ảnh thành video mô phỏng quá trình vẽ. Ch�
 
 ## TTS và phần cứng
 
-- Giọng hệ thống, zmAI, VieNeu, CapCut và ElevenLabs.
+- **413+ giọng** từ zmAI (online catalog), VieNeu, CapCut, ElevenLabs và giọng hệ thống — hiển thị đầy đủ trên cả web lẫn app.
 - Hồ sơ người nói gồm tên vai, màu caption và giọng; đổi giọng sẽ tạo lại TTS của đúng vai đó.
 - NVIDIA dùng CUDA khi runtime tương thích; Apple Silicon dùng Metal/CoreML khi hỗ trợ; nếu không sẽ fallback CPU.
 - FFmpeg dùng encoder phần cứng khi máy và bản FFmpeg hỗ trợ.
@@ -159,6 +169,7 @@ npm run dev:all
 | `npm run test:i18n` | Kiểm tra catalog Việt/Anh. |
 | `npm run build:app` | Đóng gói desktop app. |
 | `npm run check:build` | Kiểm tra artifact desktop. |
+| `npm run release -- patch` | Bump patch version, tạo tag và push lên GitHub (trigger CI build). |
 
 ## Cấu hình cloud tùy chọn
 
@@ -177,12 +188,16 @@ Không commit file `.env` hoặc API key vào Git.
 ## Đóng gói và phát hành
 
 ```bash
-npm run build:app
+# Phát hành patch (ví dụ 3.7.3 → 3.7.4) — bump version + tag + push trong một lệnh
+npm run release -- patch
+
+# Hoặc chỉ định thẳng version
+npm run release -- 3.8.0
 ```
 
-Artifact local được tạo trong `build_app/release/`. GitHub Actions build macOS và Windows khi push tag theo dạng `v*` (ví dụ `v3.3.7`) và đính kèm package vào GitHub Release.
+Artifact local được tạo trong `build_app/release/`. GitHub Actions build macOS và Windows khi push tag theo dạng `v*` và đính kèm package vào GitHub Release. Tên file `.pkg`/`.zip` phải khớp với tag — script `release` đảm bảo điều này tự động.
 
-Trước khi tag release:
+Trước khi release:
 
 ```bash
 npm run test:i18n
