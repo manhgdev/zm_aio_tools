@@ -21,7 +21,7 @@ export type SeriesGenSettings = {
   duration: string
   resolution: string
 }
-export type FlowAccount = { id: string; label: string; status: string }
+export type FlowAccount = { id: string; label: string; status: string; plan?: 'Ultra' | 'Pro' }
 
 type SeriesRun = {
   runId: string
@@ -786,7 +786,7 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
                           onChange={(e) => saveSeriesSettings({ model: e.target.value })}
                           aria-label={t('Model video', 'Video model')}
                         >
-                          {VIDEO_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                          {VIDEO_MODELS.filter((m) => m !== 'Veo 3.1 - Lite [Lower Priority]' || accounts.find((a) => a.id === seriesSettings.accountId)?.plan === 'Ultra').map((m) => <option key={m} value={m}>{m}</option>)}
                         </select>
                       </div>
                       <div className="fsp-auto-field">

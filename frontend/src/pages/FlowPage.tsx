@@ -1612,7 +1612,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         )}
         {utilityView === "series" && (
           <FlowSeriesPanel
-            accounts={accounts.map((acc) => ({ id: acc.id, label: acc.label, status: acc.status }))}
+            accounts={accounts.map((acc) => ({ id: acc.id, label: acc.label, status: acc.status, plan: acc.plan }))}
             onOpenScene={(context) => {
               setSeriesDraft(context);
               setUtilityView(null);
@@ -1888,7 +1888,11 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   }
                   options={
                     createKind === "video"
-                      ? [...FLOW_VIDEO_MODELS]
+                      ? FLOW_VIDEO_MODELS.filter(
+                          (m) =>
+                            m !== "Veo 3.1 - Lite [Lower Priority]" ||
+                            selectedFlowAccount(accounts, settings.account)?.plan === "Ultra",
+                        )
                       : [...FLOW_IMAGE_MODELS]
                   }
                 />
