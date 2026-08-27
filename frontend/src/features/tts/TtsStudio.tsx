@@ -325,16 +325,18 @@ export default function TtsStudio({
   const activeVoiceTag = voiceFilterTags.includes(voiceTag) ? voiceTag : ''
   const visibleEngineVoices = useMemo(() => {
     const query = voiceQuery.trim().toLocaleLowerCase('vi')
+    const langFilter = lang && lang !== 'auto' ? lang.split('-')[0] : ''
     return engineVoices.filter((v) => {
       const metadata = voiceMetadata(v)
+      const matchesLang = !langFilter || !v.language || v.language.split('-')[0] === langFilter
       const matchesTag = !activeVoiceTag || metadata.tags.some((tag) => tag.label === activeVoiceTag)
       const matchesQuery = !query || [v.name, metadata.description, ...metadata.tags.map((tag) => tag.label)]
         .join(' ')
         .toLocaleLowerCase('vi')
         .includes(query)
-      return matchesTag && matchesQuery
+      return matchesLang && matchesTag && matchesQuery
     })
-  }, [activeVoiceTag, engineVoices, voiceQuery])
+  }, [activeVoiceTag, engineVoices, lang, voiceQuery])
   const voiceListPageCount = Math.max(1, Math.ceil(visibleEngineVoices.length / voiceListPageSize))
   const safeVoiceListPage = Math.min(voiceListPage, voiceListPageCount)
   const pagedEngineVoices = useMemo(() => {
