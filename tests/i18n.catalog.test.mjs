@@ -45,6 +45,8 @@ test('desktop update check uses bilingual in-app dialog and platform updater API
   assert.match(config, /You are up to date/)
   assert.match(config, /Tải cập nhật/)
   assert.match(config, /Download update/)
+  assert.match(config, /aria-valuenow=\{updateProgress\}/)
+  assert.match(config, /\{updateProgress\}%/)
   assert.match(api, /checkAppUpdate/)
   assert.match(api, /installAppUpdate/)
   assert.match(api, /getAppUpdateStatus/)

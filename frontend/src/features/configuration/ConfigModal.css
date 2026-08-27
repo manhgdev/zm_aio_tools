@@ -117,7 +117,9 @@
 .cfg-update-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .cfg-update-actions button { min-height: 34px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--foreground); font-size: .78rem; font-weight: 750; }
 .cfg-update-actions button.primary { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
-.cfg-update-progress { height: 7px; margin-top: 16px; overflow: hidden; border-radius: 999px; background: var(--line); }
+.cfg-update-progress-label { display: flex; justify-content: space-between; align-items: baseline; margin-top: 16px; color: var(--muted-foreground); font-size: .75rem; font-weight: 650; }
+.cfg-update-progress-label strong { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.cfg-update-progress { height: 7px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: var(--line); }
 .cfg-update-progress span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width .2s ease; }
 
 @keyframes cfg-update-spin { to { transform: rotate(360deg); } }

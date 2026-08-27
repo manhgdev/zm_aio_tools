@@ -561,6 +561,8 @@ export default function ConfigModal({
     }
   }
 
+  const updateProgress = Math.max(0, Math.min(100, Math.round(Number(updateDialog?.progress) || 0)))
+
   if (!open) return null
 
   return createPortal(
@@ -1049,9 +1051,22 @@ export default function ConfigModal({
               <p>{updateDialog.detail}</p>
             </div>
             {updateDialog.kind === 'downloading' ? (
-              <div className="cfg-update-progress" aria-label={t('Tiến trình tải cập nhật', 'Update download progress')}>
-                <span style={{ width: `${updateDialog.progress || 0}%` }} />
-              </div>
+              <>
+                <div className="cfg-update-progress-label">
+                  <span>{t('Tiến trình tải', 'Download progress')}</span>
+                  <strong>{updateProgress}%</strong>
+                </div>
+                <div
+                  className="cfg-update-progress"
+                  role="progressbar"
+                  aria-label={t('Tiến trình tải cập nhật', 'Update download progress')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={updateProgress}
+                >
+                  <span style={{ width: `${updateProgress}%` }} />
+                </div>
+              </>
             ) : null}
             <div className="cfg-update-actions">
               {updateDialog.kind === 'available' ? <button type="button" className="primary" onClick={() => void downloadUpdate()}>{t('Tải cập nhật', 'Download update')}</button> : null}
