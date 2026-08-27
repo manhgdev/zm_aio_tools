@@ -113,7 +113,7 @@ def download_reference(item: dict[str, Any], destination: Path) -> None:
     """Download one demo then normalize it to the WAV format required by VieNeu."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     source = destination.with_suffix(".download")
-    pending = destination.with_name(f".{destination.name}.tmp")
+    pending = destination.with_name(f".{destination.stem}.tmp{destination.suffix}")
     source.unlink(missing_ok=True)
     pending.unlink(missing_ok=True)
     try:

@@ -796,8 +796,7 @@ class FlowService:
             try:
                 relative = selected.relative_to(flow_root)
             except ValueError:
-                # Outside flow_root — still add kind subfolder for consistency with web
-                folder = selected / kind
+                folder = selected
             else:
                 parts = list(relative.parts)
                 if parts and parts[0] in {"image", "video"}:

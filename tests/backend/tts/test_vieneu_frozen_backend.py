@@ -1,5 +1,23 @@
 """Frozen VieNeu picks backend from runtime venv, not PyInstaller parent."""
 
+from pathlib import Path
+
+
+def test_frozen_worker_loads_reference_without_torchcodec() -> None:
+    from pipeline.tts.engines import vieneu_frozen as vf
+
+    worker_definitions = vf._WORKER_SCRIPT.rsplit('\nif __name__ == "__main__":', 1)[0]
+    reference = Path("backend/resources/voice-ref/adam-low-tone.wav").resolve()
+    result = vf._run_runtime(
+        worker_definitions
+        + f"\n_enable_torchaudio_soundfile_fallback()\n"
+        + f"import torchaudio\nwav, sr = torchaudio.load({str(reference)!r})\n"
+        + "print(wav.shape[0], sr)\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1 24000"
+
 
 def test_frozen_resolve_backend_cuda(monkeypatch) -> None:
     # Seam thật: resolve_backend uỷ quyền accel.preferred_vieneu_backend

@@ -43,6 +43,31 @@ def _register():
     except Exception:
         pass
 
+def _enable_torchaudio_soundfile_fallback():
+    import torchaudio
+    if getattr(torchaudio.load, "_videoclone_soundfile_fallback", False):
+        return
+    native_load = torchaudio.load
+    def load(uri, *args, **kwargs):
+        try:
+            return native_load(uri, *args, **kwargs)
+        except (ImportError, RuntimeError) as exc:
+            if "torchcodec" not in str(exc).lower() or not isinstance(uri, (str, os.PathLike)):
+                raise
+            import soundfile as sf
+            import torch
+            frame_offset = int(kwargs.get("frame_offset", 0) or 0)
+            num_frames = int(kwargs.get("num_frames", -1) or -1)
+            channels_first = bool(kwargs.get("channels_first", True))
+            samples, sample_rate = sf.read(
+                str(uri), start=max(0, frame_offset),
+                frames=num_frames if num_frames > 0 else -1,
+                dtype="float32", always_2d=True,
+            )
+            return torch.from_numpy(samples.T if channels_first else samples), sample_rate
+    load._videoclone_soundfile_fallback = True
+    torchaudio.load = load
+
 def _prepare_cuda_weight_load(backend, device):
     if backend != "pytorch" or not str(device).startswith("cuda"):
         return
@@ -89,6 +114,7 @@ def main():
             if op == "init":
                 backend = msg.get("backend") or "pytorch"
                 device = msg.get("device") or "cuda"
+                _enable_torchaudio_soundfile_fallback()
                 _prepare_cuda_weight_load(backend, device)
                 _register()
                 from vieneu import Vieneu

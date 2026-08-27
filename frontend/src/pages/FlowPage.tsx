@@ -253,9 +253,8 @@ function normalizeLegacyFlowOutputDir(value: string) {
 function flowConfiguredOutputFolder(value: string, kind: CreateKind) {
   const outputDir = normalizeLegacyFlowOutputDir(value);
   if (!outputDir) return "";
-  // A desktop selection may already be an absolute path.
-  // Always append the kind subfolder (image/video) for consistency with web.
-  if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir)) return `${outputDir}/${kind}`;
+  // A desktop picker result is the exact output folder selected by the user.
+  if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir)) return outputDir;
   return `ZM_AIO_TOOL/flow/${kind}/${outputDir.replace(/^[\\/]+/, "")}`;
 }
 function flowOutputParentPath(output?: string) {

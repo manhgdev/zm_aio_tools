@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from pipeline.tts.engines import vieneu
-from pipeline.tts import voice_store
+from pipeline.tts import voice_store, zmtss_catalog
 
 
 class _FakeClient:
@@ -16,6 +16,35 @@ class _FakeClient:
     def encode_reference(self, path: Path, denoise: bool = False):
         self.calls += 1
         return f"embedding-{self.calls}", f"codes-{self.calls}"
+
+
+def test_zmtts_normalization_uses_wav_extension_for_ffmpeg_output(tmp_path, monkeypatch) -> None:
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _size):
+            return b""
+
+    output_paths = []
+
+    def run(command, **_kwargs):
+        output = Path(command[-1])
+        output_paths.append(output)
+        output.write_bytes(b"0" * 1024)
+        return type("Result", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(zmtss_catalog.urllib.request, "urlopen", lambda *_args, **_kwargs: _Response())
+    monkeypatch.setattr(zmtss_catalog.subprocess, "run", run)
+
+    destination = tmp_path / "zmt-demo.wav"
+    zmtss_catalog.download_reference({"id": "demo", "audio": "audio/demo.mp3"}, destination)
+
+    assert output_paths[0].suffix == ".wav"
+    assert destination.is_file()
 
 
 def test_reference_voice_list_excludes_missing_audio(tmp_path, monkeypatch) -> None:
