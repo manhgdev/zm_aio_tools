@@ -339,8 +339,7 @@ export default function App() {
     void api.passSetupGate().catch(() => {
       /* file gate — localStorage vẫn giữ */
     })
-    const l = settings.targetLang === 'none' ? 'vi' : settings.targetLang
-    void api.voices(l).then(setVoices).catch(() => {})
+    void api.voices('all').then(setVoices).catch(() => {})
   }
 
   // Lần đầu: Thiết lập. Lần sau: đọc gate từ disk (ổn định hơn localStorage theo port).
@@ -408,7 +407,7 @@ export default function App() {
   useEffect(() => {
     const ac = new AbortController()
     const t = window.setTimeout(() => ac.abort(), 8000)
-    fetch(`/api/voices?lang=${encodeURIComponent(settings.targetLang === 'none' ? 'vi' : settings.targetLang)}`, {
+    fetch(`/api/voices?lang=all`, {
       signal: ac.signal,
     })
       .then(async (r) => {
@@ -865,8 +864,7 @@ export default function App() {
         forceSetup={firstRunBlocked}
         onSetupReady={passSetupGate}
         onSaved={() => {
-          const l = settings.targetLang === 'none' ? 'vi' : settings.targetLang
-          void api.voices(l).then(setVoices).catch(() => {})
+          void api.voices('all').then(setVoices).catch(() => {})
         }}
         licenseStatus={licenseStatus || undefined}
         onLicenseStatusChange={setLicenseStatus}
@@ -874,8 +872,7 @@ export default function App() {
           if (firstRunBlocked) return
           setConfigOpen(false)
           // đóng config cũng refresh voices (user có thể vừa lưu key)
-          const l = settings.targetLang === 'none' ? 'vi' : settings.targetLang
-          void api.voices(l).then(setVoices).catch(() => {})
+          void api.voices('all').then(setVoices).catch(() => {})
         }}
       />
       {licenseBlocked && (
@@ -893,9 +890,8 @@ export default function App() {
           sideOpen={ttsSideOpen}
           onBack={goBackTab}
           onSideOpenChange={setTtsSideOpen}
-          onRefreshVoices={(lang) => {
-            const l = lang || (settings.targetLang === 'none' ? 'vi' : settings.targetLang)
-            void api.voices(l).then(setVoices).catch(() => {})
+          onRefreshVoices={() => {
+            void api.voices('all').then(setVoices).catch(() => {})
           }}
           isDesktopApp={isDesktopApp}
         />
