@@ -202,6 +202,15 @@ def test_desktop_launcher_never_inherits_installer_temp_directory() -> None:
     assert "os.environ[name] = str(temp_dir)" in launcher
 
 
+def test_desktop_launcher_uses_an_os_assigned_loopback_port() -> None:
+    """The packaged app must not reserve or scan a user-visible fixed port."""
+    launcher = Path("build_app/launcher.py").read_text(encoding="utf-8")
+    assert "api_socket.bind((API_HOST, 0))" in launcher
+    assert 'kwargs={"sockets": [api_socket]}' in launcher
+    assert "API_PORT_PREFERRED" not in launcher
+    assert "API_PORT_SCAN" not in launcher
+
+
 def test_render_delete_is_safe_when_the_output_disappears() -> None:
     source = Path("backend/api/routes/rendered.py").read_text(encoding="utf-8")
     assert "path.unlink(missing_ok=True)" in source

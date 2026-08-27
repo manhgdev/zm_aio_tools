@@ -466,34 +466,6 @@ app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
 
 
 API_HOST = "127.0.0.1"
-API_PORT_PREFERRED = 8787
-API_PORT_SCAN = 100  # ponytail: 8787–8886, rồi OS chọn port ngẫu nhiên
-
-
-def _port_in_use(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        return sock.connect_ex((host, port)) == 0
-
-
-def pick_api_port(
-    host: str = API_HOST,
-    preferred: int = API_PORT_PREFERRED,
-    span: int = API_PORT_SCAN,
-) -> int:
-    """Chọn port trống — ưu tiên preferred, tránh đụng app khác trên 8787."""
-    for port in range(preferred, preferred + span):
-        if _port_in_use(host, port):
-            continue
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind((host, port))
-                return port
-            except OSError:
-                continue
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind((host, 0))
-        return int(sock.getsockname()[1])
 
 
 def api_base(port: int) -> str:
@@ -642,14 +614,22 @@ def run_desktop() -> int:
         append_log(f"[desktop] start v{APP_VERSION}")
     except Exception:
         traceback.print_exc()
-    port = pick_api_port()
+    # The desktop app only needs a private loopback endpoint; let the OS assign it.
+    # Keep this socket open until Uvicorn adopts it so another process cannot claim it.
+    api_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    api_socket.bind((API_HOST, 0))
+    port = int(api_socket.getsockname()[1])
     os.environ["VIDEO_CLONE_PORT"] = str(port)
     base = api_base(port)
-    print(f"{APP_DISPLAY_NAME} API → {base}", flush=True)
 
     config = uvicorn.Config(app, host=API_HOST, port=port, log_level="error")
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, name="videoclone-api", daemon=True)
+    thread = threading.Thread(
+        target=server.run,
+        kwargs={"sockets": [api_socket]},
+        name="videoclone-api",
+        daemon=True,
+    )
     thread.start()
     _t0 = time.monotonic()
     print(f"{APP_DISPLAY_NAME} v{APP_VERSION} — chờ API...", flush=True)
@@ -732,6 +712,7 @@ def run_desktop() -> int:
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+        api_socket.close()
 
 
 if __name__ == "__main__":
