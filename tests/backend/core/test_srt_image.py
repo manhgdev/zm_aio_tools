@@ -13,6 +13,7 @@ from pipeline.srt_image import (
     image_resolution,
     is_video,
     media_duration,
+    preview_media_window,
     parse_srt_times,
     parse_timing_times,
     parse_timeline_times,
@@ -27,6 +28,17 @@ def test_missing_media_can_be_skipped_only_after_confirmation():
     with pytest.raises(ValueError, match="cần ít nhất 3 file, hiện có 2"):
         select_cues_for_media(cues, 2, allow_missing=False)
     assert select_cues_for_media(cues, 2, allow_missing=True) == cues[:2]
+
+
+def test_preview_only_prepares_media_needed_for_requested_output_duration():
+    media = [Path("001.png"), Path("002.png"), Path("003.png")]
+    selected, durations = preview_media_window(media, [10.0, 10.0, 10.0], 15.0, 1.0)
+    assert selected == media[:2]
+    assert durations == [10.0, 5.0]
+
+    selected, durations = preview_media_window(media, [10.0, 10.0, 10.0], 15.0, 2.0)
+    assert selected == media
+    assert durations == [10.0, 10.0, 10.0]
 
 
 def test_parse_srt_times(tmp_path):

@@ -138,6 +138,23 @@ def select_cues_for_media(
     return cues[:media_count]
 
 
+def preview_media_window(
+    media: list[Path], durations: list[float], preview_seconds: float, speed: float,
+) -> tuple[list[Path], list[float]]:
+    if preview_seconds <= 0:
+        return media, durations
+    remaining = preview_seconds * speed
+    selected_media: list[Path] = []
+    selected_durations: list[float] = []
+    for source, duration in zip(media, durations):
+        if remaining <= 0:
+            break
+        selected_media.append(source)
+        selected_durations.append(min(duration, remaining))
+        remaining -= duration
+    return selected_media, selected_durations
+
+
 def media_duration(path: Path, image_duration: float = 5.0) -> float:
     """Return a natural clip duration, with a stable default for still images."""
     if not is_video(path):
@@ -678,6 +695,11 @@ def run(job_id: str) -> None:
             for i, (start, end) in enumerate(cues)
         ]
         opts = job["options"]
+        speed = max(25, min(400, float(opts.get("speed", 100)))) / 100
+        preview = max(0, min(120, float(opts.get("previewSeconds", 0))))
+        media, durations = preview_media_window(media, durations, preview, speed)
+        if preview:
+            _log(job_id, f"Preview {preview:g}s: chỉ chuẩn bị {len(media)} media đầu tiên")
         work = Path(job["work"])
         media = _drawing_video_sources(job_id, media, durations, opts, work)
         resolution = str(opts.get("resolution", "auto"))
@@ -731,9 +753,7 @@ def run(job_id: str) -> None:
             lines.append(f"file '{media[len(durations) - 1].resolve().as_posix()}'")
         concat.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        speed = max(25, min(400, float(opts.get("speed", 100)))) / 100
         volume = max(0, min(300, float(opts.get("volume", 100)))) / 100
-        preview = max(0, min(120, float(opts.get("previewSeconds", 0))))
         subtitle_font = str(opts.get("subtitleFontFamily", "system"))
         subtitle_size = max(6, min(120, int(opts.get("subtitleSize", 8))))
         subtitle_margin = max(0, min(1000, int(opts.get("subtitleMargin", 34))))
@@ -819,7 +839,7 @@ def run(job_id: str) -> None:
             cmd += ["-map", f"{audio_index}:a:0", "-af", f"volume={volume:.3f},atempo={speed:.6f}",
                     "-c:a", "aac", "-b:a", "192k", "-shortest"]
         if preview:
-            cmd += ["-t", str(preview / speed)]
+            cmd += ["-t", str(preview)]
         if opts.get("removeMetadata"):
             cmd += ["-map_metadata", "-1", "-metadata", "encoder="]
         cmd += ["-movflags", "+faststart", job["output"]]
@@ -832,7 +852,7 @@ def run(job_id: str) -> None:
         )
         with _LOCK:
             _PROCS[job_id] = proc
-        total = max(end for _, end in cues)
+        total = sum(durations) / speed
         assert proc.stderr
         stderr_tail: list[str] = []
         last_logged_percent = -10

@@ -923,8 +923,8 @@ function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacit
             />
           ) : (
             <>
-              {/* Nền: ảnh thật khi delogo bật, gradient khi không */}
-              {delogoEnabled && mediaFolder ? (
+              {/* Media thật luôn hiển thị; delogo chỉ điều khiển vùng chọn logo. */}
+              {mediaFolder ? (
                 <>
                   <img
                     src={`/api/srt-image/media-thumb?folder=${encodeURIComponent(mediaFolder)}&index=${thumbIdx}`}
