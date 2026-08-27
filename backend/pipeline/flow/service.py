@@ -60,7 +60,66 @@ class FlowService:
         # Queue order is FIFO: the first prompt stays at the top and is the
         # first job resumed after an app restart.  History can still sort by
         # timestamp in the UI when a newest-first view is appropriate.
-        return sorted(store.list_rows("jobs"), key=lambda row: row.get("createdAt", 0))
+        rows: list[dict[str, Any]] = []
+        for row in sorted(store.list_rows("jobs"), key=lambda item: item.get("createdAt", 0)):
+            item = self._migrate_legacy_kind_output_folder(dict(row))
+            # The queue must expose the same concrete folder used by the
+            # worker; the saved setting can legitimately be just "test".
+            settings = item.get("settings")
+            if isinstance(settings, dict) and str(settings.get("outputDir") or "").strip():
+                output_dir = str(settings.get("outputDir") or "")
+                # The queue must always report the same on-disk folder used
+                # by the worker, including in the browser build.
+                item["displayOutputFolder"] = str(self._display_output_folder(item))
+                item["outputFolder"] = str(self._output_folder(item, create=False))
+            rows.append(item)
+        return rows
+
+    def _migrate_legacy_kind_output_folder(self, job: dict[str, Any]) -> dict[str, Any]:
+        """Move legacy flat Flow outputs into ``flow/<kind>/<user-name>``."""
+        settings = job.get("settings")
+        kind = str(job.get("kind") or "")
+        if not isinstance(settings, dict) or kind not in {"video", "image"}:
+            return job
+        original = str(settings.get("outputDir") or "").strip()
+        normalized = original.replace("\\", "/").rstrip("/")
+        suffixes = (f"/{kind}", f"-{kind}")
+        base = next((normalized[: -len(suffix)] for suffix in suffixes if normalized.endswith(suffix)), normalized)
+        if not base:
+            return job
+        migrated = dict(job)
+        migrated_settings = dict(settings)
+        migrated_settings["outputDir"] = base
+        migrated["settings"] = migrated_settings
+        target_folder = self._output_folder(migrated)
+        migrated_outputs = []
+        source_folders: set[Path] = set()
+        for raw_output in job.get("outputs") or []:
+            output = Path(str(raw_output))
+            target = target_folder / output.name
+            if output != target and output.is_file():
+                source_folders.add(output.parent)
+                if not target.exists():
+                    shutil.move(str(output), str(target))
+            migrated_outputs.append(str(target if target.exists() else output))
+        for source_folder in source_folders:
+            try:
+                source_folder.rmdir()
+            except OSError:
+                pass
+        migrated["outputs"] = migrated_outputs
+        migrated["outputFolder"] = str(target_folder)
+        if (
+            original != base
+            or migrated_outputs != list(job.get("outputs") or [])
+            or (bool(job.get("outputFolder")) and str(job.get("outputFolder")) != str(target_folder))
+        ):
+            store.patch_row("jobs", str(job.get("id") or ""), {
+                "settings": migrated_settings,
+                "outputs": migrated_outputs,
+                "outputFolder": str(target_folder),
+            })
+        return migrated
 
     def logs(self) -> list[dict[str, Any]]:
         return sorted(store.list_rows("logs"), key=lambda row: row.get("createdAt", 0), reverse=True)[:1000]
@@ -172,11 +231,48 @@ class FlowService:
                 count += 1
         return count
 
+    def cancel_output_folder_jobs(self, output_dir: str, kind: str = "") -> int:
+        """Cancel only queued or running jobs stored in one Flow folder."""
+        selected = str(output_dir or "").strip()
+        if not selected:
+            return 0
+        count = 0
+        for job in self.jobs():
+            if str((job.get("settings") or {}).get("outputDir") or "").strip() != selected:
+                continue
+            if kind and str(job.get("kind") or "") != kind:
+                continue
+            if job.get("status") not in _TERMINAL and self.cancel(str(job["id"])):
+                count += 1
+        return count
+
     def delete_all_jobs(self) -> int:
         count = 0
         for job in self.jobs():
             if self.delete_job(str(job["id"])):
                 count += 1
+        return count
+
+    def delete_output_folder_jobs(self, output_dir: str, kind: str = "") -> int:
+        """Delete only the jobs and real artifacts belonging to one Flow folder."""
+        selected = str(output_dir or "").strip()
+        if not selected:
+            return 0
+        matched = [
+            job for job in self.jobs()
+            if str((job.get("settings") or {}).get("outputDir") or "").strip() == selected
+            and (not kind or str(job.get("kind") or "") == kind)
+        ]
+        if not matched:
+            return 0
+        folder = self._output_folder(matched[0], create=False)
+        count = 0
+        for job in matched:
+            if self.delete_job(str(job["id"])):
+                count += 1
+        # Remove untracked remnants too (for example an interrupted download),
+        # but only after restricting the operation to the matched output path.
+        shutil.rmtree(folder, ignore_errors=True)
         return count
 
     def connect(self, account_id: str) -> dict[str, Any]:
@@ -244,6 +340,7 @@ class FlowService:
         if input_type not in {"prompt", "txt", "csv", "json"}:
             input_type = "prompt"
         source_files = list(payload.get("sourceFiles") or [])
+        series_context = dict(payload.get("seriesContext") or {})
         if kind == "image":
             if str(settings.get("model") or "Nano Banana 2") not in _IMAGE_UI_MODELS:
                 raise ValueError(f"Unsupported Flow image model: {settings.get('model')}")
@@ -260,10 +357,16 @@ class FlowService:
                 "mode": mode, "prompt": prompt, "accountId": account_id,
                 "inputType": input_type,
                 "settings": settings, "sourceFiles": source_files,
+                "seriesContext": series_context,
                 "status": "queued", "stage": "queued", "progress": 0, "mediaIds": [], "outputs": [],
                 "error": None, "createdAt": now, "updatedAt": now,
             }
+            job["outputFolder"] = str(self._output_folder(job, create=False))
+            job["displayOutputFolder"] = str(self._display_output_folder(job))
             store.put_row("jobs", job)
+            if series_context:
+                from . import series
+                series.register_job(job)
             self._log("info", "job_queued", job_id=job["id"], account_id=account_id, details={"kind": job["kind"], "inputIndex": index})
             created.append(job)
             threading.Thread(target=self._run_sync, args=(job["id"],), daemon=True, name=f"flow-job-{job['id']}").start()
@@ -647,6 +750,9 @@ class FlowService:
             if not self._outputs_exist(outputs):
                 raise RuntimeError("FLOW_EMPTY_OUTPUT: generation finished without a downloaded media file")
             store.patch_row("jobs", job_id, {"status": "done", "stage": "done", "progress": 100, "outputs": outputs, "updatedAt": time.time()})
+            if job.get("seriesContext"):
+                from . import series
+                series.mark_job_complete(job, outputs)
             self._log("success", "job_completed", job_id=job_id, account_id=account["id"], details={"outputCount": len(outputs)})
         except asyncio.CancelledError:
             store.patch_row("jobs", job_id, {"status": "cancelled", "stage": "cancelled", "progress": 0, "updatedAt": time.time()})
@@ -655,24 +761,45 @@ class FlowService:
             action = "action_required" if "LOGIN_REQUIRED" in str(exc) or "recaptcha" in str(exc).lower() else "failed"
             failed_stage = (store.get_row("jobs", job_id) or {}).get("stage")
             store.patch_row("jobs", job_id, {"status": action, "stage": action, "error": str(exc), "updatedAt": time.time()})
+            if job.get("seriesContext"):
+                from . import series
+                series.mark_job_error(job, str(exc))
             self._log("error", "job_failed", job_id=job_id, account_id=account["id"], message=str(exc), details={"stage": failed_stage})
         finally:
             if browser:
                 await browser.stop()
 
     def _output_folder(self, job: dict[str, Any], *, create: bool = True) -> Path:
-        """Return the requested Flow folder without hidden time/job subfolders."""
+        """Return ``flow/<kind>/<user-name>`` without hidden job folders."""
         settings = job.get("settings") or {}
-        selected = Path(str(settings.get("outputDir") or "")).expanduser()
-        desktop = os.environ.get("VIDEO_CLONE_DESKTOP") == "1"
-        if desktop:
-            return selected_or_default("flow", str(settings.get("outputDir") or ""))
-        root = PUBLIC_DATA / "flow"
-        folder_name = safe_output_part(settings.get("outputDir") or "results", "results")
-        folder = root / folder_name
+        selected = Path(str(settings.get("outputDir") or "results")).expanduser()
+        kind = safe_output_part(job.get("kind") or "video", "video")
+        series_context = job.get("seriesContext") or {}
+        if series_context:
+            root = selected_or_default("flow", "")
+            series_root = root / kind / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series")
+            folder = series_root / "anchors" if series_context.get("artifact") == "anchor" else series_root / f"tap-{int(series_context.get('episodeIndex') or 1):02d}" / f"canh-{int(series_context.get('sceneIndex') or 1):03d}"
+        elif selected.is_absolute():
+            flow_root = selected_or_default("flow", "")
+            try:
+                relative = selected.relative_to(flow_root)
+            except ValueError:
+                folder = selected
+            else:
+                parts = list(relative.parts)
+                if parts and parts[0] in {"image", "video"}:
+                    parts = parts[1:]
+                folder = flow_root / kind / safe_output_part(parts[-1] if parts else "results", "results")
+        else:
+            root = selected_or_default("flow", "")
+            folder = root / kind / safe_output_part(selected, "results")
         if create:
             folder.mkdir(parents=True, exist_ok=True)
         return folder
+
+    def _display_output_folder(self, job: dict[str, Any]) -> Path:
+        """Return the real worker destination shown in the queue UI."""
+        return self._output_folder(job, create=False)
 
     def _output_path(self, job: dict[str, Any], output_index: int, suffix: str) -> Path:
         folder = self._output_folder(job)

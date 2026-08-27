@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from pipeline.srt_image import (
+    _drawing_video_sources,
     _ffmpeg_subtitle,
     _log,
     _logo_position,
@@ -171,6 +172,39 @@ def test_video_extensions():
     assert is_video(Path("002.webm"))
     assert not is_video(Path("003.png"))
     assert not is_video(Path("004.jfif"))
+
+
+def test_drawing_mode_only_renders_still_images(monkeypatch, tmp_path):
+    image = tmp_path / "001.png"
+    video = tmp_path / "002.mp4"
+    drawing_output = tmp_path / "drawing-source.mp4"
+    work = tmp_path / "work"
+    image.touch()
+    video.touch()
+    drawing_output.touch()
+    work.mkdir()
+    submitted: list[Path] = []
+
+    def create_drawing(name, source, options):
+        submitted.append(source)
+        return {"id": "drawing-1"}
+
+    monkeypatch.setattr("pipeline.srt_image.create_drawing_job", create_drawing)
+    monkeypatch.setattr("pipeline.srt_image.start_drawing_job", lambda _job_id: None)
+    monkeypatch.setattr(
+        "pipeline.srt_image.get_drawing_job",
+        lambda _job_id: {"status": "done", "output": str(drawing_output)},
+    )
+    monkeypatch.setattr("pipeline.srt_image._log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("pipeline.srt_image._update", lambda *_args, **_kwargs: None)
+
+    rendered = _drawing_video_sources(
+        "srt-image-test", [image, video], [5.0, 5.0],
+        {"drawing": {"enabled": True}}, work,
+    )
+
+    assert submitted == [image]
+    assert rendered[1] == video
 
 
 def test_create_job_uses_selected_output(tmp_path):

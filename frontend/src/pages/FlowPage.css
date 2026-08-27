@@ -478,7 +478,7 @@
 }
 .flow-queue-list {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   /* Keep large batches usable: actions and the first queued job remain in
      view while the list itself scrolls. */
   max-height: min(68vh, 680px);
@@ -486,6 +486,90 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding-right: 3px;
+}
+.flow-queue-kind-tabs {
+  display: inline-flex;
+  gap: 3px;
+  width: fit-content;
+  margin: 0 0 8px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.flow-queue-kind-tabs button {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.flow-queue-kind-tabs button.is-active {
+  background: var(--primary);
+  color: #fff;
+}
+.flow-queue-group-item {
+  display: grid;
+  gap: 6px;
+}
+.flow-queue-kind-section {
+  display: grid;
+  gap: 6px;
+}
+.flow-queue-kind-section + .flow-queue-kind-section {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 12px;
+}
+.flow-queue-kind-title {
+  margin: 0 0 1px;
+  color: var(--primary);
+  font-size: 0.78rem;
+  line-height: 1.15;
+}
+.flow-queue-kind-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0 4px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 45%, transparent);
+}
+.flow-queue-kind-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.flow-queue-kind-header > .flow-queue-folder-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  min-width: max-content;
+}
+.flow-queue-folder-actions .flow-text-button.is-warning {
+  color: #c57913 !important;
+}
+.flow-queue-folder-actions .flow-text-button.is-danger {
+  color: #c93646 !important;
+}
+.flow-queue-kind-header small,
+.flow-job-folder {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-queue-kind-header small {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .flow-queue-job {
   display: grid;
@@ -1009,6 +1093,9 @@
     justify-items: start;
     grid-auto-flow: column;
     justify-content: start;
+  }
+  .flow-queue-kind-header {
+    align-items: flex-start;
   }
   .flow-result-grid {
     grid-template-columns: 1fr;
@@ -1590,6 +1677,17 @@
   }
 }
 @media (max-width: 720px) {
+  .flow-rail,
+  .flow-rail.is-open {
+    width: 52px;
+  }
+  .flow-rail nav button span,
+  .flow-rail-credit {
+    display: none;
+  }
+  .flow-workspace {
+    padding: 16px 12px 28px;
+  }
   .flow-image-modes,
   .flow-advanced {
     grid-template-columns: 1fr;
@@ -1611,3 +1709,6 @@
     grid-column: 1 / -1;
   }
 }
+.flow-series-breadcrumb { grid-column:1 / -1; display:flex; align-items:center; gap:10px; padding:10px 13px; border:1px solid #b9dce9; border-radius:10px; background:#f2fbff; color:#176f99; font-size:13px; }
+.flow-series-breadcrumb small { color:#607486; flex:1; }
+.flow-series-breadcrumb button { min-height:30px; font-size:12px; }

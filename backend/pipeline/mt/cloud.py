@@ -242,6 +242,7 @@ def _gemini_generate(
     model: str,
     prompt: str,
     timeout: float = 120.0,
+    max_output_tokens: int = 2048,
 ) -> str:
     # base: .../v1beta  →  .../v1beta/models/{model}:generateContent
     root = (base_url or "").rstrip("/")
@@ -271,7 +272,7 @@ def _gemini_generate(
                     headers={"Content-Type": "application/json"},
                     json={
                         "contents": [{"parts": [{"text": prompt}]}],
-                        "generationConfig": {"temperature": 0, "maxOutputTokens": 2048},
+                        "generationConfig": {"temperature": 0, "maxOutputTokens": max_output_tokens},
                     },
                 )
             except httpx.TransportError:

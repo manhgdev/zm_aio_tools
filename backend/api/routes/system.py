@@ -382,6 +382,14 @@ def api_get_config():
     return public_app_config()
 
 
+@router.post("/api/system/resolve-output-folder")
+def api_resolve_output_folder(tab: str = "flow", output: str = ""):
+    """Resolve a feature output name to the exact desktop folder used by workers."""
+    from pipeline.core.output_paths import selected_or_default
+
+    return {"path": str(selected_or_default(tab, output))}
+
+
 @router.post("/api/config")
 def api_save_config(body: AppConfigIn):
     from pipeline.core.app_config import public_app_config, save_app_config

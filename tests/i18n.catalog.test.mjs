@@ -318,9 +318,12 @@ test('Flow/Veo backend workspace uses bilingual localized UI', async () => {
   assert.match(source, /Tiền tố tên file/)
   assert.match(source, /Filename prefix/)
   assert.match(source, /3\. Thư mục kết quả/)
-  assert.match(source, /Ghép thư mục media/)
-  assert.match(source, /Merge media folder/)
-  assert.match(source, /onClick=\{onOpenSrtImage\}/)
+  assert.match(source, /t\("Video", "Videos"\)/)
+  assert.match(source, /t\("Ảnh", "Images"\)/)
+  assert.match(source, /openSrtImageWithFlowFolder/)
+  assert.match(source, /appFolder=\{`flow\/\$\{createKind\}`\}/)
+  assert.doesNotMatch(source, /flowKindOutputFolder/)
+  assert.match(source, /function normalizeLegacyFlowOutputDir/)
   assert.match(source, /3\. Output folder/)
   assert.match(source, /OutputFolderField/)
   assert.match(styles, /\.flow-check input[\s\S]*width: 16px/)
@@ -646,9 +649,9 @@ test('Flow default account selection updates the account cards immediately', asy
   assert.match(source, /onClick=\{\(\) => void setDefaultAccount\(account\.id\)\}/)
 })
 
-test('Flow opens advanced quick settings by default for Veo video creation', async () => {
+test('Flow opens advanced quick settings by default for image and video creation', async () => {
   const source = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
-  assert.match(source, /useState\(\(\) => createKind === "video"\)/)
+  assert.match(source, /const \[advancedOpen, setAdvancedOpen\] = useState\(true\)/)
   assert.match(source, /if \(item === "createVideo"\) setAdvancedOpen\(true\);/)
 })
 
@@ -753,13 +756,35 @@ test('Flow WEB output saves automatically into a user-authorized folder', async 
   assert.match(source, /outputDir: defaultFlowOutputFolder\(\)/)
   assert.match(source, /settings: effectiveSettings/)
   assert.match(source, /function flowOutputFolderName/)
+  assert.match(source, /const queueGroups = useMemo/)
+  assert.match(source, /const queueKindGroups = useMemo/)
+  assert.match(source, /aria-label=\{t\("Loại hàng đợi", "Queue type"\)\}/)
+  assert.match(source, /t\("Tất cả", "All"\)/)
+  assert.match(source, /new Map<string, \{ kind: CreateKind; outputDir: string; outputFolder: string; displayOutputFolder: string; jobs: FlowJob\[\] \}>\(\)/)
+  assert.doesNotMatch(source, /outputDir: flowKindOutputFolder/)
+  assert.match(source, /function flowConfiguredOutputFolder/)
+  assert.match(source, /\/Users\/manhg\/Downloads\/ZM_AIO_TOOL\/flow\/\$\{kind\}\//)
+  assert.match(source, /function flowOutputParentPath/)
+  assert.match(source, /isDesktopApp \? flowOutputParentPath/)
+  assert.match(source, /t\("Thư mục kết quả", "Output folder"\)/)
+  assert.match(source, /queueFolderLabel\(group\.kind, group\.outputDir, group\.outputFolder, group\.displayOutputFolder\)/)
+  assert.match(source, /openSrtImageWithFlowFolder\(queueFolderLabel\(group\.kind, group\.outputDir, group\.outputFolder, group\.displayOutputFolder\)\)/)
+  assert.match(source, /const deleteFolderJobs/)
+  assert.match(source, /const cancelFolderJobs/)
+  assert.match(source, /\/api\/flow\/jobs\/delete-folder/)
+  assert.match(source, /\/api\/flow\/jobs\/cancel-folder/)
   assert.match(source, /async function writeFlowOutputToDirectory/)
   assert.match(source, /ZM_AIO_TOOL/)
   assert.match(source, /root\.name === "ZM_AIO_TOOL"/)
   assert.match(source, /showDirectoryPicker/)
   assert.match(source, /saveWebOutputRoot/)
   assert.match(source, /loadWebOutputRoot/)
-  assert.match(source, /writeFlowOutputToDirectory\(item\.job, item\.outputIndex, root, settings\.outputDir\)/)
+  assert.match(source, /function flowOutputFolderParts/)
+  assert.match(source, /setWebOutputRootReady\(true\)/)
+  assert.match(source, /Đã lưu output Flow vào thư mục đã chọn\./)
+  assert.match(source, /Flow output saved to the selected folder\./)
+  assert.match(source, /flowOutputDirectory\(root, job\.kind, outputFolder, true\)/)
+  assert.match(source, /writeFlowOutputToDirectory\(item\.job, item\.outputIndex, root, item\.job\.settings\.outputDir\)/)
   assert.match(source, /async function deleteFlowOutputFromDirectory/)
   assert.match(source, /await file\.getFile\(\)/)
   assert.match(source, /await target\.removeEntry\(sourceName\)/)
@@ -798,10 +823,11 @@ test('Flow queue confines large batches to its own scroll area', async () => {
 })
 
 test('SRT image merge accepts a media folder without a timeline file', async () => {
-  const [page, route, pipeline] = await Promise.all([
+  const [page, route, pipeline, app] = await Promise.all([
     readFile(new URL('../frontend/src/pages/SrtImagePage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../backend/api/routes/srt_image.py', import.meta.url), 'utf8'),
     readFile(new URL('../backend/pipeline/srt_image.py', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/app/App.tsx', import.meta.url), 'utf8'),
   ])
   assert.match(page, /if \(!mediaFolder\) return/)
   assert.doesNotMatch(page, /!mediaFolder \|\| !timelinePath/)
@@ -809,6 +835,8 @@ test('SRT image merge accepts a media folder without a timeline file', async () 
   assert.match(page, /Timeline file/)
   assert.match(page, /Dán nội dung TXT hoặc SRT/)
   assert.match(page, /Paste TXT or SRT content/)
+  assert.match(page, /Vẽ ảnh tĩnh thành video/)
+  assert.match(page, /Turn still images into drawing videos/)
   assert.match(page, /timelineMode === 'paste'/)
   assert.match(page, /Đổi', 'Switch'/)
   assert.match(page, /Đổi sang dán nội dung', 'Switch to pasted content'/)
@@ -829,6 +857,10 @@ test('SRT image merge accepts a media folder without a timeline file', async () 
   assert.match(pipeline, /def parse_timing_times/)
   assert.match(pipeline, /def sequential_media_times/)
   assert.match(pipeline, /parse_timing_times\(Path\(timeline\)\) if timeline else sequential_media_times\(media\)/)
+  assert.match(page, /initialMediaFolder = ''/)
+  assert.match(page, /setMediaFolder\(initialMediaFolder\)/)
+  assert.match(app, /setSrtImageInitialMediaFolder\(mediaFolder\)/)
+  assert.match(app, /initialMediaFolder=\{srtImageInitialMediaFolder\}/)
 })
 
 test('Flow never presents an empty-output job as a localized success', async () => {
@@ -840,6 +872,63 @@ test('Flow never presents an empty-output job as a localized success', async () 
   assert.match(service, /_outputs_exist\(outputs\)/)
   assert.match(source, /Flow không trả về file video\/ảnh\. Job chưa thành công\./)
   assert.match(source, /Flow returned no video\/image file\. The job did not succeed\./)
+})
+
+test('Flow Series keeps bilingual project, continuity, and scene actions', async () => {
+  const [page, panel, service] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowSeriesPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/flow/series.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /\["series", IconBook, t\("Series", "Series"\)\]/)
+  assert.match(panel, /t\('Tạo keyframe', 'Create keyframe'\)/)
+  assert.match(panel, /t\('Video', 'Video'\)/)
+  assert.match(panel, /t\('Nối cảnh', 'Continue'\)/)
+  assert.match(panel, /t\('Chưa có ảnh neo\. Bạn vẫn có thể tạo keyframe bằng prompt\.', 'No anchor image yet\. You can still create a keyframe from the prompt\.'\)/)
+  assert.match(panel, /t\('Chưa có tập\. Thêm tập đầu tiên để tạo các cảnh\.', 'No episode yet\. Add the first episode to create scenes\.'\)/)
+  assert.match(panel, /loading="lazy"/)
+  assert.match(service, /"seriesSlug"/)
+  assert.match(service, /"endFrame"/)
+})
+
+test('Flow Series generates a bilingual locked anchor through the connected Flow account', async () => {
+  const [page, panel, route] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowSeriesPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/api/routes/flow.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(panel, /t\('Tạo ảnh neo', 'Generate anchor image'\)/)
+  assert.match(panel, /t\('Đã gửi job tạo ảnh neo\. Ảnh hoàn thành sẽ tự thêm và khóa\.', 'Anchor image job queued\. The completed image will be added and locked automatically\.'\)/)
+  assert.match(page, /\/anchors\/generate/)
+  assert.match(route, /@router\.post\("\/series\/\{series_id\}\/anchors\/generate"\)/)
+})
+
+test('Flow Series offers a bilingual guide and server-side Cloud TXT drafting', async () => {
+  const panel = await readFile(new URL('../frontend/src/pages/FlowSeriesPanel.tsx', import.meta.url), 'utf8')
+  const route = await readFile(new URL('../backend/api/routes/flow.py', import.meta.url), 'utf8')
+  assert.match(panel, /t\('Hướng dẫn nhập Series', 'Series input guide'\)/)
+  assert.match(panel, /t\('Soạn TXT bằng Cloud', 'Draft TXT with Cloud'\)/)
+  assert.match(panel, /t\('Nhập TXT thành Series', 'Import TXT as Series'\)/)
+  assert.match(panel, /request<\{ text: string \}>\('\/series\/draft'/)
+  assert.match(route, /@router\.post\("\/series\/draft"\)/)
+})
+
+test('Flow Series panel is addressable and keeps legacy Series rows safe', async () => {
+  const [page, panel, series] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowSeriesPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/flow/series.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /URLSearchParams\(window\.location\.search\)\.get\("p"\)/)
+  assert.match(page, /writeFlowRoutePanel\("series"\)/)
+  assert.match(panel, /function normalizeSeries/)
+  assert.match(series, /normalized\.setdefault\("assets", \[\]\)/)
+})
+
+test('Flow rail gives utility panels a single active item', async () => {
+  const page = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
+  assert.match(page, /\(!utilityView && id === tab\) \|\|\s*id === utilityView/)
+  assert.match(page, /\};\s*applyRoute\(\);\s*window\.addEventListener\("popstate", applyRoute\)/)
 })
 
 test('desktop APP and detailed logs allow selecting and copying text', async () => {

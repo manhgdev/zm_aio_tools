@@ -53,7 +53,7 @@ function cachedSettings(): Record<string, unknown> {
   }
 }
 
-export default function SrtImagePage({ onBack }: { onBack: () => void }) {
+export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBack: () => void; initialMediaFolder?: string }) {
   const { locale } = useLocale()
   const t = (vietnamese: string, english: string) => localize(locale, vietnamese, english)
   const cached = useRef(cachedSettings()).current
@@ -133,6 +133,12 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
   const [sending, setSending] = useState(false)
   const [logStart, setLogStart] = useState(0)
   const settingsSnapshot = useRef('')
+
+  useEffect(() => {
+    if (!initialMediaFolder) return
+    setMediaFolder(initialMediaFolder)
+    setTab('project')
+  }, [initialMediaFolder])
 
   // A render owns a server-side workspace.  Restore that workspace after an
   // F5 instead of leaving the user with an empty page while FFmpeg continues.
@@ -581,7 +587,7 @@ export default function SrtImagePage({ onBack }: { onBack: () => void }) {
                 </label>}
               </div>
               <div className="siv-logo siv-drawing-settings">
-                <div className="siv-logo-head"><strong>{t('Vẽ ảnh thành video', 'Turn images into drawing videos')}</strong><label><input type="checkbox" checked={drawingEnabled} onChange={(e) => setDrawingEnabled(e.target.checked)} /> {t('Bật', 'Enable')}</label></div>
+                <div className="siv-logo-head"><strong>{t('Vẽ ảnh tĩnh thành video', 'Turn still images into drawing videos')}</strong><label><input type="checkbox" checked={drawingEnabled} onChange={(e) => setDrawingEnabled(e.target.checked)} /> {t('Bật', 'Enable')}</label></div>
                 <p className="siv-hint">{t('Mỗi ảnh tĩnh được vẽ thành clip theo đúng thời lượng timeline trước khi ghép. Video có sẵn giữ nguyên.', 'Each still image becomes a drawing clip for its timeline duration before merging. Existing videos remain unchanged.')}</p>
                 {drawingEnabled && <div className="siv-set-row siv-set-row--four">
                   <label><span className="siv-setting-title">{t('Kiểu vẽ', 'Drawing style')}</span><select value={drawingMode} onChange={(e) => setDrawingMode(e.target.value)}><option value="hand">{t('Tay + bút', 'Hand + pen')}</option><option value="drawing">{t('Vẽ nét', 'Strokes')}</option></select></label>

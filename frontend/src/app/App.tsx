@@ -85,6 +85,7 @@ export default function App() {
   const localeChangedRef = useRef(false)
   const [dark, setDark] = useState(loadTheme)
   const [appMode, setAppMode] = useState<AppMode>(loadAppMode)
+  const [srtImageInitialMediaFolder, setSrtImageInitialMediaFolder] = useState('')
   const tabPrev = useRef<AppMode[]>([])
   const [hw, setHw] = useState<HardwareInfo>({ label: 'CPU', accel: 'cpu' })
   const [voices, setVoices] = useState<{ id: string; name: string; previewUrl?: string }[]>([
@@ -262,7 +263,7 @@ export default function App() {
     persistAppMode(appMode)
     // Các thao tác nội bộ (ví dụ “Dùng trong Clone” từ Download) cũng đổi URL.
     // replaceState tránh tạo một lịch sử giả; click tab vẫn dùng pushState ở dưới.
-    const destination = appModePath(appMode)
+    const destination = appModePath(appMode) + (appMode === 'flow' ? window.location.search : '')
     if (window.location.pathname !== destination) {
       window.history.replaceState({ appMode }, '', destination)
     }
@@ -281,7 +282,7 @@ export default function App() {
 
   const navigateToMode = (mode: AppMode, fromBack = false) => {
     if (mode !== appMode && !fromBack) tabPrev.current.push(appMode)
-    const destination = appModePath(mode)
+    const destination = appModePath(mode) + (mode === 'flow' ? window.location.search : '')
     if (fromBack) {
       window.history.replaceState({ appMode: mode }, '', destination)
     } else if (window.location.pathname !== destination) {
@@ -947,11 +948,14 @@ export default function App() {
           onOpenReviewProjects={() => navigateToMode('film')}
         />
       ) : appMode === 'flow' ? (
-        <FlowPage onBack={goBackTab} onOpenSrtImage={() => navigateToMode('srt-image')} />
+        <FlowPage onBack={goBackTab} onOpenSrtImage={(mediaFolder) => {
+          setSrtImageInitialMediaFolder(mediaFolder)
+          navigateToMode('srt-image')
+        }} />
       ) : appMode === 'cleaner' ? (
         <VideoCleanerPage onBack={goBackTab} />
       ) : appMode === 'srt-image' ? (
-        <SrtImagePage onBack={goBackTab} />
+        <SrtImagePage onBack={goBackTab} initialMediaFolder={srtImageInitialMediaFolder} />
       ) : appMode === 'srt-export' ? (
         <SrtExportPage onBack={goBackTab} />
       ) : appMode === 'drawing' ? (

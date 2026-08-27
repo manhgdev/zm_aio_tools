@@ -38,6 +38,71 @@ def test_flow_jobs_keep_first_created_prompt_at_top(monkeypatch):
     ]
 
 
+def test_flow_jobs_report_the_full_selected_output_folder(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIDEO_CLONE_DESKTOP", "1")
+    monkeypatch.setattr(output_paths_module.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        service_module.store,
+        "list_rows",
+        lambda name: [{"id": "job-1", "createdAt": 1, "settings": {"outputDir": "test"}}] if name == "jobs" else [],
+    )
+
+    [job] = service_module.FlowService().jobs()
+
+    assert job["outputFolder"] == str(tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video" / "test")
+    assert job["displayOutputFolder"] == str(tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video" / "test")
+
+
+def test_flow_web_jobs_report_the_real_download_output_folder(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIDEO_CLONE_DESKTOP", raising=False)
+    monkeypatch.setattr(output_paths_module.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        service_module.store,
+        "list_rows",
+        lambda name: [{
+            "id": "job-1",
+            "createdAt": 1,
+            "kind": "image",
+            "settings": {"outputDir": "test"},
+            "outputFolder": "/backend/public/flow/test",
+        }] if name == "jobs" else [],
+    )
+
+    [job] = service_module.FlowService().jobs()
+
+    expected = str(tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "image" / "test")
+    assert job["outputFolder"] == expected
+    assert job["displayOutputFolder"] == expected
+
+
+def test_flow_jobs_migrate_legacy_kind_suffix_back_to_configured_folder(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIDEO_CLONE_DESKTOP", raising=False)
+    monkeypatch.setattr(service_module, "PUBLIC_DATA", tmp_path / "public")
+    monkeypatch.setattr(output_paths_module.Path, "home", lambda: tmp_path)
+    flow = service_module.FlowService()
+    job = {
+        "id": "legacy-video",
+        "inputIndex": 1,
+        "kind": "video",
+        "createdAt": 1,
+        "status": "done",
+        "settings": {"outputDir": "test-video", "filePrefix": "flow"},
+        "outputs": [],
+    }
+    legacy_output = tmp_path / "public" / "flow" / "test-video" / "001__legacy-video__flow_01.mp4"
+    legacy_output.parent.mkdir(parents=True)
+    legacy_output.write_bytes(b"video")
+    job["outputs"] = [str(legacy_output)]
+    monkeypatch.setattr(service_module.store, "list_rows", lambda name: [job] if name == "jobs" else [])
+    monkeypatch.setattr(service_module.store, "patch_row", lambda _table, _id, patch: job.update(patch) or dict(job))
+
+    [migrated] = flow.jobs()
+
+    assert migrated["settings"]["outputDir"] == "test"
+    assert Path(migrated["outputs"][0]).parent == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video" / "test"
+    assert not (tmp_path / "public" / "flow" / "test-video").exists()
+
+
 def test_shared_nested_output_folder_sanitizes_every_component(tmp_path):
     folder = nested_output_folder(tmp_path, "Campaign August", "job / 123")
 
@@ -57,7 +122,7 @@ def test_app_default_outputs_share_one_root_with_feature_subfolders(monkeypatch,
 
 def test_flow_outputs_share_root_and_job_delete_removes_the_right_child(monkeypatch, tmp_path):
     monkeypatch.delenv("VIDEO_CLONE_DESKTOP", raising=False)
-    monkeypatch.setattr(service_module, "PUBLIC_DATA", tmp_path / "public")
+    monkeypatch.setattr(output_paths_module.Path, "home", lambda: tmp_path)
     flow = service_module.FlowService()
     job = {
         "id": "job-123",
@@ -70,13 +135,53 @@ def test_flow_outputs_share_root_and_job_delete_removes_the_right_child(monkeypa
     output.touch()
     job["outputs"] = [str(output)]
 
-    assert output == tmp_path / "public" / "flow" / "Campaign-August" / "001__job-123__launch-video_01.mp4"
+    assert output == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video" / "Campaign-August" / "001__job-123__launch-video_01.mp4"
 
     monkeypatch.setattr(service_module.store, "get_row", lambda _table, job_id: job if job_id == job["id"] else None)
     monkeypatch.setattr(service_module.store, "delete_row", lambda _table, job_id: job_id == job["id"])
 
     assert flow.delete_job("job-123") is True
     assert not output.parent.exists()
+
+
+def test_flow_delete_output_folder_removes_only_that_folder_and_its_jobs(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIDEO_CLONE_DESKTOP", raising=False)
+    monkeypatch.setattr(output_paths_module.Path, "home", lambda: tmp_path)
+    flow = service_module.FlowService()
+    jobs = {
+        "video-a": {"id": "video-a", "kind": "video", "status": "done", "settings": {"outputDir": "folder-a"}, "outputs": []},
+        "video-b": {"id": "video-b", "kind": "video", "status": "done", "settings": {"outputDir": "folder-b"}, "outputs": []},
+    }
+    for job in jobs.values():
+        output = flow._output_path({**job, "inputIndex": 1}, 1, "mp4")
+        output.write_bytes(b"video")
+        job["outputs"] = [str(output)]
+    (flow._output_folder(jobs["video-a"]) / "untracked.tmp").write_text("leftover", encoding="utf-8")
+    monkeypatch.setattr(service_module.store, "list_rows", lambda name: list(jobs.values()) if name == "jobs" else [])
+    monkeypatch.setattr(service_module.store, "get_row", lambda _table, job_id: jobs.get(job_id))
+    monkeypatch.setattr(service_module.store, "delete_row", lambda _table, job_id: jobs.pop(job_id, None) is not None)
+
+    assert flow.delete_output_folder_jobs("folder-a") == 1
+    assert "video-a" not in jobs
+    assert "video-b" in jobs
+    root = tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video"
+    assert not (root / "folder-a").exists()
+    assert (root / "folder-b").exists()
+
+
+def test_flow_cancel_output_folder_only_cancels_matching_active_jobs(monkeypatch):
+    flow = service_module.FlowService()
+    jobs = [
+        {"id": "a", "kind": "video", "status": "processing", "settings": {"outputDir": "folder-a"}},
+        {"id": "b", "kind": "video", "status": "queued", "settings": {"outputDir": "folder-b"}},
+        {"id": "c", "kind": "video", "status": "done", "settings": {"outputDir": "folder-a"}},
+    ]
+    cancelled: list[str] = []
+    monkeypatch.setattr(service_module.store, "list_rows", lambda name: jobs if name == "jobs" else [])
+    monkeypatch.setattr(flow, "cancel", lambda job_id: cancelled.append(job_id) or {"id": job_id})
+
+    assert flow.cancel_output_folder_jobs("folder-a", "video") == 1
+    assert cancelled == ["a"]
 
 
 def test_desktop_flow_uses_full_selected_output_path(monkeypatch, tmp_path):
@@ -118,8 +223,21 @@ def test_desktop_flow_resolves_relative_result_folder_under_downloads(monkeypatc
 
     output = flow._output_path(job, 1, "png")
 
-    assert output.parent == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "campaign-images"
+    assert output.parent == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "image" / "campaign-images"
     assert output.parent.is_dir()
+
+
+def test_flow_image_and_video_with_the_same_name_use_separate_kind_folders(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIDEO_CLONE_DESKTOP", "1")
+    monkeypatch.setattr(output_paths_module.Path, "home", lambda: tmp_path)
+    flow = service_module.FlowService()
+    common = {"inputIndex": 1, "settings": {"outputDir": "campaign", "filePrefix": "result"}}
+
+    image = flow._output_path({"id": "image-job", "kind": "image", **common}, 1, "png")
+    video = flow._output_path({"id": "video-job", "kind": "video", **common}, 1, "mp4")
+
+    assert image.parent == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "image" / "campaign"
+    assert video.parent == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video" / "campaign"
 
 
 def test_flow_delete_active_job_cancels_and_removes_it(monkeypatch):

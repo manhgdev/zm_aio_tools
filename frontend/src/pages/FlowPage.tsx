@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { localize, useLocale } from "@/app/i18n";
 import {
   IconBatch,
@@ -11,15 +12,18 @@ import {
 } from "@/shared/components/Icons";
 import { BackTitle } from "@/shared/components/BackTitle";
 import { OutputFolderField } from "@/shared/components/OutputFolderField";
+import FlowSeriesPanel, { type FlowSeriesSceneContext } from "./FlowSeriesPanel";
 import "./FlowPage.css";
 
 type FlowTab = "create" | "queue" | "history" | "logs";
+type FlowRoutePanel = "image" | "video" | "series" | "queue" | "history" | "logs" | "accounts" | "help";
 type RailItem =
   | "createImage"
   | "createVideo"
   | "queue"
   | "history"
   | "accounts"
+  | "series"
   | "logs"
   | "help";
 type JobStatus = "processing" | "queued" | "done" | "failed" | "cancelled";
@@ -37,9 +41,12 @@ type FlowJob = {
   progress: number;
   account: string;
   output?: string;
+  outputFolder?: string;
+  displayOutputFolder?: string;
   outputs?: string[];
   accountId?: string;
   error?: string | null;
+  seriesContext?: { seriesTitle?: string; episodeIndex?: number; sceneIndex?: number; artifact?: string };
   settings: {
     model: string;
     ratio: string;
@@ -74,6 +81,8 @@ type FlowLog = {
 
 type FlowSettings = {
   model: string;
+  videoModel: string;
+  imageModel: string;
   ratio: string;
   duration: string;
   count: number;
@@ -84,7 +93,6 @@ type FlowSettings = {
   seed: string;
   format: string;
   filePrefix: string;
-  enhancePrompt: boolean;
   referenceStrength: number;
   autoDownload: boolean;
 };
@@ -103,6 +111,24 @@ const FLOW_IMAGE_MODELS = [
 const isVideoModel = (model: string) => FLOW_VIDEO_MODELS.includes(model as (typeof FLOW_VIDEO_MODELS)[number]);
 const isImageModel = (model: string) =>
   FLOW_IMAGE_MODELS.includes(model as (typeof FLOW_IMAGE_MODELS)[number]);
+
+function settingsForCreateKind(settings: FlowSettings, kind: CreateKind): FlowSettings {
+  const model = kind === "image" ? settings.imageModel : settings.videoModel;
+  return {
+    ...settings,
+    model: kind === "image"
+      ? isImageModel(model) ? model : "Nano Banana 2"
+      : isVideoModel(model) ? model : "Veo 3.1 - Fast",
+  };
+}
+
+function settingsWithSelectedModel(settings: FlowSettings, kind: CreateKind, model: string): FlowSettings {
+  return {
+    ...settings,
+    model,
+    ...(kind === "image" ? { imageModel: model } : { videoModel: model }),
+  };
+}
 const DRAFT_KEY = "zm-flow-veo:draft:v1";
 const SETTINGS_KEY = "zm-flow-veo:settings:v1";
 const WEB_AUTO_DOWNLOAD_DEFAULT_KEY = "zm-flow-veo:web-auto-download:v1";
@@ -111,7 +137,25 @@ const TAB_KEY = "zm-flow-veo:tab:v1";
 const RAIL_KEY = "zm-flow-veo:rail:v1";
 const ACCOUNTS_KEY = "zm-flow-veo:accounts:v1";
 const CREATE_KIND_KEY = "zm-flow-veo:create-kind:v1";
+const ACTIVE_PANEL_KEY = "zm-flow-veo:active-panel:v1";
 const IMAGE_MODE_KEY = "zm-flow-veo:image-mode:v1";
+
+function flowRoutePanel(): FlowRoutePanel | null {
+  if (typeof window === "undefined") return null;
+  const panel = new URLSearchParams(window.location.search).get("p") || "";
+  return ["image", "video", "series", "queue", "history", "logs", "accounts", "help"].includes(panel)
+    ? panel as FlowRoutePanel
+    : null;
+}
+
+function writeFlowRoutePanel(panel: FlowRoutePanel) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("p", panel);
+  const destination = `${url.pathname}${url.search}${url.hash}`;
+  if (destination !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+    window.history.pushState({ flowPanel: panel }, "", destination);
+  }
+}
 
 type BrowserFileHandle = {
   getFile: () => Promise<File>;
@@ -163,14 +207,29 @@ function flowOutputFolderName(value: string) {
   return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "").slice(0, 96) || "results";
 }
 
-async function flowOutputDirectory(root: BrowserDirectoryHandle, outputFolder: string, create: boolean) {
-  const appRoot = root.name === "flow" || root.name === "ZM_AIO_TOOL"
+function flowOutputFolderParts(value: string) {
+  const parts = value.trim().split(/[\\/]+/).filter(Boolean).map(flowOutputFolderName);
+  return parts.length ? parts : ["results"];
+}
+
+async function flowOutputDirectory(root: BrowserDirectoryHandle, kind: CreateKind, outputFolder: string, create: boolean) {
+  if (root.name === kind) {
+    return flowOutputFolderParts(outputFolder).reduce(
+      (folder, part) => folder.then((current) => current.getDirectoryHandle(part, { create })),
+      Promise.resolve(root),
+    );
+  }
+  const appRoot = root.name === "ZM_AIO_TOOL"
     ? root
     : await root.getDirectoryHandle("ZM_AIO_TOOL", { create });
   const flowRoot = root.name === "flow"
     ? root
     : await appRoot.getDirectoryHandle("flow", { create });
-  return flowRoot.getDirectoryHandle(flowOutputFolderName(outputFolder), { create });
+  const kindRoot = await flowRoot.getDirectoryHandle(kind, { create });
+  return flowOutputFolderParts(outputFolder).reduce(
+    (folder, part) => folder.then((current) => current.getDirectoryHandle(part, { create })),
+    Promise.resolve(kindRoot),
+  );
 }
 
 function readText(key: string, fallback: string) {
@@ -184,9 +243,32 @@ function defaultFlowOutputFolder(now = new Date()) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `flow_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
+function normalizeLegacyFlowOutputDir(value: string) {
+  const trimmed = value.trim().replace(/[\\/]+$/, "");
+  const normalized = trimmed
+    .replace(/^(.+)[\\/](?:video|image)$/i, "$1")
+    .replace(/^(.+)-(?:video|image)$/i, "$1");
+  return normalized || trimmed;
+}
+function flowConfiguredOutputFolder(value: string, kind: CreateKind) {
+  const outputDir = normalizeLegacyFlowOutputDir(value);
+  if (!outputDir) return "";
+  // A desktop selection may already be an absolute path. Keep it verbatim;
+  // otherwise it is the user-editable child name beneath Flow's shared root.
+  if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir)) return outputDir;
+  return `/Users/manhg/Downloads/ZM_AIO_TOOL/flow/${kind}/${outputDir.replace(/^[\\/]+/, "")}`;
+}
+function flowOutputParentPath(output?: string) {
+  const value = String(output || "").trim();
+  if (!value || /^https?:\/\//i.test(value)) return "";
+  const slashIndex = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+  return slashIndex > 0 ? value.slice(0, slashIndex) : "";
+}
 function readSettings(): FlowSettings {
   const fallback: FlowSettings = {
     model: "Veo 3.1 - Fast",
+    videoModel: "Veo 3.1 - Fast",
+    imageModel: "Nano Banana 2",
     ratio: "16:9",
     duration: "8",
     count: 1,
@@ -197,14 +279,13 @@ function readSettings(): FlowSettings {
     seed: "",
     format: "PNG",
     filePrefix: "flow",
-    enhancePrompt: true,
     referenceStrength: 70,
     autoDownload: true,
   };
   try {
-    const saved = JSON.parse(
+    const { enhancePrompt: _legacyEnhancePrompt, ...saved } = JSON.parse(
       localStorage.getItem(SETTINGS_KEY) || "{}",
-    ) as Partial<FlowSettings>;
+    ) as Partial<FlowSettings> & { enhancePrompt?: boolean };
     const merged = {
       ...fallback,
       ...saved,
@@ -213,8 +294,16 @@ function readSettings(): FlowSettings {
     if (merged.model === "Veo 3.1 Fast") merged.model = "Veo 3.1 - Fast";
     if (merged.model === "Veo 3.1 Quality") merged.model = "Veo 3.1 - Quality";
     if (/^Imagen 3/i.test(merged.model)) merged.model = "Nano Banana 2";
+    if (!isVideoModel(merged.videoModel)) {
+      merged.videoModel = isVideoModel(merged.model) ? merged.model : fallback.videoModel;
+    }
+    if (!isImageModel(merged.imageModel)) {
+      merged.imageModel = isImageModel(merged.model) ? merged.model : fallback.imageModel;
+    }
     if (!String(merged.outputDir || "").trim() || merged.outputDir === "flow_20250824_143022") {
       merged.outputDir = defaultFlowOutputFolder();
+    } else {
+      merged.outputDir = normalizeLegacyFlowOutputDir(String(merged.outputDir));
     }
     return merged;
   } catch {
@@ -285,11 +374,22 @@ async function writeFlowOutputToDirectory(
   const sourceName = String(job.outputs?.[outputIndex] || "").split(/[\\/]/).pop();
   const extension = job.kind === "video" ? "mp4" : "png";
   const filename = sourceName || `flow_${job.id}_${outputIndex + 1}.${extension}`;
-  const target = await flowOutputDirectory(root, outputFolder, true);
+  const target = await flowOutputDirectory(root, job.kind, outputFolder, true);
   const file = await target.getFileHandle(filename, { create: true });
   const writable = await file.createWritable();
   await writable.write(await response.blob());
   await writable.close();
+}
+
+function downloadFlowOutput(job: FlowJob, outputIndex: number) {
+  const link = document.createElement("a");
+  const sourceName = String(job.outputs?.[outputIndex] || "").split(/[\\/]/).pop();
+  link.href = `/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`;
+  link.download = sourceName || `flow_${job.id}_${outputIndex + 1}`;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
 }
 
 async function deleteFlowOutputFromDirectory(
@@ -300,7 +400,7 @@ async function deleteFlowOutputFromDirectory(
   const sourceName = String(job.outputs?.[outputIndex] || "").split(/[\\/]/).pop();
   if (!sourceName) return false;
   try {
-    const target = await flowOutputDirectory(root, job.settings.outputDir, false);
+    const target = await flowOutputDirectory(root, job.kind, job.settings.outputDir, false);
     const file = await target.getFileHandle(sourceName);
     await file.getFile();
     await target.removeEntry(sourceName);
@@ -344,6 +444,9 @@ function normalizeFlowJobs(
       String(raw.accountId || ""),
     outputs: Array.isArray(raw.outputs) ? raw.outputs.map(String) : [],
     output: Array.isArray(raw.outputs) ? String(raw.outputs[0] || "") : "",
+    outputFolder: raw.outputFolder ? String(raw.outputFolder) : "",
+    displayOutputFolder: raw.displayOutputFolder ? String(raw.displayOutputFolder) : "",
+    seriesContext: raw.seriesContext && typeof raw.seriesContext === "object" ? raw.seriesContext as FlowJob["seriesContext"] : undefined,
     error: raw.error ? String(raw.error) : null,
     settings: {
       model: String(rawSettings.model || (raw.kind === "image" ? "Nano Banana 2" : "Veo 3.1 - Fast")),
@@ -399,12 +502,14 @@ function loadFlowSnapshot(): Promise<FlowSnapshot> {
   return promise;
 }
 
-export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => void; onOpenSrtImage: () => void }) {
+export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => void; onOpenSrtImage: (mediaFolder: string) => void }) {
   const { locale } = useLocale();
   const t = (vi: string, en: string) => localize(locale, vi, en);
   const fileRef = useRef<HTMLInputElement>(null);
   const sourceRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<FlowTab>(() => {
+    const routePanel = flowRoutePanel() || (readText(ACTIVE_PANEL_KEY, "video") as FlowRoutePanel);
+    if (routePanel === "queue" || routePanel === "history" || routePanel === "logs") return routePanel;
     const saved = readText(TAB_KEY, "create");
     return saved === "queue" || saved === "history" || saved === "logs"
       ? saved
@@ -425,17 +530,19 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   const [jobs, setJobs] = useState<FlowJob[]>([]);
   const [logs, setLogs] = useState<FlowLog[]>([]);
   const [createKind, setCreateKind] = useState<CreateKind>(() =>
-    readText(CREATE_KIND_KEY, "video") === "image" ? "image" : "video",
+    flowRoutePanel() === "image" || (!flowRoutePanel() && readText(CREATE_KIND_KEY, "video") === "image") ? "image" : "video",
   );
   const [imageMode, setImageMode] = useState<ImageMode>(() => {
     const saved = readText(IMAGE_MODE_KEY, "text");
     return saved === "edit" || saved === "reference" ? saved : "text";
   });
   const [sourceFiles, setSourceFiles] = useState<File[]>([]);
-  const [advancedOpen, setAdvancedOpen] = useState(() => createKind === "video");
-  const [utilityView, setUtilityView] = useState<"accounts" | "help" | null>(
-    null,
-  );
+  const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [utilityView, setUtilityView] = useState<"accounts" | "help" | "series" | null>(() => {
+    const routePanel = flowRoutePanel() || (readText(ACTIVE_PANEL_KEY, "video") as FlowRoutePanel);
+    return routePanel === "accounts" || routePanel === "help" || routePanel === "series" ? routePanel : null;
+  });
+  const [seriesDraft, setSeriesDraft] = useState<FlowSeriesSceneContext | null>(null);
   const [accounts, setAccounts] = useState<FlowAccount[]>(readAccounts);
   const [editingAccount, setEditingAccount] = useState<string | "new" | null>(
     null,
@@ -450,6 +557,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   const [backendReady, setBackendReady] = useState(false);
   const [isDesktopApp, setIsDesktopApp] = useState(false);
   const [runtimeKnown, setRuntimeKnown] = useState(false);
+  const [webOutputRootReady, setWebOutputRootReady] = useState(false);
   const webOutputRootRef = useRef<BrowserDirectoryHandle | null>(null);
   const completedOutputsRef = useRef<Set<string> | null>(null);
   const [preview, setPreview] = useState<{
@@ -461,6 +569,67 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     confirmLabel: string;
     run: () => void;
   } | null>(null);
+  const [queueKind, setQueueKind] = useState<CreateKind | "all">("all");
+  const selectCreateKind = (kind: CreateKind) => {
+    setCreateKind(kind);
+    setSettings((current) => settingsForCreateKind(current, kind));
+  };
+  useEffect(() => {
+    const applyRoute = () => {
+      const panel = flowRoutePanel() || (readText(ACTIVE_PANEL_KEY, "video") as FlowRoutePanel);
+      if (panel === "series" || panel === "accounts" || panel === "help") {
+        setUtilityView(panel);
+        return;
+      }
+      setUtilityView(null);
+      if (panel === "image" || panel === "video") {
+        selectCreateKind(panel);
+        setTab("create");
+      } else {
+        setTab(panel as FlowTab);
+      }
+    };
+    applyRoute();
+    window.addEventListener("popstate", applyRoute);
+    return () => window.removeEventListener("popstate", applyRoute);
+  }, []);
+  const queueGroups = useMemo(() => {
+    const grouped = new Map<string, { kind: CreateKind; outputDir: string; outputFolder: string; displayOutputFolder: string; jobs: FlowJob[] }>();
+    [...jobs]
+      .sort((left, right) => (
+        left.kind === right.kind
+          ? left.createdAt - right.createdAt
+          : left.kind === "video" ? -1 : 1
+      ))
+      .forEach((job) => {
+        const outputDir = job.settings.outputDir || "";
+        const outputFolder = job.outputFolder || (isDesktopApp ? flowOutputParentPath(job.outputs?.[0]) : "");
+        const displayOutputFolder = job.displayOutputFolder || outputFolder;
+        const key = `${job.kind}\u0000${outputDir}`;
+        const group = grouped.get(key);
+        if (group) {
+          group.jobs.push(job);
+          if (!group.outputFolder && outputFolder) group.outputFolder = outputFolder;
+          if (!group.displayOutputFolder && displayOutputFolder) group.displayOutputFolder = displayOutputFolder;
+        }
+        else grouped.set(key, { kind: job.kind, outputDir, outputFolder, displayOutputFolder, jobs: [job] });
+      });
+    return [...grouped.values()];
+  }, [isDesktopApp, jobs]);
+  const queueKindGroups = useMemo(() => (
+    (["video", "image"] as const)
+      .map((kind) => ({ kind, folders: queueGroups.filter((group) => group.kind === kind) }))
+  ), [queueGroups]);
+  const activeQueueGroups = useMemo(
+    () => queueKind === "all" ? queueGroups : queueGroups.filter((group) => group.kind === queueKind),
+    [queueGroups, queueKind],
+  );
+
+  useEffect(() => {
+    if (queueKind !== "all" && !activeQueueGroups.length && queueGroups.some((group) => group.kind !== queueKind)) {
+      setQueueKind(queueKind === "video" ? "image" : "video");
+    }
+  }, [activeQueueGroups.length, queueGroups, queueKind]);
 
   useEffect(() => {
     try {
@@ -596,6 +765,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         const permission = await handle.queryPermission?.({ mode: "readwrite" });
         if (active && permission === "granted") {
           webOutputRootRef.current = handle;
+          setWebOutputRootReady(true);
         }
       })
       .catch(() => undefined);
@@ -612,7 +782,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     }
   }, [isDesktopApp, runtimeKnown]);
   useEffect(() => {
-    if (!backendReady || !runtimeKnown) return;
+    if (!backendReady || !runtimeKnown || isDesktopApp || !settings.autoDownload) return;
     const completed = jobs.flatMap((job) =>
       job.status === "done"
         ? (job.outputs || []).map((_output, outputIndex) => ({
@@ -622,30 +792,29 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
           }))
         : [],
     );
-    if (!completedOutputsRef.current) {
-      completedOutputsRef.current = new Set(completed.map((item) => item.key));
-      return;
-    }
+    if (!completedOutputsRef.current) completedOutputsRef.current = new Set();
+    const root = webOutputRootRef.current;
     for (const item of completed) {
       if (completedOutputsRef.current.has(item.key)) continue;
       completedOutputsRef.current.add(item.key);
-      if (!isDesktopApp && settings.autoDownload) {
-        const root = webOutputRootRef.current;
-        if (!root) {
+      if (!root) {
+        downloadFlowOutput(item.job, item.outputIndex);
+        continue;
+      }
+      void writeFlowOutputToDirectory(item.job, item.outputIndex, root, item.job.settings.outputDir)
+        .then(() => toast.success(t(
+          "Đã lưu output Flow vào thư mục đã chọn.",
+          "Flow output saved to the selected folder.",
+        )))
+        .catch(() => {
+          completedOutputsRef.current?.delete(item.key);
           setApiError(t(
-            "Chọn thư mục tải xuống trước để Flow lưu vào ZM_AIO_TOOL/flow.",
-            "Choose a download folder first so Flow can save into ZM_AIO_TOOL/flow.",
-          ));
-          continue;
-        }
-        void writeFlowOutputToDirectory(item.job, item.outputIndex, root, settings.outputDir)
-          .catch(() => setApiError(t(
             "Không thể lưu output Flow vào thư mục đã chọn.",
             "Could not save the Flow output to the selected folder.",
-          )));
-      }
+          ));
+        });
     }
-  }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload, settings.outputDir, locale]);
+  }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload, settings.outputDir, locale, webOutputRootReady]);
   useEffect(() => {
     if (!preview) return;
     const close = (event: KeyboardEvent) => {
@@ -686,26 +855,22 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       : error;
   const showCreate = tab === "create";
   const activateRail = (item: RailItem) => {
+    const panelName = item === "createImage" ? "image" : (item === "createVideo" ? "video" : item);
+    try { localStorage.setItem(ACTIVE_PANEL_KEY, panelName); } catch {}
     if (item === "createImage" || item === "createVideo") {
       setUtilityView(null);
-      setCreateKind(item === "createImage" ? "image" : "video");
+      selectCreateKind(item === "createImage" ? "image" : "video");
       if (item === "createVideo") setAdvancedOpen(true);
-      setSettings((current) => ({
-        ...current,
-        model:
-          item === "createImage"
-            ? isImageModel(current.model)
-              ? current.model
-              : "Nano Banana 2"
-            : isVideoModel(current.model)
-              ? current.model
-              : "Veo 3.1 - Fast",
-      }));
       setTab("create");
+      writeFlowRoutePanel(item === "createImage" ? "image" : "video");
     } else if (item === "queue" || item === "history" || item === "logs") {
       setUtilityView(null);
       setTab(item);
-    } else setUtilityView(item);
+      writeFlowRoutePanel(item);
+    } else {
+      setUtilityView(item);
+      writeFlowRoutePanel(item);
+    }
   };
   const importPrompts = (file?: File) => {
     if (!file) return;
@@ -766,6 +931,29 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         setSettings(effectiveSettings);
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(effectiveSettings));
       }
+      if (seriesDraft) {
+        const created = await flowRequest<{ jobs: Array<Record<string, unknown>> }>(
+          `/api/flow/series/${seriesDraft.seriesId}/episodes/${seriesDraft.episodeId}/scenes/${seriesDraft.sceneId}/generate`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              artifact: seriesDraft.artifact,
+              accountId: account.id,
+              settings: { ...effectiveSettings, count: 1 },
+              promptOverride: prompt.trim() === seriesDraft.scenePrompt.trim() ? "" : prompt.trim(),
+            }),
+          },
+        );
+        setJobs((current) => [
+          ...normalizeFlowJobs(created.jobs, accounts),
+          ...current.filter((item) => !created.jobs.some((row) => String(row.id) === item.id)),
+        ]);
+        setApiError("");
+        setTab("queue");
+        writeFlowRoutePanel("queue");
+        return;
+      }
       let uploaded: string[] = [];
       if (sourceFiles.length) {
         const form = new FormData();
@@ -800,6 +988,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       ]);
       setApiError("");
       setTab("queue");
+      writeFlowRoutePanel("queue");
     } catch (error) {
       setApiError(error instanceof Error ? error.message : String(error));
     }
@@ -913,6 +1102,57 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       ))),
     });
   };
+  const cancelFolderJobs = (outputDir: string, folderJobs: FlowJob[]) => {
+    const activeCount = folderJobs.filter((job) => job.status === "queued" || job.status === "processing").length;
+    if (!activeCount) return;
+    setConfirmAction({
+      message: t(
+        `Hủy ${activeCount} job đang chờ/chạy trong thư mục này?`,
+        `Cancel ${activeCount} queued/running jobs in this folder?`,
+      ),
+      confirmLabel: t("Hủy", "Cancel"),
+      run: () => void flowRequest<{ jobs: Array<Record<string, unknown>> }>(
+        "/api/flow/jobs/cancel-folder",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ outputDir, kind: folderJobs[0]?.kind || "" }),
+        },
+      ).then(({ jobs: rows }) => {
+        setJobs(normalizeFlowJobs(rows, accounts));
+        setApiError("");
+      }).catch(() => setApiError(t(
+        "Không thể hủy các job trong thư mục này.",
+        "Could not cancel the jobs in this folder.",
+      ))),
+    });
+  };
+  const deleteFolderJobs = (outputDir: string, folderJobs: FlowJob[]) => {
+    if (!folderJobs.length) return;
+    setConfirmAction({
+      message: t(
+        `Xóa toàn bộ ${folderJobs.length} job và file trong thư mục này?`,
+        `Delete all ${folderJobs.length} jobs and files in this folder?`,
+      ),
+      confirmLabel: t("Xóa thư mục", "Delete folder"),
+      run: () => void (async () => {
+        const { jobs: rows } = await flowRequest<{ jobs: Array<Record<string, unknown>> }>(
+          "/api/flow/jobs/delete-folder",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ outputDir, kind: folderJobs[0]?.kind || "" }),
+          },
+        );
+        for (const job of folderJobs) await deleteWebFlowOutputs(job);
+        setJobs(normalizeFlowJobs(rows, accounts));
+        setApiError("");
+      })().catch(() => setApiError(t(
+        "Không thể xóa đầy đủ thư mục và file output.",
+        "Could not fully delete the folder and its output files.",
+      ))),
+    });
+  };
   const setDefaultAccount = async (id: string) => {
     const selected = accounts.find((account) => account.id === id);
     if (!selected) return;
@@ -971,6 +1211,22 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       return undefined;
     }
   };
+  const queueFolderLabel = (kind: CreateKind, outputDir: string, outputFolder = "", displayOutputFolder = "") => {
+    const normalizedOutputFolder = outputFolder.replace(/\\/g, "/");
+    // Never expose the web backend's temporary public directory as the output
+    // folder. It is not a real user destination and cannot be merged later.
+    if (isDesktopApp && outputFolder && !normalizedOutputFolder.includes("/backend/public/")) return outputFolder;
+    if (displayOutputFolder) return displayOutputFolder;
+    const configured = flowConfiguredOutputFolder(outputDir, kind);
+    // Older jobs may only have `test` or `test/video`. The configured value
+    // is canonical and always includes the complete Flow output location.
+    return configured || outputDir;
+  };
+  const openSrtImageWithFlowFolder = (outputFolder: string) => {
+    // Pass the resolved absolute folder, not the editable suffix. The merge
+    // page can then render from exactly this Flow output directory.
+    onOpenSrtImage(outputFolder);
+  };
   const pickWebOutputFolder = async () => {
     const picker = (window as BrowserDirectoryWindow).showDirectoryPicker;
     if (!picker) {
@@ -984,6 +1240,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       const handle = await picker({ mode: "readwrite" });
       await saveWebOutputRoot(WEB_OUTPUT_ROOT_KEY, handle);
       webOutputRootRef.current = handle;
+      setWebOutputRootReady(true);
       setApiError("");
     } catch (error) {
       if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
@@ -1082,6 +1339,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
             [
               ["createImage", IconImage, t("Tạo ảnh", "Create image")],
               ["createVideo", IconVideo, t("Tạo video", "Create video")],
+              ["series", IconBook, t("Series", "Series")],
               ["queue", IconBatch, t("Hàng đợi", "Queue")],
               ["history", IconClock, t("Lịch sử", "History")],
               ["accounts", IconGear, t("Tài khoản", "Accounts")],
@@ -1093,13 +1351,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
               key={id}
               type="button"
               className={
-                ((id === "createImage" &&
+                ((!utilityView && id === "createImage" &&
                   tab === "create" &&
                   createKind === "image") ||
-                (id === "createVideo" &&
+                (!utilityView && id === "createVideo" &&
                   tab === "create" &&
                   createKind === "video") ||
-                id === tab ||
+                (!utilityView && id === tab) ||
                 id === utilityView
                   ? "is-active "
                   : "") + (id === "accounts" || id === "help" ? "is-muted" : "")
@@ -1352,6 +1610,34 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
             </p>
           </section>
         )}
+        {utilityView === "series" && (
+          <FlowSeriesPanel
+            accounts={accounts.map((acc) => ({ id: acc.id, label: acc.label, status: acc.status }))}
+            onOpenScene={(context) => {
+              setSeriesDraft(context);
+              setUtilityView(null);
+              selectCreateKind(context.artifact === "keyframe" ? "image" : "video");
+              setImageMode("reference");
+              setPrompt(context.scenePrompt);
+              setPromptInputType("prompt");
+              setSourceFiles([]);
+              setTab("create");
+              writeFlowRoutePanel(context.artifact === "keyframe" ? "image" : "video");
+            }}
+            onGenerateAnchor={async (seriesId, anchorPrompt) => {
+              const account = selectedFlowAccount(accounts, settings.account);
+              if (!account) throw new Error(t("Cần tài khoản Flow đã kết nối để tạo ảnh neo.", "A connected Flow account is required to generate an anchor image."));
+              const imageSettings = { ...settings, model: isImageModel(settings.model) ? settings.model : "Nano Banana 2", count: 1 };
+              const created = await flowRequest<{ jobs: Array<Record<string, unknown>> }>(`/api/flow/series/${seriesId}/anchors/generate`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: anchorPrompt, accountId: account.id, settings: imageSettings }),
+              });
+              const added = normalizeFlowJobs(created.jobs, accounts);
+              setJobs((current) => [...added, ...current.filter((item) => !added.some((job) => job.id === item.id))]);
+              return added[0]?.id || "";
+            }}
+          />
+        )}
         {!utilityView && (
           <div className="flow-tabs" role="tablist">
             {(
@@ -1368,7 +1654,10 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 role="tab"
                 aria-selected={tab === id}
                 className={tab === id ? "is-active" : ""}
-                onClick={() => setTab(id)}
+                onClick={() => {
+                  setTab(id);
+                  writeFlowRoutePanel(id === "create" ? (createKind === "image" ? "image" : "video") : id);
+                }}
               >
                 {id === "create" ? (
                   <IconVideo size={16} />
@@ -1386,6 +1675,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         )}
         {!utilityView && showCreate && (
           <div className="flow-create-grid">
+            {seriesDraft && (
+              <div className="flow-series-breadcrumb">
+                <span>{t("Series", "Series")} › {seriesDraft.seriesTitle} › {seriesDraft.episodeTitle} › {seriesDraft.sceneTitle}</span>
+                <small>{t("Bible và ảnh continuity sẽ được áp dụng khi gửi cảnh này.", "The Bible and continuity images are applied when this scene is submitted.")}</small>
+                <button type="button" onClick={() => { setUtilityView("series"); writeFlowRoutePanel("series"); }}>{t("Quay về Series", "Back to Series")}</button>
+              </div>
+            )}
             <section className="flow-card flow-prompt-card">
               {createKind === "image" && (
                 <div
@@ -1588,7 +1884,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   label={t("Model", "Model")}
                   value={settings.model}
                   onChange={(model) =>
-                    setSettings((current) => ({ ...current, model }))
+                    setSettings((current) => settingsWithSelectedModel(current, createKind, model))
                   }
                   options={
                     createKind === "video"
@@ -1743,23 +2039,10 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                       />
                     </label>
                   )}
-                  <label className="flow-check flow-enhance">
-                    <input
-                      type="checkbox"
-                      checked={settings.enhancePrompt}
-                      onChange={(event) =>
-                        setSettings((current) => ({
-                          ...current,
-                          enhancePrompt: event.target.checked,
-                        }))
-                      }
-                    />
-                    {t("Tự động làm rõ prompt", "Automatically enhance prompt")}
-                  </label>
                 </div>
               )}
               <div className="flow-output-row">
-                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? pickOutputFolder : () => void pickWebOutputFolder()} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')} appFolder="flow" label={t("3. Thư mục kết quả", "3. Output folder")} />
+                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? pickOutputFolder : () => void pickWebOutputFolder()} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')} appFolder={`flow/${createKind}`} label={t("3. Thư mục kết quả", "3. Output folder")} />
                 {!isDesktopApp && (
                   <label className="flow-check">
                     <input
@@ -1800,8 +2083,8 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 >
                   <IconPlay size={17} />
                   {createKind === "video"
-                    ? t("TẠO VIDEO", "CREATE VIDEO")
-                    : t("TẠO ẢNH", "CREATE IMAGES")}
+                    ? seriesDraft?.artifact === "video" ? t("TẠO VIDEO CẢNH", "CREATE SCENE VIDEO") : t("TẠO VIDEO", "CREATE VIDEO")
+                    : seriesDraft?.artifact === "keyframe" ? t("TẠO KEYFRAME", "CREATE KEYFRAME") : t("TẠO ẢNH", "CREATE IMAGES")}
                   <small>
                     {t(
                       "Gửi qua Chrome profile của tài khoản đã chọn",
@@ -1818,14 +2101,44 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
             <div className="flow-card-title">
               <b>{t(`Hàng đợi (${jobs.length})`, `Queue (${jobs.length})`)}</b>
               <div className="flow-queue-tools">
-                <button className="flow-text-button" type="button" onClick={onOpenSrtImage}>{t("Ghép thư mục media", "Merge media folder")}</button>
                 <button className="flow-text-button" type="button" disabled={!jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={cancelAllJobs}>{t("Hủy tất cả", "Cancel all")}</button>
                 <button className="flow-text-button is-danger" type="button" disabled={!jobs.length} onClick={deleteAllJobs}>{t("Xóa tất cả", "Delete all")}</button>
               </div>
             </div>
+            <div className="flow-queue-kind-tabs" role="tablist" aria-label={t("Loại hàng đợi", "Queue type")}>
+              {[
+                { kind: "all" as const, count: jobs.length },
+                ...queueKindGroups.map(({ kind, folders }) => ({
+                  kind,
+                  count: folders.reduce((total, folder) => total + folder.jobs.length, 0),
+                })),
+              ].map(({ kind, count }) => (
+                <button
+                  key={kind}
+                  type="button"
+                  role="tab"
+                  aria-selected={queueKind === kind}
+                  className={queueKind === kind ? "is-active" : ""}
+                  onClick={() => setQueueKind(kind)}
+                >
+                  {kind === "all" ? t("Tất cả", "All") : kind === "video" ? t("Video", "Videos") : t("Ảnh", "Images")} ({count})
+                </button>
+              ))}
+            </div>
             <div className="flow-queue-list">
-              {jobs.map((job) => (
-                <article
+              {activeQueueGroups.map((group) => (
+                <div key={`${group.kind}-${group.outputDir}`} className="flow-queue-group-item">
+                  <header className="flow-queue-kind-header">
+                    <div>
+                      <small title={queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder)}>{t("Thư mục kết quả", "Output folder")}: {queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder)}</small>
+                    </div>
+                    <div className="flow-queue-folder-actions">
+                      <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
+                      <button className="flow-text-button is-warning" type="button" disabled={!group.jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={() => cancelFolderJobs(group.outputDir, group.jobs)}>{t("Hủy", "Cancel")}</button>
+                      <button className="flow-text-button is-danger" type="button" onClick={() => deleteFolderJobs(group.outputDir, group.jobs)}>{t("Xóa", "Delete")}</button>
+                    </div>
+                  </header>
+                  {group.jobs.map((job) => <article
                   key={job.id}
                   className={`flow-queue-job flow-queue-job--${job.status}`}
                 >
@@ -1940,6 +2253,8 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                     ) : null}
                   </aside>
                 </article>
+                  )}
+                </div>
               ))}
             </div>
           </section>
