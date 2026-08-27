@@ -684,11 +684,23 @@ class FlowService:
                 client._ui.open_settings_panel = ready
                 client._ui.switch_mode = ready
                 client._ui.set_aspect_ratio = ready
-                remote = await client.generate_video(
-                    job["prompt"], model=model,
-                    aspect="portrait" if ratio == "9:16" else "landscape",
-                    count=max(1, min(4, int(settings.get("count", 1)))), start_image=source,
-                )
+                extend_from = store.get_row("jobs", str(settings.get("extendFromJobId") or ""))
+                if extend_from and (extend_from.get("mediaIds") or []):
+                    media_id = str(extend_from["mediaIds"][0])
+                    project_data = await api.get_project_data()
+                    media = next((item for item in project_data.get("projectContents", {}).get("media", []) if str(item.get("name") or "") == media_id), {})
+                    workflow_id = str(media.get("workflowId") or "")
+                    if not workflow_id:
+                        raise RuntimeError("FLOW_EXTEND_WORKFLOW_MISSING: prior video has no workflow")
+                    # Use the authenticated Flow editor, which mints the
+                    # extension token that the raw endpoint rejects on 403.
+                    remote = [await client.extend_video(media_id, workflow_id, job["prompt"])]
+                else:
+                    remote = await client.generate_video(
+                        job["prompt"], model=model,
+                        aspect="portrait" if ratio == "9:16" else "landscape",
+                        count=max(1, min(4, int(settings.get("count", 1)))), start_image=source,
+                    )
                 media_ids = [item.media_name for item in remote]
                 if not media_ids:
                     media_ids = await self._wait_for_project_videos(

@@ -248,6 +248,9 @@ class SeriesRunner:
                     series_mod.update_scene(series_id, episode_id, scene_id, {"continuityEnabled": False})
                     ctx = series_mod.generation_context(series_id, episode_id, scene_id, "video")
                 vid_settings = {**settings, "count": 1, "outputDir": ctx["outputDir"]}
+                previous = series_mod._previous_scene(series_mod.get_series(series_id) or {}, episode_id, scene_id)
+                if previous and previous.get("videoJobId"):
+                    vid_settings["extendFromJobId"] = str(previous["videoJobId"])
                 jobs = service.enqueue({
                     "prompts": [ctx["prompt"]], "kind": "video", "mode": "text",
                     "accountId": account_id, "settings": vid_settings,

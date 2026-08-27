@@ -33,6 +33,7 @@ class BrowserManager:
     """Subset of flow-py's browser contract backed by installed Google Chrome."""
 
     def __init__(self, *, headless: bool, profile_dir: Path, slow_mo: int = 0) -> None:
+        self.cdp_url = None  # flow-py checks this optional upstream attribute.
         self.headless = headless
         self.profile_dir = Path(profile_dir)
         self.slow_mo = slow_mo

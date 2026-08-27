@@ -410,6 +410,9 @@ def generation_context(series_id: str, episode_id: str, scene_id: str, artifact:
     if artifact not in {"keyframe", "video"}:
         raise ValueError("Unsupported Series artifact")
     scene_number = int(scene.get("index") or 1)
+    previous = _previous_scene(series, episode_id, scene_id)
+    end_frame = Path(str((previous or {}).get("endFrame") or ""))
+    continuation = artifact == "video" and bool(scene.get("continuityEnabled", True)) and end_frame.is_file()
     prompt_parts = [
         str(series.get("bible") or "").strip(),
         str(episode.get("state") or "").strip(),
@@ -417,6 +420,12 @@ def generation_context(series_id: str, episode_id: str, scene_id: str, artifact:
         str(scene.get("prompt") or "").strip(),
         str(prompt_override or scene.get("promptOverride") or "").strip(),
     ]
+    if continuation:
+        prompt_parts = [
+            "Continue the exact preceding video. Do not restart, repeat, or change the camera, character, world, or visual style.",
+            str(scene.get("prompt") or "").strip(),
+            str(prompt_override or scene.get("promptOverride") or "").strip(),
+        ]
     prompt = "\n\n".join(part for part in prompt_parts if part)
     if not prompt:
         raise ValueError("Scene prompt is required")
@@ -435,9 +444,7 @@ def generation_context(series_id: str, episode_id: str, scene_id: str, artifact:
         "prompt": prompt,
     }
     if artifact == "video":
-        previous = _previous_scene(series, episode_id, scene_id)
-        end_frame = Path(str((previous or {}).get("endFrame") or ""))
-        if bool(scene.get("continuityEnabled", True)) and end_frame.is_file():
+        if continuation:
             # Veo must start from the real prior final frame. A newly generated
             # keyframe is useful for review, but it can drift from that frame.
             context["sourceFiles"] = [str(end_frame)]
