@@ -70,6 +70,13 @@ test('interface locale is persisted through the app API', async () => {
   assert.match(index, /localStorage\.setItem/)
 })
 
+test('desktop persistence includes Flow settings across random localhost ports', async () => {
+  const index = await readFile(new URL('../frontend/index.html', import.meta.url), 'utf8')
+  assert.match(index, /key\.indexOf\('zm-'\) === 0/)
+  assert.match(index, /GET', '\/api\/ui-preferences'/)
+  assert.match(index, /PUT',/)
+})
+
 test('English catalog covers interrupted TTS and Log UI text', () => {
   const expected = [
     'Lỗi job (Dịch / Lồng tiếng / Xuất), warm-models, crash hook. Copy gửi AI để sửa.',
@@ -656,6 +663,10 @@ test('Flow opens advanced quick settings by default for image and video creation
   const source = await readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8')
   assert.match(source, /const \[advancedOpen, setAdvancedOpen\] = useState\(true\)/)
   assert.match(source, /if \(item === "createVideo"\) setAdvancedOpen\(true\);/)
+  assert.match(source, /t\("Luồng chạy", "Concurrent jobs"\)/)
+  assert.match(source, /concurrency: "3"/)
+  assert.match(source, /options=\{\["1", "2", "3", "4", "5", "6"\]\}/)
+  assert.doesNotMatch(source, /Seed \(để trống = tự động\)/)
 })
 
 test('TTS history action menu layers above its pager', async () => {
@@ -670,6 +681,12 @@ test('TTS history action menu layers above its pager', async () => {
   assert.match(panel, /className="tts-dl-menu tts-history-dl-menu"/)
   assert.match(styles, /\.tts-history-dl-menu\s*\{\s*top: auto;\s*bottom: calc\(100% \+ 8px\);/s)
   assert.match(styles, /\.tts-dl-submenu\s*\{\s*top: 0;\s*bottom: auto;/s)
+})
+
+test('TTS export SRT menu opens above every dashboard panel', async () => {
+  const styles = await readFile(new URL('../frontend/src/features/tts/TtsStudio.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.tts-dash-item:has\(\.tts-export-srt-menu\)\s*\{\s*z-index: 40;/s)
+  assert.match(styles, /\.tts-export-srt-menu\s*\{[^}]*top: auto;[^}]*bottom: calc\(100% \+ 8px\);/s)
 })
 
 test('TTS history playback toggles a bilingual stop action while audio is playing', async () => {
@@ -751,8 +768,9 @@ test("Flow queue renders each job's persisted generation settings", async () => 
 })
 
 test('Flow WEB output saves automatically into a user-authorized folder', async () => {
-  const [source, field] = await Promise.all([
+  const [source, styles, field] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
   ])
   assert.match(source, /function defaultFlowOutputFolder/)
@@ -766,11 +784,18 @@ test('Flow WEB output saves automatically into a user-authorized folder', async 
   assert.match(source, /new Map<string, \{ kind: CreateKind; outputDir: string; outputFolder: string; displayOutputFolder: string; jobs: FlowJob\[\] \}>\(\)/)
   assert.doesNotMatch(source, /outputDir: flowKindOutputFolder/)
   assert.match(source, /function flowConfiguredOutputFolder/)
-  assert.match(source, /if \(\/\^\(\?:\[A-Za-z\]:\[\\\\\/\]\|\[\\\\\/\]\)\/\.test\(outputDir\)\) return outputDir/)
+  assert.match(source, /if \(\/\^\(\?:\[A-Za-z\]:\[\\\\\/\]\|\[\\\\\/\]\)\/\.test\(outputDir\)\) return `\$\{outputDir\}\/\$\{kind\}`/)
   assert.match(source, /`ZM_AIO_TOOL\/flow\/\$\{kind\}\/\$\{outputDir/)
   assert.match(source, /function flowOutputParentPath/)
   assert.match(source, /isDesktopApp \? flowOutputParentPath/)
   assert.match(source, /t\("Thư mục kết quả", "Output folder"\)/)
+  assert.match(source, /t\("Tiến độ tổng", "Overall progress"\)/)
+  assert.match(source, /role="progressbar"/)
+  assert.match(source, /job\.status === "done"/)
+  assert.match(source, /summary\.completed}\/\$\{summary\.total} hoàn thành/)
+  assert.match(source, /summary\.completed}\/\$\{summary\.total} completed/)
+  assert.match(styles, /\.flow-queue-folder-summary/)
+  assert.match(styles, /\.flow-queue-folder-progress/)
   assert.match(source, /queueFolderLabel\(group\.kind, group\.outputDir, group\.outputFolder, group\.displayOutputFolder\)/)
   assert.match(source, /openSrtImageWithFlowFolder\(queueFolderLabel\(group\.kind, group\.outputDir, group\.outputFolder, group\.displayOutputFolder\)\)/)
   assert.match(source, /const deleteFolderJobs/)
@@ -808,6 +833,24 @@ test('Flow create-video screen exposes the latest completed video preview', asyn
   assert.match(source, /t\("Xem trước video", "Preview video"\)/)
   assert.match(source, /t\("Chưa có video", "No video yet"\)/)
   assert.match(styles, /\.flow-preview-latest/)
+})
+
+test('Flow output preview navigates and renders common media types', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(source, /function flowOutputMediaKind/)
+  assert.match(source, /"audio"/)
+  assert.match(source, /"ArrowLeft"/)
+  assert.match(source, /"ArrowRight"/)
+  assert.match(source, /t\("Kết quả trước", "Previous output"\)/)
+  assert.match(source, /t\("Kết quả tiếp theo", "Next output"\)/)
+  assert.match(source, /<audio/)
+  assert.match(source, /<iframe/)
+  assert.match(source, /aria-live="polite"/)
+  assert.match(styles, /\.flow-preview-nav/)
+  assert.match(styles, /\.flow-preview-counter/)
 })
 
 test('Flow queue confines large batches to its own scroll area', async () => {
@@ -861,6 +904,13 @@ test('SRT image merge accepts a media folder without a timeline file', async () 
   assert.match(pipeline, /def parse_timing_times/)
   assert.match(pipeline, /def sequential_media_times/)
   assert.match(pipeline, /parse_timing_times\(Path\(timeline\)\) if timeline else sequential_media_times\(media\)/)
+  assert.match(page, /t\('Vẫn tạo', 'Create anyway'\)/)
+  assert.match(page, /t\('Thiếu ảnh\/video', 'Missing image\/video'\)/)
+  assert.match(page, /allowMissingMedia/)
+  assert.match(page, /status === 409/)
+  assert.match(route, /"code": "missing_media"/)
+  assert.match(pipeline, /select_cues_for_media/)
+  assert.match(styles, /\.siv-missing-dialog/)
   assert.match(page, /initialMediaFolder = ''/)
   assert.match(page, /setMediaFolder\(initialMediaFolder\)/)
   assert.match(app, /setSrtImageInitialMediaFolder\(mediaFolder\)/)

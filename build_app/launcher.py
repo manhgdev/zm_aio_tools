@@ -668,6 +668,7 @@ def run_desktop() -> int:
             x=x,
             y=y,
             min_size=(960, 640),
+            maximized=True,
             text_select=True,
         )
         if icon:

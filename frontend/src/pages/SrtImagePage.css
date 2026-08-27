@@ -597,6 +597,30 @@
   font-weight: 700;
   cursor: pointer;
 }
+.siv-missing-dialog > p {
+  color: var(--ink);
+}
+.siv-missing-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 18px 18px;
+}
+.siv-missing-dialog > footer button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+.siv-missing-dialog > footer button.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
 .siv-settings > label {
   column-gap: 7px;
 }

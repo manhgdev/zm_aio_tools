@@ -424,6 +424,10 @@ html.dark .tts-ram {
   border-radius: 12px;
 }
 
+.tts-dash-item:has(.tts-export-srt-menu) {
+  z-index: 40;
+}
+
 .tts-dash-body {
   flex: 1;
   min-height: 0;
@@ -1826,6 +1830,8 @@ html.dark .tts-wave-box {
 .tts-export-srt-menu {
   left: 0;
   right: auto;
+  top: auto;
+  bottom: calc(100% + 8px);
   min-width: 190px;
 }
 

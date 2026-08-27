@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from pipeline.srt_image import (
     _drawing_video_sources,
     _ffmpeg_subtitle,
@@ -15,8 +17,16 @@ from pipeline.srt_image import (
     parse_timing_times,
     parse_timeline_times,
     sequential_media_times,
+    select_cues_for_media,
     shift_srt,
 )
+
+
+def test_missing_media_can_be_skipped_only_after_confirmation():
+    cues = [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]
+    with pytest.raises(ValueError, match="cần ít nhất 3 file, hiện có 2"):
+        select_cues_for_media(cues, 2, allow_missing=False)
+    assert select_cues_for_media(cues, 2, allow_missing=True) == cues[:2]
 
 
 def test_parse_srt_times(tmp_path):

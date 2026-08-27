@@ -184,7 +184,7 @@ def test_flow_cancel_output_folder_only_cancels_matching_active_jobs(monkeypatch
     assert cancelled == ["a"]
 
 
-def test_desktop_flow_uses_full_selected_output_path(monkeypatch, tmp_path):
+def test_desktop_flow_adds_kind_to_full_selected_output_path(monkeypatch, tmp_path):
     monkeypatch.setenv("VIDEO_CLONE_DESKTOP", "1")
     flow = service_module.FlowService()
     job = {
@@ -201,7 +201,7 @@ def test_desktop_flow_uses_full_selected_output_path(monkeypatch, tmp_path):
 
     output = flow._output_path(job, 1, "png")
 
-    assert output.parent == tmp_path / "My complete output"
+    assert output.parent == tmp_path / "My complete output" / "image"
     assert output.parent.is_dir()
 
 
@@ -306,12 +306,19 @@ def test_flow_runtime_profile_keeps_login_state_and_skips_browser_caches(monkeyp
     assert not (runtime / "SingletonLock").exists()
 
 
-def test_flow_runs_up_to_three_jobs_per_account_in_parallel(monkeypatch, tmp_path):
+def test_flow_uses_selected_jobs_per_account_concurrency(monkeypatch, tmp_path):
     flow = service_module.FlowService()
     active = 0
     peak = 0
     state_lock = threading.Lock()
-    jobs = {f"job-{index}": {"id": f"job-{index}", "accountId": "account-1"} for index in range(6)}
+    jobs = {
+        f"job-{index}": {
+            "id": f"job-{index}",
+            "accountId": "account-1",
+            "settings": {"concurrency": "2"},
+        }
+        for index in range(6)
+    }
     monkeypatch.setattr(service_module.store, "get_row", lambda table, row_id: jobs.get(row_id) if table == "jobs" else None)
 
     def clone(_account_id, job_id):
@@ -338,7 +345,15 @@ def test_flow_runs_up_to_three_jobs_per_account_in_parallel(monkeypatch, tmp_pat
         thread.join(timeout=2)
 
     assert all(not thread.is_alive() for thread in threads)
-    assert peak == service_module._MAX_CONCURRENT_JOBS_PER_ACCOUNT == 3
+    assert peak == 2
+
+
+def test_flow_job_concurrency_defaults_and_stays_bounded():
+    assert service_module._job_concurrency({}) == 3
+    assert service_module._job_concurrency({"concurrency": "2"}) == 2
+    assert service_module._job_concurrency({"concurrency": 0}) == 1
+    assert service_module._job_concurrency({"concurrency": 99}) == 6
+    assert service_module._job_concurrency({"concurrency": "invalid"}) == 3
 
 
 def test_flow_credit_sync_updates_account_without_failing_generation(monkeypatch):

@@ -131,6 +131,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
   const [outputPath, setOutputPath] = useState(String(cached.outputPath ?? ''))
   const [job, setJob] = useState<Job | null>(null)
   const [sending, setSending] = useState(false)
+  const [missingMedia, setMissingMedia] = useState<{ required: number; available: number; preview: boolean } | null>(null)
   const [logStart, setLogStart] = useState(0)
   const settingsSnapshot = useRef('')
 
@@ -205,7 +206,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
     logoFadeSec, logoSafeMargin,
   ])
 
-  async function start(preview = false) {
+  async function start(preview = false, allowMissingMedia = false) {
     if (!mediaFolder) return
     setSending(true)
     try {
@@ -223,6 +224,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
       if (outputPath && !preview) form.append('output_path', outputPath)
       form.append('options', JSON.stringify({
         resolution, targetPlatform, fps, crf, effect, transitionDuration, zoom, speed, volume,
+        allowMissingMedia,
         encoder, removeMetadata, subtitleSize, subtitleOffset, subtitleFontFamily, subtitleMargin,
         subtitleBackground, subtitleColor, subtitleBgColor, subtitleOpacity, previewSeconds: preview ? previewSeconds : 0,
         delogo: { enabled: delogoEnabled, ...delogoRect },
@@ -236,6 +238,13 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
         },
       }))
       const response = await fetch('/api/srt-image/jobs', { method: 'POST', body: form })
+      if (response.status === 409) {
+        const detail = (await response.clone().json().catch(() => null))?.detail
+        if (detail?.code === 'missing_media') {
+          setMissingMedia({ required: Number(detail.required), available: Number(detail.available), preview })
+          return
+        }
+      }
       if (!response.ok) throw new Error(await response.text())
       setLogStart(0)
       setJob(await response.json())
@@ -731,6 +740,35 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
             <p>{helpKey === 'timeline' ? t('Có thể bỏ trống để ghép tuần tự toàn bộ media theo tên file.', 'Leave empty to merge all media sequentially by filename.') : HELP[helpKey][1]}</p>
             <div><strong>{t('File hoặc thiết lập cần dùng', 'Required file or setting')}</strong><p>{helpKey === 'timeline' ? t('Tùy chọn. Khi dùng, mỗi timecode xác định cảnh và thời lượng tương ứng.', 'Optional. When provided, each timecode determines the matching scene and duration.') : HELP[helpKey][2]}</p></div>
             <button type="button" className="siv-help-close" onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>Đã hiểu</button>
+          </section>
+        </div>
+      )}
+      {missingMedia && (
+        <div className="siv-help-backdrop" role="presentation" onMouseDown={() => setMissingMedia(null)}>
+          <section className="siv-help-dialog siv-missing-dialog" role="alertdialog" aria-modal="true" aria-labelledby="siv-missing-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <small>{t('Có thể tiếp tục', 'You can continue')}</small>
+                <h2 id="siv-missing-title">{t('Thiếu ảnh/video', 'Missing image/video')}</h2>
+              </div>
+              <button type="button" aria-label={t('Đóng cảnh báo', 'Close warning')} onClick={() => setMissingMedia(null)}>×</button>
+            </header>
+            <p>{t(
+              `Timeline cần ${missingMedia.required} file nhưng thư mục hiện có ${missingMedia.available} file. Các cảnh thiếu media sẽ được bỏ qua. Bạn vẫn muốn tạo video?`,
+              `The timeline needs ${missingMedia.required} files, but the folder contains ${missingMedia.available}. Scenes without matching media will be skipped. Create the video anyway?`,
+            )}</p>
+            <footer>
+              <button type="button" onClick={() => setMissingMedia(null)}>{t('Quay lại', 'Go back')}</button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  const preview = missingMedia.preview
+                  setMissingMedia(null)
+                  void start(preview, true)
+                }}
+              >{t('Vẫn tạo', 'Create anyway')}</button>
+            </footer>
           </section>
         </div>
       )}

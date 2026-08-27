@@ -211,6 +211,12 @@ def test_desktop_launcher_uses_an_os_assigned_loopback_port() -> None:
     assert "API_PORT_SCAN" not in launcher
 
 
+def test_desktop_launcher_starts_maximized() -> None:
+    launcher = Path("build_app/launcher.py").read_text(encoding="utf-8")
+    assert "maximized=True" in launcher
+    assert "fullscreen=True" not in launcher
+
+
 def test_render_delete_is_safe_when_the_output_disappears() -> None:
     source = Path("backend/api/routes/rendered.py").read_text(encoding="utf-8")
     assert "path.unlink(missing_ok=True)" in source

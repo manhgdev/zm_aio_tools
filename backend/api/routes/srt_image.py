@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from pipeline.srt_image import ROOT, cancel, create_job, get_job, list_jobs, output_path, pause, start
+from pipeline.srt_image import ROOT, cancel, create_job, get_job, list_jobs, output_path, parse_timing_times, pause, start
 
 router = APIRouter()
 MEDIA_SUFFIXES = {
@@ -175,6 +175,18 @@ async def create(
         opts = json.loads(options)
     except json.JSONDecodeError:
         opts = {}
+    if timeline_file and not opts.get("allowMissingMedia"):
+        try:
+            required = len(parse_timing_times(timeline_file))
+        except ValueError:
+            required = 0
+        if required > len(image_paths):
+            shutil.rmtree(work, ignore_errors=True)
+            raise HTTPException(409, detail={
+                "code": "missing_media",
+                "required": required,
+                "available": len(image_paths),
+            })
     output_target = None
     if output_path.strip():
         output_target = Path(output_path.strip()).expanduser().resolve()

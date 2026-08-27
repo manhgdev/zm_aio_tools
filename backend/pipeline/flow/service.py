@@ -17,7 +17,8 @@ from . import store
 
 _PROJECT_RE = re.compile(r"/flow/project/([^/?#]+)")
 _TERMINAL = {"done", "failed", "cancelled", "action_required"}
-_MAX_CONCURRENT_JOBS_PER_ACCOUNT = 3
+_DEFAULT_CONCURRENT_JOBS_PER_ACCOUNT = 3
+_MAX_CONCURRENT_JOBS_PER_ACCOUNT = 6
 _PROFILE_COPY_IGNORES = {
     "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache",
     "GraphiteDawnCache", "GPUPersistentCache", "ShaderCache", "GrShaderCache",
@@ -30,12 +31,21 @@ _VIDEO_UI_MODELS = {
 }
 
 
+def _job_concurrency(settings: dict[str, Any]) -> int:
+    try:
+        value = int(settings.get("concurrency", _DEFAULT_CONCURRENT_JOBS_PER_ACCOUNT))
+    except (TypeError, ValueError):
+        value = _DEFAULT_CONCURRENT_JOBS_PER_ACCOUNT
+    return max(1, min(_MAX_CONCURRENT_JOBS_PER_ACCOUNT, value))
+
+
 class FlowService:
     def __init__(self) -> None:
-        self._account_slots: dict[str, threading.BoundedSemaphore] = {}
+        self._account_active: dict[str, int] = {}
         self._claimed_media_ids: set[str] = set()
         self._cancelled: set[str] = set()
         self._guard = threading.RLock()
+        self._account_condition = threading.Condition(self._guard)
 
     def _claim_media_ids(self, candidates: list[str], expected_count: int) -> list[str]:
         """Atomically assign project media so concurrent jobs cannot share one output."""
@@ -334,6 +344,7 @@ class FlowService:
         if not prompts or not store.get_row("accounts", account_id):
             raise ValueError("Prompts and a valid Flow account are required")
         settings = dict(payload.get("settings") or {})
+        settings["concurrency"] = _job_concurrency(settings)
         kind = str(payload.get("kind") or "video")
         mode = str(payload.get("mode") or "text")
         input_type = str(payload.get("inputType") or "prompt").lower()
@@ -377,12 +388,12 @@ class FlowService:
         if not job:
             return
         account_id = str(job["accountId"])
-        with self._guard:
-            slots = self._account_slots.setdefault(
-                account_id,
-                threading.BoundedSemaphore(_MAX_CONCURRENT_JOBS_PER_ACCOUNT),
-            )
-        with slots:
+        concurrency = _job_concurrency(job.get("settings") or {})
+        with self._account_condition:
+            while self._account_active.get(account_id, 0) >= concurrency:
+                self._account_condition.wait()
+            self._account_active[account_id] = self._account_active.get(account_id, 0) + 1
+        try:
             if job_id in self._cancelled:
                 return
             runtime_profile = self._clone_runtime_profile(account_id, job_id)
@@ -390,6 +401,10 @@ class FlowService:
                 asyncio.run(self._run(job_id, profile_dir=runtime_profile))
             finally:
                 shutil.rmtree(runtime_profile, ignore_errors=True)
+        finally:
+            with self._account_condition:
+                self._account_active[account_id] -= 1
+                self._account_condition.notify_all()
 
     def _clone_runtime_profile(self, account_id: str, job_id: str) -> Path:
         """Copy login state into an isolated, cache-free profile for one job."""
@@ -796,7 +811,7 @@ class FlowService:
             try:
                 relative = selected.relative_to(flow_root)
             except ValueError:
-                folder = selected
+                folder = selected / kind
             else:
                 parts = list(relative.parts)
                 if parts and parts[0] in {"image", "video"}:

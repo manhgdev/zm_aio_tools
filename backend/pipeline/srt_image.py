@@ -128,6 +128,16 @@ def parse_timing_times(path: Path) -> list[tuple[float, float]]:
         return parse_srt_times(path)
 
 
+def select_cues_for_media(
+    cues: list[tuple[float, float]], media_count: int, allow_missing: bool = False,
+) -> list[tuple[float, float]]:
+    if media_count >= len(cues):
+        return cues
+    if not allow_missing:
+        raise ValueError(f"Thiếu ảnh/video: cần ít nhất {len(cues)} file, hiện có {media_count}")
+    return cues[:media_count]
+
+
 def media_duration(path: Path, image_duration: float = 5.0) -> float:
     """Return a natural clip duration, with a stable default for still images."""
     if not is_video(path):
@@ -660,8 +670,9 @@ def run(job_id: str) -> None:
         media = [Path(p) for p in job["images"]]
         timeline = str(job.get("timeline") or "")
         cues = parse_timing_times(Path(timeline)) if timeline else sequential_media_times(media)
-        if timeline and len(media) < len(cues):
-            raise ValueError(f"Thiếu ảnh/video: cần ít nhất {len(cues)} file, hiện có {len(media)}")
+        if timeline and len(media) < len(cues) and job["options"].get("allowMissingMedia"):
+            _log(job_id, f"Thiếu {len(cues) - len(media)} media: bỏ qua các cảnh timeline không có file tương ứng")
+        cues = select_cues_for_media(cues, len(media), bool(job["options"].get("allowMissingMedia")))
         durations = [
             max(0.04, (cues[i + 1][0] if i + 1 < len(cues) else end) - start)
             for i, (start, end) in enumerate(cues)

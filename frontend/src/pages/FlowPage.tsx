@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { localize, useLocale } from "@/app/i18n";
 import {
+  IconArrowRight,
   IconBatch,
   IconBook,
   IconClock,
@@ -90,7 +91,7 @@ type FlowSettings = {
   outputDir: string;
   quality: string;
   resolution: string;
-  seed: string;
+  concurrency: string;
   format: string;
   filePrefix: string;
   referenceStrength: number;
@@ -253,8 +254,8 @@ function normalizeLegacyFlowOutputDir(value: string) {
 function flowConfiguredOutputFolder(value: string, kind: CreateKind) {
   const outputDir = normalizeLegacyFlowOutputDir(value);
   if (!outputDir) return "";
-  // A desktop picker result is the exact output folder selected by the user.
-  if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir)) return outputDir;
+  // Keep image and video outputs separated below the selected desktop root.
+  if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir)) return `${outputDir}/${kind}`;
   return `ZM_AIO_TOOL/flow/${kind}/${outputDir.replace(/^[\\/]+/, "")}`;
 }
 function flowOutputParentPath(output?: string) {
@@ -262,6 +263,21 @@ function flowOutputParentPath(output?: string) {
   if (!value || /^https?:\/\//i.test(value)) return "";
   const slashIndex = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
   return slashIndex > 0 ? value.slice(0, slashIndex) : "";
+}
+function flowOutputMediaKind(output: string, fallback: CreateKind) {
+  const extension = output.split(/[?#]/, 1)[0].match(/\.([^.\\/]+)$/)?.[1]?.toLowerCase() || "";
+  if (/^(?:avif|bmp|gif|heic|jpe?g|png|svg|webp)$/.test(extension)) return "image";
+  if (/^(?:aac|flac|m4a|mp3|oga|ogg|opus|wav)$/.test(extension)) return "audio";
+  if (/^(?:m4v|mkv|mov|mp4|ogv|webm)$/.test(extension)) return "video";
+  return extension ? "file" : fallback;
+}
+function flowGroupProgress(jobs: FlowJob[]) {
+  const total = jobs.length;
+  const completed = jobs.filter((job) => job.status === "done").length;
+  const progress = total
+    ? Math.round(jobs.reduce((sum, job) => sum + Math.max(0, Math.min(100, Number(job.progress) || 0)), 0) / total)
+    : 0;
+  return { completed, progress, total };
 }
 function readSettings(): FlowSettings {
   const fallback: FlowSettings = {
@@ -275,16 +291,16 @@ function readSettings(): FlowSettings {
     outputDir: defaultFlowOutputFolder(),
     quality: "Standard",
     resolution: "1K",
-    seed: "",
+    concurrency: "3",
     format: "PNG",
     filePrefix: "flow",
     referenceStrength: 70,
     autoDownload: true,
   };
   try {
-    const { enhancePrompt: _legacyEnhancePrompt, ...saved } = JSON.parse(
+    const { enhancePrompt: _legacyEnhancePrompt, seed: _legacySeed, ...saved } = JSON.parse(
       localStorage.getItem(SETTINGS_KEY) || "{}",
-    ) as Partial<FlowSettings> & { enhancePrompt?: boolean };
+    ) as Partial<FlowSettings> & { enhancePrompt?: boolean; seed?: string };
     const merged = {
       ...fallback,
       ...saved,
@@ -298,6 +314,9 @@ function readSettings(): FlowSettings {
     }
     if (!isImageModel(merged.imageModel)) {
       merged.imageModel = isImageModel(merged.model) ? merged.model : fallback.imageModel;
+    }
+    if (!["1", "2", "3", "4", "5", "6"].includes(String(merged.concurrency))) {
+      merged.concurrency = fallback.concurrency;
     }
     if (!String(merged.outputDir || "").trim() || merged.outputDir === "flow_20250824_143022") {
       merged.outputDir = defaultFlowOutputFolder();
@@ -816,12 +835,22 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload, settings.outputDir, locale, webOutputRootReady]);
   useEffect(() => {
     if (!preview) return;
-    const close = (event: KeyboardEvent) => {
+    const navigate = (event: KeyboardEvent) => {
       if (event.key === "Escape") setPreview(null);
+      if (event.key === "ArrowLeft") movePreview(-1);
+      if (event.key === "ArrowRight") movePreview(1);
     };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
+    window.addEventListener("keydown", navigate);
+    return () => window.removeEventListener("keydown", navigate);
   }, [preview]);
+
+  const movePreview = (delta: number) => {
+    setPreview((current) => {
+      const total = current?.job.outputs?.length || 0;
+      if (!current || total < 2) return current;
+      return { ...current, outputIndex: (current.outputIndex + delta + total) % total };
+    });
+  };
 
   const promptCount = useMemo(
     () =>
@@ -835,6 +864,9 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     (job) => job.kind === "video" && job.status === "done" && job.outputs?.length,
   );
   const displayedAccount = selectedFlowAccount(accounts, settings.account);
+  const previewOutput = preview?.job.outputs?.[preview.outputIndex] || "";
+  const previewMediaKind = preview ? flowOutputMediaKind(previewOutput, preview.job.kind) : "file";
+  const previewSrc = preview ? `/api/flow/jobs/${preview.job.id}/outputs/${preview.outputIndex}` : "";
   const statusText = (status: JobStatus) =>
     status === "processing"
       ? t("Đang xử lý", "Processing")
@@ -1981,25 +2013,14 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                     }
                     options={["Standard", "High"]}
                   />
-                  <label>
-                    <span>
-                      {t(
-                        "Seed (để trống = tự động)",
-                        "Seed (blank = automatic)",
-                      )}
-                    </span>
-                    <input
-                      value={settings.seed}
-                      inputMode="numeric"
-                      placeholder={t("Tự động", "Automatic")}
-                      onChange={(event) =>
-                        setSettings((current) => ({
-                          ...current,
-                          seed: event.target.value.replace(/\D/g, ""),
-                        }))
-                      }
-                    />
-                  </label>
+                  <FlowSelect
+                    label={t("Luồng chạy", "Concurrent jobs")}
+                    value={settings.concurrency}
+                    onChange={(concurrency) =>
+                      setSettings((current) => ({ ...current, concurrency }))
+                    }
+                    options={["1", "2", "3", "4", "5", "6"]}
+                  />
                   <FlowSelect
                     label={t("Định dạng lưu", "Output format")}
                     value={settings.format}
@@ -2129,11 +2150,27 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
               ))}
             </div>
             <div className="flow-queue-list">
-              {activeQueueGroups.map((group) => (
-                <div key={`${group.kind}-${group.outputDir}`} className="flow-queue-group-item">
+              {activeQueueGroups.map((group) => {
+                const summary = flowGroupProgress(group.jobs);
+                return <div key={`${group.kind}-${group.outputDir}`} className="flow-queue-group-item">
                   <header className="flow-queue-kind-header">
-                    <div>
+                    <div className="flow-queue-folder-path">
                       <small title={queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder)}>{t("Thư mục kết quả", "Output folder")}: {queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder)}</small>
+                    </div>
+                    <div className="flow-queue-folder-summary">
+                      <span>{t("Tiến độ tổng", "Overall progress")}</span>
+                      <div
+                        className="flow-queue-folder-progress"
+                        role="progressbar"
+                        aria-label={t("Tiến độ tổng của thư mục", "Overall folder progress")}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={summary.progress}
+                      >
+                        <i style={{ width: `${summary.progress}%` }} />
+                      </div>
+                      <strong>{summary.progress}%</strong>
+                      <small>{t(`${summary.completed}/${summary.total} hoàn thành`, `${summary.completed}/${summary.total} completed`)}</small>
                     </div>
                     <div className="flow-queue-folder-actions">
                       <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
@@ -2257,8 +2294,8 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   </aside>
                 </article>
                   )}
-                </div>
-              ))}
+                </div>;
+              })}
             </div>
           </section>
         )}
@@ -2625,17 +2662,50 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 </button>
               </header>
               <div className="flow-preview-media">
-                {preview.job.kind === "video" ? (
+                {previewMediaKind === "video" ? (
                   <video
-                    src={`/api/flow/jobs/${preview.job.id}/outputs/${preview.outputIndex}`}
+                    key={previewSrc}
+                    src={previewSrc}
                     controls
                     autoPlay
                   />
-                ) : (
+                ) : previewMediaKind === "audio" ? (
+                  <audio key={previewSrc} src={previewSrc} controls autoPlay />
+                ) : previewMediaKind === "image" ? (
                   <img
-                    src={`/api/flow/jobs/${preview.job.id}/outputs/${preview.outputIndex}`}
+                    key={previewSrc}
+                    src={previewSrc}
                     alt={preview.job.prompt}
                   />
+                ) : (
+                  <iframe
+                    key={previewSrc}
+                    src={previewSrc}
+                    title={t("Xem trước tệp kết quả", "Output file preview")}
+                  />
+                )}
+                {(preview.job.outputs?.length || 0) > 1 && (
+                  <>
+                    <button
+                      className="flow-preview-nav is-previous"
+                      type="button"
+                      onClick={() => movePreview(-1)}
+                      aria-label={t("Kết quả trước", "Previous output")}
+                    >
+                      <IconArrowRight size={22} />
+                    </button>
+                    <button
+                      className="flow-preview-nav is-next"
+                      type="button"
+                      onClick={() => movePreview(1)}
+                      aria-label={t("Kết quả tiếp theo", "Next output")}
+                    >
+                      <IconArrowRight size={22} />
+                    </button>
+                    <span className="flow-preview-counter" aria-live="polite">
+                      {preview.outputIndex + 1} / {preview.job.outputs?.length || 0}
+                    </span>
+                  </>
                 )}
               </div>
               <footer>
