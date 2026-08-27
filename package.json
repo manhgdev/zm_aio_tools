@@ -13,7 +13,8 @@
     "preview": "vite preview --config frontend/vite.config.ts",
     "server": "cd backend && .venv/Scripts/python.exe -m uvicorn main:app --reload --reload-dir api --reload-dir pipeline --port 8787",
     "dev:all": "node scripts/dev.mjs",
-    "start": "node scripts/dev.mjs"
+    "start": "node scripts/dev.mjs",
+    "release": "npm version --git-tag-version true && git push && git push --tags"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
