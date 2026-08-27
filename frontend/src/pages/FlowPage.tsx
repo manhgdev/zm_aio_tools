@@ -256,7 +256,7 @@ function flowConfiguredOutputFolder(value: string, kind: CreateKind) {
   // A desktop selection may already be an absolute path.
   // Always append the kind subfolder (image/video) for consistency with web.
   if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir)) return `${outputDir}/${kind}`;
-  return `/Users/manhg/Downloads/ZM_AIO_TOOL/flow/${kind}/${outputDir.replace(/^[\\/]+/, "")}`;
+  return `ZM_AIO_TOOL/flow/${kind}/${outputDir.replace(/^[\\/]+/, "")}`;
 }
 function flowOutputParentPath(output?: string) {
   const value = String(output || "").trim();

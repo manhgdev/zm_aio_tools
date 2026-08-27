@@ -8,9 +8,15 @@ export function normalizeWebOutputName(value: string, appFolder: string) {
   const trimmed = value.trim()
   if (trimmed === appFolder) return ''
   if (!/^(?:[A-Za-z]:[\\/]|[\\/])/.test(trimmed)) return value
-  const prefix = `/Users/manhg/Downloads/ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`
+  // Absolute path: strip any known prefix (any user's home/Downloads/ZM_AIO_TOOL/appFolder)
   const normalized = trimmed.replace(/\\/g, '/')
-  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : ''
+  const idx = normalized.toLowerCase().indexOf('/zm_aio_tool/')
+  if (idx >= 0) {
+    const after = normalized.slice(idx + '/zm_aio_tool/'.length)
+    const folder = appFolder.replace(/^[\/\\]+|[\/\\]+$/g, '')
+    return after.startsWith(folder + '/') ? after.slice(folder.length + 1) : after
+  }
+  return ''
 }
 
 /** Keep the selected directory recognizable when a narrow panel hides its full path. */
@@ -73,7 +79,7 @@ export function OutputFolderField({
   }, [isDesktopApp])
 
   const webPathPrefix = useMemo(
-    () => `/Users/manhg/Downloads/ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`,
+    () => `ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`,
     [appFolder],
   )
   const appPath = useMemo(() => {
