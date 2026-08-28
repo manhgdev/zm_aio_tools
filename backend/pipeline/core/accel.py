@@ -277,3 +277,28 @@ def accel_label() -> str:
     if d == "mps":
         return "Apple GPU (MPS)"
     return "CPU"
+
+
+def opencl_device() -> tuple[bool, str]:
+    """Cross-platform OpenCL availability for image-processing pipelines.
+
+    Separate from preferred_torch_device() — OpenCL is used by cv2 UMat
+    (painting, image ops) while Torch handles ML inference (VieNeu, Whisper).
+
+    Works on:
+    - macOS  : Apple GPU via OpenCL framework (M-series and Intel)
+    - Windows: NVIDIA / AMD / Intel via installed OpenCL ICD
+    - Linux  : NVIDIA / AMD / Intel via mesa or vendor OCL
+
+    Returns (available, device_name).
+    """
+    try:
+        import cv2
+        if not cv2.ocl.haveOpenCL():
+            return False, "none"
+        cv2.ocl.setUseOpenCL(True)
+        dev = cv2.ocl.Device.getDefault()
+        name = dev.name() if dev else ""
+        return True, name or "OpenCL"
+    except Exception:
+        return False, "none"

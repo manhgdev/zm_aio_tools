@@ -20,6 +20,24 @@ import cv2
 import numpy as np
 
 
+def _opencl_device() -> tuple[bool, str]:
+    """Shared cross-platform OpenCL detection — delegates to pipeline.core.accel
+    when available (full backend path), falls back to direct cv2 probe otherwise."""
+    try:
+        from pipeline.core.accel import opencl_device
+        return opencl_device()
+    except ImportError:
+        pass
+    try:
+        if not cv2.ocl.haveOpenCL():
+            return False, "none"
+        cv2.ocl.setUseOpenCL(True)
+        dev = cv2.ocl.Device.getDefault()
+        return True, (dev.name() if dev else "") or "OpenCL"
+    except Exception:
+        return False, "none"
+
+
 def _load_reference():
     current = Path(__file__).resolve()
     candidates = [
@@ -159,11 +177,9 @@ def _apply_rendering_optimizations(renderer, renderer_module) -> bool:
     h, w = renderer.out_h, renderer.out_w
     cfg = renderer.cfg
 
-    use_gpu = cv2.ocl.haveOpenCL()
+    use_gpu, ocl_name = _opencl_device()
     if use_gpu:
-        cv2.ocl.setUseOpenCL(True)
-        dev = cv2.ocl.Device.getDefault()
-        print(f"  GPU painting: OpenCL on {dev.name() if dev else 'unknown'}")
+        print(f"  GPU painting: OpenCL on {ocl_name}")
     else:
         print("  GPU painting: unavailable, using optimized CPU")
 
