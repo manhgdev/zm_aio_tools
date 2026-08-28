@@ -54,6 +54,23 @@ function cachedSettings(): Record<string, unknown> {
   }
 }
 
+type MissingCue = {
+  index: number
+  timecode: string
+  duration?: number
+  label?: string
+  expected_name?: string
+}
+
+type MissingMediaInfo = {
+  required: number
+  available: number
+  missing_count?: number
+  available_files?: string[]
+  missing_cues?: MissingCue[]
+  preview: boolean
+}
+
 export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBack: () => void; initialMediaFolder?: string }) {
   const { locale } = useLocale()
   const t = (vietnamese: string, english: string) => localize(locale, vietnamese, english)
@@ -99,7 +116,6 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
   const [drawingStrokeOrder, setDrawingStrokeOrder] = useState(String(cached.drawingStrokeOrder ?? 'natural'))
   const [delogoEnabled, setDelogoEnabled] = useState(Boolean(cached.delogoEnabled ?? false))
   const [delogoAuto, setDelogoAuto] = useState(Boolean(cached.delogoAuto ?? true))
-  // ponytail: vùng xóa logo = % frame (0–100), mặc định góc dưới phải cho Veo3/Grok
   const [delogoRect, setDelogoRect] = useState(
     (cached.delogoRect as { x: number; y: number; w: number; h: number } | undefined) ?? { x: 82, y: 94, w: 16, h: 4 }
   )
@@ -133,7 +149,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
   const [defaultOutputDirectory, setDefaultOutputDirectory] = useState('ZM_AIO_TOOL/subtitles/image-video/')
   const [job, setJob] = useState<Job | null>(null)
   const [sending, setSending] = useState(false)
-  const [missingMedia, setMissingMedia] = useState<{ required: number; available: number; preview: boolean } | null>(null)
+  const [missingMedia, setMissingMedia] = useState<MissingMediaInfo | null>(null)
   const [logStart, setLogStart] = useState(0)
   const settingsSnapshot = useRef('')
 
@@ -261,7 +277,14 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
       if (response.status === 409) {
         const detail = (await response.clone().json().catch(() => null))?.detail
         if (detail?.code === 'missing_media') {
-          setMissingMedia({ required: Number(detail.required), available: Number(detail.available), preview })
+          setMissingMedia({
+            required: Number(detail.required || 0),
+            available: Number(detail.available || 0),
+            missing_count: Number(detail.missing_count || (Number(detail.required || 0) - Number(detail.available || 0))),
+            available_files: Array.isArray(detail.available_files) ? detail.available_files : [],
+            missing_cues: Array.isArray(detail.missing_cues) ? detail.missing_cues : [],
+            preview,
+          })
           return
         }
       }
@@ -885,17 +908,67 @@ Cảnh 2`}</pre>
           <section className="siv-help-dialog siv-missing-dialog" role="alertdialog" aria-modal="true" aria-labelledby="siv-missing-title" onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <small>{t('Có thể tiếp tục', 'You can continue')}</small>
+                <small>{t('Cảnh báo thiếu media', 'Missing Media Warning')}</small>
                 <h2 id="siv-missing-title">{t('Thiếu ảnh/video', 'Missing image/video')}</h2>
               </div>
               <button type="button" aria-label={t('Đóng cảnh báo', 'Close warning')} onClick={() => setMissingMedia(null)}>×</button>
             </header>
-            <p>{t(
-              `Timeline cần ${missingMedia.required} file nhưng thư mục hiện có ${missingMedia.available} file. Các cảnh thiếu media sẽ được bỏ qua. Bạn vẫn muốn tạo video?`,
-              `The timeline needs ${missingMedia.required} files, but the folder contains ${missingMedia.available}. Scenes without matching media will be skipped. Create the video anyway?`,
-            )}</p>
+            <div className="siv-missing-scroll">
+              <div className="siv-missing-summary">
+                <strong>{t('Thư mục media hiện có:', 'Current media folder:')} {missingMedia.available} file</strong>
+                <span> · {t('Timeline yêu cầu:', 'Timeline requires:')} {missingMedia.required} {t('cảnh', 'scenes')} ➔ <strong>{t('Thiếu:', 'Missing:')} {missingMedia.missing_count || (missingMedia.required - missingMedia.available)} {t('file', 'files')}</strong></span>
+                {missingMedia.available_files && missingMedia.available_files.length > 0 && (
+                  <p>
+                    {t('File đã có:', 'Existing files:')} {missingMedia.available_files.slice(0, 8).join(', ')}
+                    {missingMedia.available_files.length > 8 ? ` +${missingMedia.available_files.length - 8} ${t('file khác', 'more files')}` : ''}
+                  </p>
+                )}
+              </div>
+
+              <div className="siv-missing-list-header">
+                <span>{t('Danh sách các cảnh bị thiếu ảnh/video:', 'Missing scenes & expected files:')}</span>
+                <span>{missingMedia.missing_cues?.length || (missingMedia.required - missingMedia.available)} {t('cảnh thiếu', 'missing')}</span>
+              </div>
+
+              {missingMedia.missing_cues && missingMedia.missing_cues.length > 0 ? (
+                <div className="siv-missing-list">
+                  {missingMedia.missing_cues.map((cue) => (
+                    <div key={cue.index} className="siv-missing-item">
+                      <div className="siv-missing-item-top">
+                        <span className="siv-missing-badge">{t(`Cảnh #${cue.index}`, `Scene #${cue.index}`)}</span>
+                        <span className="siv-missing-timecode">⏱ {cue.timecode} {cue.duration ? `(${cue.duration}s)` : ''}</span>
+                      </div>
+                      <div className="siv-missing-expected">
+                        <span>{t('File cần thêm:', 'Expected file:')}</span>
+                        <b>{cue.expected_name || `${String(cue.index).padStart(3, '0')}.*`}</b>
+                      </div>
+                      {cue.label ? (
+                        <div className="siv-missing-prompt" title={cue.label}>
+                          {cue.label}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: '0.84rem' }}>
+                  {t(
+                    `Thiếu ${missingMedia.required - missingMedia.available} file từ cảnh #${missingMedia.available + 1} đến cảnh #${missingMedia.required}.`,
+                    `Missing ${missingMedia.required - missingMedia.available} files from scene #${missingMedia.available + 1} to scene #${missingMedia.required}.`,
+                  )}
+                </p>
+              )}
+
+              <p style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', margin: 0, lineHeight: 1.45 }}>
+                {t(
+                  '💡 Bạn có thể thêm các file còn thiếu vào thư mục media rồi bấm Render lại, hoặc bấm [Vẫn tạo] để render với số file hiện có (các cảnh thiếu sẽ tự động bị bỏ qua).',
+                  '💡 You can add the missing files into your media folder and Render again, or click [Create anyway] to render with current files (missing scenes will be skipped).',
+                )}
+              </p>
+            </div>
             <footer>
               <button type="button" onClick={() => setMissingMedia(null)}>{t('Quay lại', 'Go back')}</button>
+              <button type="button" onClick={() => void openFolder()}>{t('Mở thư mục', 'Open folder')}</button>
               <button
                 type="button"
                 className="primary"

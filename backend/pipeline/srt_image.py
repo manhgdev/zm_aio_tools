@@ -234,71 +234,135 @@ def parse_timeline_times(path: Path) -> list[tuple[float, float]]:
     return times
 
 
-def parse_timing_times(path: Path) -> list[tuple[float, float]]:
-    """Read common prompt, subtitle, table, and structured timeline formats."""
+def parse_timing_cues_detailed(path: Path) -> list[dict[str, Any]]:
+    """Read prompt, subtitle, table, or structured timeline with full cue metadata."""
     text = path.read_text(encoding="utf-8-sig", errors="replace")
 
-    def ranges(values: list[tuple[object, object]]) -> list[tuple[float, float]]:
-        result: list[tuple[float, float]] = []
-        for left, right in values:
+    def _fmt_tc(s: float, e: float) -> str:
+        def _hms(v: float) -> str:
+            h = int(v // 3600)
+            m = int((v % 3600) // 60)
+            sec = v % 60
+            if h > 0:
+                return f"{h:02d}:{m:02d}:{sec:05.2f}"
+            return f"{m:02d}:{sec:05.2f}"
+        return f"{_hms(s)} - {_hms(e)}"
+
+    def _build_cues(items: list[tuple[object, object, str, str]]) -> list[dict[str, Any]]:
+        cues: list[dict[str, Any]] = []
+        for left, right, label, expected in items:
             try:
                 start, end = _timeline_seconds(str(left)), _timeline_seconds(str(right))
             except (TypeError, ValueError):
                 continue
             if end > start:
-                result.append((start, end))
-        if not result:
+                idx = len(cues) + 1
+                cues.append({
+                    "index": idx,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "duration": round(end - start, 3),
+                    "timecode": _fmt_tc(start, end),
+                    "label": label.strip() if label else "",
+                    "expected_name": expected.strip() if expected else f"{idx:03d}.*",
+                })
+        if not cues:
             raise ValueError("Timeline không có mốc thời gian hợp lệ")
-        return result
+        return cues
 
-    def arrow() -> list[tuple[float, float]]:
-        values = []
+    def prompt_lines() -> list[dict[str, Any]]:
+        items: list[tuple[object, object, str, str]] = []
         for line in text.splitlines():
+            line_str = line.strip()
+            if not line_str:
+                continue
+            match = _TIMELINE_RANGE.search(line_str)
+            if match:
+                left, right = match.group(1), match.group(2)
+                prefix_match = re.match(r"^([a-zA-Z0-9_\-\.]+?)\s*\[", line_str)
+                expected = prefix_match.group(1) if prefix_match else ""
+                items.append((left, right, line_str, expected))
+        return _build_cues(items)
+
+    def arrow() -> list[dict[str, Any]]:
+        items: list[tuple[object, object, str, str]] = []
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
             if "-->" in line:
                 left, right = line.split("-->", 1)
-                values.append((left.strip(), right.strip().split()[0]))
-        return ranges(values)
+                sub_lines: list[str] = []
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    if not lines[j].strip() or "-->" in lines[j]:
+                        break
+                    sub_lines.append(lines[j].strip())
+                label = " ".join(sub_lines)
+                items.append((left.strip(), right.strip().split()[0], label, ""))
+        return _build_cues(items)
 
-    def ass() -> list[tuple[float, float]]:
-        values = []
+    def ass() -> list[dict[str, Any]]:
+        items: list[tuple[object, object, str, str]] = []
         for line in text.splitlines():
             if line.lstrip().lower().startswith("dialogue:"):
                 fields = line.split(":", 1)[1].split(",", 9)
                 if len(fields) >= 3:
-                    values.append((fields[1], fields[2]))
-        return ranges(values)
+                    text_field = fields[9] if len(fields) >= 10 else ""
+                    clean_text = re.sub(r"\{.*?\}", "", text_field).strip()
+                    items.append((fields[1], fields[2], clean_text, ""))
+        return _build_cues(items)
 
-    def table(delimiter: str) -> list[tuple[float, float]]:
+    def table(delimiter: str) -> list[dict[str, Any]]:
         rows = list(csv.reader(text.splitlines(), delimiter=delimiter))
         if not rows:
             raise ValueError("Timeline bảng trống")
         header = [re.sub(r"[^a-z]", "", cell.lower()) for cell in rows[0]]
-        start_aliases, end_aliases = {"start", "starttime", "from", "in"}, {"end", "endtime", "to", "out"}
-        start_index = next((i for i, value in enumerate(header) if value in start_aliases), None)
-        end_index = next((i for i, value in enumerate(header) if value in end_aliases), None)
+        start_aliases = {"start", "starttime", "from", "in"}
+        end_aliases = {"end", "endtime", "to", "out"}
+        name_aliases = {"name", "file", "filename", "media", "image", "video"}
+        label_aliases = {"prompt", "text", "description", "title", "caption", "scene"}
+
+        start_index = next((i for i, v in enumerate(header) if v in start_aliases), None)
+        end_index = next((i for i, v in enumerate(header) if v in end_aliases), None)
+        name_index = next((i for i, v in enumerate(header) if v in name_aliases), None)
+        label_index = next((i for i, v in enumerate(header) if v in label_aliases), None)
+
         data = rows[1:] if start_index is not None and end_index is not None else rows
         start_index, end_index = start_index or 0, end_index or 1
-        return ranges([(row[start_index], row[end_index]) for row in data if len(row) > max(start_index, end_index)])
 
-    def structured() -> list[tuple[float, float]]:
+        items: list[tuple[object, object, str, str]] = []
+        for row in data:
+            if len(row) > max(start_index, end_index):
+                exp = row[name_index] if name_index is not None and len(row) > name_index else ""
+                lbl = row[label_index] if label_index is not None and len(row) > label_index else ""
+                items.append((row[start_index], row[end_index], lbl, exp))
+        return _build_cues(items)
+
+    def structured() -> list[dict[str, Any]]:
         payload = json.loads(text)
         if isinstance(payload, dict):
             payload = next((payload[key] for key in ("scenes", "items", "segments", "cues", "timeline", "data") if isinstance(payload.get(key), list)), [payload])
         if not isinstance(payload, list):
             raise ValueError("JSON timeline phải là danh sách")
-        values = []
+        items: list[tuple[object, object, str, str]] = []
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            start = next((item[key] for key in ("start", "startTime", "start_time", "from", "in") if key in item), None)
-            end = next((item[key] for key in ("end", "endTime", "end_time", "to", "out") if key in item), None)
-            values.append((start, end))
-        return ranges(values)
+            start = next((item[k] for k in ("start", "startTime", "start_time", "from", "in") if k in item), None)
+            end = next((item[k] for k in ("end", "endTime", "end_time", "to", "out") if k in item), None)
+            lbl = str(next((item[k] for k in ("prompt", "text", "description", "caption", "scene") if k in item), "") or "")
+            exp = str(next((item[k] for k in ("name", "file", "filename", "image", "video") if k in item), "") or "")
+            items.append((start, end, lbl, exp))
+        return _build_cues(items)
 
-    def lrc() -> list[tuple[float, float]]:
-        stamps = [int(minutes) * 60 + float(seconds.replace(",", "."))
-                  for minutes, seconds in re.findall(r"(?m)^\s*\[(\d+):(\d+(?:[.,]\d+)?)\]", text)]
-        return ranges(list(zip(stamps, stamps[1:])))
+    def lrc() -> list[dict[str, Any]]:
+        matches = list(re.finditer(r"(?m)^\s*\[(\d+):(\d+(?:[.,]\d+)?)\](.*)$", text))
+        items: list[tuple[object, object, str, str]] = []
+        for i in range(len(matches) - 1):
+            m1, m2 = matches[i], matches[i + 1]
+            t1 = int(m1.group(1)) * 60 + float(m1.group(2).replace(",", "."))
+            t2 = int(m2.group(1)) * 60 + float(m2.group(2).replace(",", "."))
+            lbl = m1.group(3).strip()
+            items.append((t1, t2, lbl, ""))
+        return _build_cues(items)
 
     suffix = path.suffix.lower()
     preferred = {
@@ -307,7 +371,7 @@ def parse_timing_times(path: Path) -> list[tuple[float, float]]:
         ".json": structured, ".lrc": lrc,
     }.get(suffix)
     parsers = ([preferred] if preferred else []) + [
-        lambda: parse_timeline_times(path), arrow, ass, structured,
+        prompt_lines, arrow, ass, structured,
         lambda: table(","), lambda: table("\t"), lrc,
     ]
     for parser in parsers:
@@ -316,6 +380,11 @@ def parse_timing_times(path: Path) -> list[tuple[float, float]]:
         except (ValueError, TypeError, IndexError, json.JSONDecodeError, csv.Error):
             continue
     raise ValueError("File không có timeline hợp lệ")
+
+
+def parse_timing_times(path: Path) -> list[tuple[float, float]]:
+    """Read common prompt, subtitle, table, and structured timeline formats."""
+    return [(cue["start"], cue["end"]) for cue in parse_timing_cues_detailed(path)]
 
 
 def select_cues_for_media(

@@ -691,14 +691,107 @@
   font-weight: 700;
   cursor: pointer;
 }
-.siv-missing-dialog > p {
+.siv-missing-dialog {
+  width: min(600px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.siv-missing-dialog > .siv-missing-scroll {
+  overflow-y: auto;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.siv-missing-summary {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, var(--line));
+  background: color-mix(in srgb, #f59e0b 10%, var(--background));
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+.siv-missing-summary strong {
+  color: #d97706;
+}
+.siv-missing-summary p {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+.siv-missing-list-header {
+  font-size: 0.82rem;
+  font-weight: 700;
   color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.siv-missing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.siv-missing-item {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: var(--background);
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.siv-missing-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.siv-missing-badge {
+  font-weight: 700;
+  color: #dc2626;
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.76rem;
+}
+.siv-missing-timecode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+}
+.siv-missing-expected {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+.siv-missing-expected b {
+  color: var(--primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.siv-missing-prompt {
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  padding: 4px 6px;
+  border-radius: 4px;
 }
 .siv-missing-dialog > footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 0 18px 18px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
 }
 .siv-missing-dialog > footer button {
   min-height: 38px;

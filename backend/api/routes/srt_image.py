@@ -13,7 +13,10 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from pipeline.srt_image import ROOT, cancel, create_job, get_job, list_jobs, output_path, parse_timing_times, pause, start
+from pipeline.srt_image import (
+    ROOT, cancel, create_job, get_job, list_jobs, output_path,
+    parse_timing_cues_detailed, parse_timing_times, pause, start,
+)
 from pipeline.core.output_paths import downloads_folder
 
 router = APIRouter()
@@ -201,15 +204,22 @@ async def create(
         opts = {}
     if timeline_file and not opts.get("allowMissingMedia"):
         try:
-            required = len(parse_timing_times(timeline_file))
+            cues_detailed = parse_timing_cues_detailed(timeline_file)
+            required = len(cues_detailed)
         except ValueError:
+            cues_detailed = []
             required = 0
         if required > len(image_paths):
             shutil.rmtree(work, ignore_errors=True)
+            avail_count = len(image_paths)
+            missing_cues = cues_detailed[avail_count:]
             raise HTTPException(409, detail={
                 "code": "missing_media",
                 "required": required,
-                "available": len(image_paths),
+                "available": avail_count,
+                "missing_count": required - avail_count,
+                "available_files": [p.name for p in image_paths],
+                "missing_cues": missing_cues,
             })
     output_target = _resolve_output_target(output_path)
     job = create_job(
