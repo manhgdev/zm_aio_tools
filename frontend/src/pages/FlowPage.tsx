@@ -5,6 +5,7 @@ import {
   IconArrowRight,
   IconBatch,
   IconBook,
+  IconChevronDown,
   IconClock,
   IconDownload,
   IconGear,
@@ -572,6 +573,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     email: "",
     plan: "Pro" as FlowAccount["plan"],
   });
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const toggleFolderCollapsed = (groupKey: string) => {
+    setCollapsedFolders((prev) => ({
+      ...prev,
+      [groupKey]: !prev[groupKey],
+    }));
+  };
   const [apiError, setApiError] = useState("");
   const [logsCopied, setLogsCopied] = useState(false);
   const [backendReady, setBackendReady] = useState(false);
@@ -2206,37 +2214,65 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
             </div>
             <div className="flow-queue-list">
               {activeQueueGroups.map((group) => {
+                const groupKey = `${group.kind}-${group.outputDir}`;
+                const isCollapsed = !!collapsedFolders[groupKey];
                 const summary = flowGroupProgress(group.jobs);
-                return <div key={`${group.kind}-${group.outputDir}`} className="flow-queue-group-item">
-                  <header className="flow-queue-kind-header">
-                    <div className="flow-queue-folder-path">
-                      <small title={queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder)}>{t("Thư mục kết quả", "Output folder")}: {queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder)}</small>
-                    </div>
-                    <div className="flow-queue-folder-summary">
-                      <span>{t("Tiến độ tổng", "Overall progress")}</span>
-                      <div
-                        className="flow-queue-folder-progress"
-                        role="progressbar"
-                        aria-label={t("Tiến độ tổng của thư mục", "Overall folder progress")}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={summary.progress}
+                const folderPathText = queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder);
+                return (
+                  <div key={groupKey} className="flow-queue-group-item">
+                    <header className={`flow-queue-kind-header${isCollapsed ? " is-collapsed" : ""}`}>
+                      <button
+                        type="button"
+                        className="flow-queue-folder-toggle"
+                        onClick={() => toggleFolderCollapsed(groupKey)}
+                        title={isCollapsed ? t("Mở rộng danh sách", "Expand list") : t("Thu nhỏ danh sách", "Collapse list")}
+                        aria-expanded={!isCollapsed}
+                        aria-label={isCollapsed ? t("Mở rộng danh sách", "Expand list") : t("Thu nhỏ danh sách", "Collapse list")}
                       >
-                        <i style={{ width: `${summary.progress}%` }} />
+                        <IconChevronDown
+                          size={15}
+                          style={{
+                            transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                            transition: "transform 180ms cubic-bezier(0.4, 0, 0.2, 1)",
+                          }}
+                        />
+                      </button>
+                      <div
+                        className="flow-queue-folder-path"
+                        onClick={() => toggleFolderCollapsed(groupKey)}
+                        title={folderPathText}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <small>
+                          {t("Thư mục kết quả", "Output folder")}: {folderPathText}
+                        </small>
                       </div>
-                      <strong>{summary.progress}%</strong>
-                      <small>{t(`${summary.completed}/${summary.total} hoàn thành`, `${summary.completed}/${summary.total} completed`)}</small>
-                    </div>
-                    <div className="flow-queue-folder-actions">
-                      <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
-                      <button className="flow-text-button is-warning" type="button" disabled={!group.jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={() => cancelFolderJobs(group.outputDir, group.jobs)}>{t("Hủy", "Cancel")}</button>
-                      <button className="flow-text-button is-danger" type="button" onClick={() => deleteFolderJobs(group.outputDir, group.jobs)}>{t("Xóa", "Delete")}</button>
-                    </div>
-                  </header>
-                  {group.jobs.map((job) => <article
-                  key={job.id}
-                  className={`flow-queue-job flow-queue-job--${job.status}`}
-                >
+                      <div className="flow-queue-folder-summary">
+                        <span>{t("Tiến độ tổng", "Overall progress")}</span>
+                        <div
+                          className="flow-queue-folder-progress"
+                          role="progressbar"
+                          aria-label={t("Tiến độ tổng của thư mục", "Overall folder progress")}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={summary.progress}
+                        >
+                          <i style={{ width: `${summary.progress}%` }} />
+                        </div>
+                        <strong>{summary.progress}%</strong>
+                        <small>{t(`${summary.completed}/${summary.total} hoàn thành`, `${summary.completed}/${summary.total} completed`)}</small>
+                      </div>
+                      <div className="flow-queue-folder-actions">
+                        <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
+                        <button className="flow-text-button is-warning" type="button" disabled={!group.jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={() => cancelFolderJobs(group.outputDir, group.jobs)}>{t("Hủy", "Cancel")}</button>
+                        <button className="flow-text-button is-danger" type="button" onClick={() => deleteFolderJobs(group.outputDir, group.jobs)}>{t("Xóa", "Delete")}</button>
+                      </div>
+                    </header>
+                    {!isCollapsed && group.jobs.map((job) => (
+                      <article
+                        key={job.id}
+                        className={`flow-queue-job flow-queue-job--${job.status}`}
+                      >
                   <button
                     className="flow-job-thumb"
                     type="button"
@@ -2347,11 +2383,12 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                       </div>
                     ) : null}
                   </aside>
-                </article>
-                  )}
-                </div>;
-              })}
-            </div>
+                  </article>
+                ))}
+              </div>
+            );
+          })}
+        </div>
           </section>
         )}
         {!utilityView && tab === "create" && (

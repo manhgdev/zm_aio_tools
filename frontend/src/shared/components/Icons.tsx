@@ -1,17 +1,19 @@
 /** Inline SVG icons — no icon lib. */
 
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
-type Props = { size?: number; className?: string }
+type Props = { size?: number; className?: string; style?: CSSProperties }
 
 function Svg({
   size = 16,
   className,
+  style,
   children,
 }: Props & { children: ReactNode }) {
   return (
     <svg
       className={className}
+      style={style}
       width={size}
       height={size}
       viewBox="0 0 24 24"
@@ -294,3 +296,12 @@ export function IconWand(p: Props) {
     </Svg>
   )
 }
+
+export function IconChevronDown(p: Props) {
+  return (
+    <Svg {...p}>
+      <polyline points="6 9 12 15 18 9" />
+    </Svg>
+  )
+}
+
