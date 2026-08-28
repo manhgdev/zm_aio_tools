@@ -524,7 +524,7 @@ def create_job(
     output_target: Path | None = None,
 ) -> dict:
     job_id = uuid.uuid4().hex[:10]
-    output = output_target or downloads_folder("subtitle-image") / f"{Path(name).stem or 'ghep-anh-srt'}_{job_id}.mp4"
+    output = output_target or downloads_folder("subtitle-image") / f"{Path(name).stem or 'ghep-anh-srt'}.mp4"
     output.parent.mkdir(parents=True, exist_ok=True)
     job = {
         "id": job_id, "name": name, "status": "queued", "progress": 0,
@@ -1011,7 +1011,7 @@ def run(job_id: str) -> None:
             shutil.copy2(cached, output)
             published = _publish_render(job_id, output, str(job.get("name") or ""))
             _update(job_id, status="done", progress=100, outputSize=output.stat().st_size)
-            _log(job_id, f"Hoàn thành (từ cache): {output} ({output.stat().st_size / 1_048_576:.1f} MB) · Đã thêm: {published.name}")
+            _log(job_id, f"Hoàn thành (từ cache): {output} ({output.stat().st_size / 1_048_576:.1f} MB)")
             return
         if not owns_cache_key:
             return
@@ -1234,7 +1234,7 @@ def run(job_id: str) -> None:
             pass
         published = _publish_render(job_id, path, str(job.get("name") or ""))
         _update(job_id, status="done", progress=100, outputSize=path.stat().st_size)
-        _log(job_id, f"Hoàn thành: {path} ({path.stat().st_size / 1_048_576:.1f} MB) · Đã thêm: {published.name}")
+        _log(job_id, f"Hoàn thành: {path} ({path.stat().st_size / 1_048_576:.1f} MB)")
     except Exception as exc:
         with _LOCK:
             _PROCS.pop(job_id, None)
