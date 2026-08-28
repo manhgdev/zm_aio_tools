@@ -13,11 +13,7 @@ const isMac = process.platform === 'darwin'
 const releaseDir = path.join(root, 'build_app', 'release')
 
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
-const bundledVersionPath = path.join(root, 'build_app', 'VERSION')
-const bundledVersion = existsSync(bundledVersionPath)
-  ? readFileSync(bundledVersionPath, 'utf8').trim()
-  : ''
-const version = process.argv[2] || bundledVersion || pkg.version.match(/^\d+\.\d+\.\d+/)?.[0] || '0.0.0'
+const version = process.argv[2] || pkg.version?.match(/^\d+\.\d+\.\d+/)?.[0] || '0.0.0'
 const APP_ARTIFACT_NAME = 'ZM_AIO_TOOL'
 const APP_EXECUTABLE_NAME = 'ZM AIO TOOL'
 const verName = `${APP_ARTIFACT_NAME}_v${version}`

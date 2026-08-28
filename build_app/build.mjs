@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { createWriteStream, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -9,7 +9,8 @@ const isMac = process.platform === 'darwin'
 const python = path.join(root, 'backend', '.venv', isWin ? 'Scripts/python.exe' : 'bin/python')
 const dataSep = isWin ? ';' : ':'
 const packageJsonPath = path.join(root, 'package.json')
-const versionFilePath = path.join(root, 'build_app', 'VERSION')
+const workDir = path.join(root, 'build_app', '.work')
+const versionFilePath = path.join(workDir, 'VERSION')
 // onedir = nhanh (Windows mặc định). ONEFILE=1 để gói 1 file (chậm vì bước PKG).
 const oneFile = process.env.ONEFILE === '1' || process.env.ONEFILE === 'true'
 const clean = process.env.CLEAN === '1' || process.env.CLEAN === 'true'
@@ -153,6 +154,7 @@ if (!existsSync(python)) {
 
 const pkg = readPackage()
 const appVersion = formatSemver(parseSemver(pkg.version || '1.0.0'))
+if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true })
 writeFileSync(versionFilePath, `${appVersion}\n`, 'utf8')
 console.log(`Building ${APP_DISPLAY_NAME} v${appVersion} (${oneFile ? 'onefile' : 'onedir'}${clean ? ', clean' : ''})`)
 
