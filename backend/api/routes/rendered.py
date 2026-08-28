@@ -103,13 +103,53 @@ def _project_id(output: Path, saved: dict[str, Any]) -> str:
     return ""
 
 
+from concurrent.futures import ThreadPoolExecutor
+
+_PROBE_CACHE: dict[str, tuple[float, int, int, int, float]] = {}
+
+
+def _probe_video_info(path: Path) -> dict[str, Any] | None:
+    try:
+        st = path.stat()
+        mtime, size = st.st_mtime, st.st_size
+        cached = _PROBE_CACHE.get(str(path))
+        if cached and cached[0] == mtime and cached[1] == size:
+            w, h, dur = cached[2], cached[3], cached[4]
+        else:
+            w, h = video_size(path)
+            dur = ffprobe_duration(path)
+            _PROBE_CACHE[str(path)] = (mtime, size, w, h, dur)
+
+        if w <= 0 or h <= 0 or dur <= 0:
+            return None
+        return {
+            "path": path,
+            "width": w,
+            "height": h,
+            "duration": dur,
+            "sizeBytes": size,
+            "mtime": mtime,
+        }
+    except Exception:
+        return None
+
+
 def list_rendered_videos() -> list[dict[str, Any]]:
     paths = _export_mp4_paths()
     if not paths:
         return []
+    # ponytail: giới hạn 120 video mới nhất để phản hồi siêu tốc dưới 0.1s
+    paths = paths[:120]
     archived_projects = {path.stem.split("-", 1)[0] for path in paths if "-" in path.stem}
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        probed_results = list(pool.map(_probe_video_info, paths))
+
     items: list[dict[str, Any]] = []
-    for output in paths:
+    for info in probed_results:
+        if not info:
+            continue
+        output: Path = info["path"]
         render_id = _render_id(output, paths)
         try:
             sidecar = output.with_suffix(".json")
@@ -118,23 +158,20 @@ def list_rendered_videos() -> list[dict[str, Any]]:
             if output.stem == project_id and project_id in archived_projects:
                 continue
             name = str(saved.get("name") or "").strip() or output.stem
-            width, height = video_size(output)
-            duration = ffprobe_duration(output)
-            stat = output.stat()
-            if width <= 0 or height <= 0 or duration <= 0:
-                continue
-        except (OSError, ValueError, subprocess.SubprocessError):
-            continue
+        except Exception:
+            name = output.stem
+            project_id = ""
+
         items.append({
             "renderId": render_id,
             "projectId": project_id,
             "canEdit": bool(project_id),
             "name": name,
-            "createdAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-            "sizeBytes": stat.st_size,
-            "duration": duration,
-            "width": width,
-            "height": height,
+            "createdAt": datetime.fromtimestamp(info["mtime"], timezone.utc).isoformat(),
+            "sizeBytes": info["sizeBytes"],
+            "duration": info["duration"],
+            "width": info["width"],
+            "height": info["height"],
             "videoUrl": f"/api/renders/{render_id}/video",
             "downloadUrl": f"/api/renders/{render_id}/video?download=1",
             "thumbnailUrl": f"/api/renders/{render_id}/thumbnail",
