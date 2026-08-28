@@ -427,7 +427,7 @@ def _has_logo_region(source: Path, x: int, y: int, w: int, h: int) -> bool:
 def _prepare_video_segments(
     job_id: str, media: list[Path], durations: list[float], work: Path,
     width: int, height: int, fps: int, crf: int, use_gpu: bool, zoom: str = "off",
-    delogo_prefix: str = "",
+    delogo_prefix: str = "", gpu_encoder: str | None = None,
 ) -> list[Path]:
     # Parse delogo params 1 lần để check per-file
     dl_params: tuple[int, int, int, int] | None = None
@@ -458,9 +458,18 @@ def _prepare_video_segments(
         segment_plans.append((index, source, duration, vf, use_dl))
 
     total = len(segment_plans)
-    # ponytail: GPU encoder thường chỉ có 1-2 NVENC sessions → không nên song song.
-    # CPU có thể song song vì mỗi FFmpeg instance dùng core riêng.
-    workers = 1 if use_gpu else min(4, max(1, os.cpu_count() or 2))
+    # ponytail: session limit per encoder type
+    # - NVENC (consumer): max 2-3 concurrent encode sessions
+    # - VideoToolbox (Apple) / AMF (AMD) / QSV (Intel): no hard limit → parallel OK
+    # - CPU libx264: each instance uses own cores → parallel with cap
+    enc = (gpu_encoder or "").lower()
+    if not use_gpu:
+        workers = min(4, max(1, os.cpu_count() or 2))
+    elif "nvenc" in enc:
+        workers = 2  # NVENC consumer limit
+    else:
+        # VideoToolbox / AMF / QSV — safe to parallelize up to cpu_count/2
+        workers = min(max(1, (os.cpu_count() or 4) // 2), 6)
     segments: list[Path | None] = [None] * total
     completed = 0
 
@@ -1019,7 +1028,7 @@ def run(job_id: str) -> None:
         sources = (
             _prepare_video_segments(
                 job_id, media, durations, work, width, height, fps, crf, use_gpu, zoom_mode,
-                delogo_prefix,
+                delogo_prefix, gpu_encoder,
             )
             if need_segments else media
         )
