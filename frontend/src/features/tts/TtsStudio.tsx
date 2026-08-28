@@ -47,6 +47,10 @@ import './TtsStudio.css'
 
 const FAVORITE_LS_KEY = 'video-clone:tts-voice-favorites'
 const OUTPUT_DIR_LS_KEY = 'video-clone:tts-output-dir.v1'
+const TTS_TEXT_LS_KEY = 'video-clone:tts-text:v1'
+const TTS_SRT_LS_KEY = 'video-clone:tts-srt:v1'
+const TTS_INPUT_MODE_LS_KEY = 'video-clone:tts-input-mode:v1'
+const TTS_ACTIVE_JOB_LS_KEY = 'video-clone:tts-active-job:v1'
 
 type Props = {
   voices: Voice[]
@@ -162,7 +166,13 @@ export default function TtsStudio({
   }
 
   const [section, setSection] = useState(sectionFromUrl)
-  const [text, setText] = useState('')
+  const [text, setText] = useState(() => {
+    try {
+      return localStorage.getItem(TTS_TEXT_LS_KEY) || ''
+    } catch {
+      return ''
+    }
+  })
   const [lang, setLang] = useState(saved.lang)
   const [engine, setEngine] = useState<TtsEngine>(saved.engine)
   const [voice, setVoice] = useState(saved.voice)
@@ -196,13 +206,33 @@ export default function TtsStudio({
   const [busyProgress, setBusyProgress] = useState(0)
   const [progressMinimized, setProgressMinimized] = useState(false)
   const [error, setError] = useState('')
-  const [audioUrl, setAudioUrl] = useState<string | null>(null)
-  const [mp3Url, setMp3Url] = useState<string | null>(null)
+
+  const [initialActiveJob] = useState<{ id: string; duration: number; audioUrl: string; mp3Url?: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem(TTS_ACTIVE_JOB_LS_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as { id?: unknown; duration?: unknown; audioUrl?: unknown; mp3Url?: unknown }
+      if (parsed && typeof parsed.id === 'string' && typeof parsed.audioUrl === 'string') {
+        return {
+          id: String(parsed.id),
+          duration: Number(parsed.duration || 0),
+          audioUrl: String(parsed.audioUrl),
+          mp3Url: parsed.mp3Url ? String(parsed.mp3Url) : undefined,
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null
+  })
+
+  const [audioUrl, setAudioUrl] = useState<string | null>(() => initialActiveJob?.audioUrl || null)
+  const [mp3Url, setMp3Url] = useState<string | null>(() => initialActiveJob?.mp3Url || null)
   // ponytail: SRT/ZIP URLs are derived from jobId when downloading.
-  const [jobId, setJobId] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(() => initialActiveJob?.id || null)
   const activeJobIdRef = useRef<string | null>(null)
   const cancelledJobIdsRef = useRef(new Set<string>())
-  const [duration, setDuration] = useState(0)
+  const [duration, setDuration] = useState<number>(() => initialActiveJob?.duration || 0)
   const [playbackTime, setPlaybackTime] = useState(0)
   const [playbackDuration, setPlaybackDuration] = useState(0)
   const [playbackVolume, setPlaybackVolume] = useState(saved.playbackVolume)
@@ -219,9 +249,46 @@ export default function TtsStudio({
   const [cloneFile, setCloneFile] = useState<File | null>(null)
   const [cloneTags, setCloneTags] = useState<VoiceTagLabel[]>([])
   const [previewSample, setPreviewSample] = useState('')
-  const [srtRaw, setSrtRaw] = useState('')
+  const [srtRaw, setSrtRaw] = useState(() => {
+    try {
+      return localStorage.getItem(TTS_SRT_LS_KEY) || ''
+    } catch {
+      return ''
+    }
+  })
   /** Dashboard « Nhập nội dung »: text | srt — quyết định synth path */
-  const [inputMode, setInputMode] = useState<'text' | 'srt'>('text')
+  const [inputMode, setInputMode] = useState<'text' | 'srt'>(() => {
+    try {
+      const mode = localStorage.getItem(TTS_INPUT_MODE_LS_KEY)
+      return mode === 'srt' ? 'srt' : 'text'
+    } catch {
+      return 'text'
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TTS_TEXT_LS_KEY, text)
+    } catch {
+      /* ignore */
+    }
+  }, [text])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TTS_SRT_LS_KEY, srtRaw)
+    } catch {
+      /* ignore */
+    }
+  }, [srtRaw])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TTS_INPUT_MODE_LS_KEY, inputMode)
+    } catch {
+      /* ignore */
+    }
+  }, [inputMode])
   const [previewBusy, setPreviewBusy] = useState(false)
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null)
   const [previewGeneratingVoiceId, setPreviewGeneratingVoiceId] = useState<string | null>(null)
@@ -496,23 +563,40 @@ export default function TtsStudio({
   const loadHistory = useCallback(async () => {
     try {
       const rows = await api.ttsStudioHistory()
-      setHistory(
-        rows.slice(0, HISTORY_MAX).map((r) => ({
-          id: String(r.id || ''),
-          title: String(r.title || ''),
-          voice: String(r.voice || ''),
-          voiceName: r.voiceName ? String(r.voiceName) : undefined,
-          engine: String(r.engine || ''),
-          duration: Number(r.duration || 0),
-          createdAt: String(r.createdAt || ''),
-          audioUrl: String(r.audioUrl || ''),
-          mp3Url: r.mp3Url ? String(r.mp3Url) : undefined,
-          srtUrl: r.srtUrl ? String(r.srtUrl) : undefined,
-          zipUrl: r.zipUrl ? String(r.zipUrl) : undefined,
-          text: String(r.text || ''),
-        })),
-      )
+      const formattedRows: HistoryItem[] = rows.slice(0, HISTORY_MAX).map((r) => ({
+        id: String(r.id || ''),
+        title: String(r.title || ''),
+        voice: String(r.voice || ''),
+        voiceName: r.voiceName ? String(r.voiceName) : undefined,
+        engine: String(r.engine || ''),
+        duration: Number(r.duration || 0),
+        createdAt: String(r.createdAt || ''),
+        audioUrl: String(r.audioUrl || ''),
+        mp3Url: r.mp3Url ? String(r.mp3Url) : undefined,
+        srtUrl: r.srtUrl ? String(r.srtUrl) : undefined,
+        zipUrl: r.zipUrl ? String(r.zipUrl) : undefined,
+        text: String(r.text || ''),
+      }))
+      setHistory(formattedRows)
       setHistoryPage(1)
+
+      // ponytail: nếu chưa có audio preview nào (lần đầu vào), tự động khôi phục bản tạo gần nhất từ lịch sử
+      setJobId((currentJobId) => {
+        if (currentJobId) return currentJobId
+        const latest = formattedRows[0]
+        if (latest && latest.id && latest.audioUrl) {
+          const t = Date.now()
+          const finalAudio = `${latest.audioUrl}${latest.audioUrl.includes('?') ? '&' : '?'}t=${t}`
+          const mp3 = latest.mp3Url || `/api/tts/studio/jobs/${latest.id}/audio.mp3`
+          const finalMp3 = `${mp3}${mp3.includes('?') ? '&' : '?'}download=1&t=${t}`
+          setAudioUrl(finalAudio)
+          setMp3Url(finalMp3)
+          setDuration(Number(latest.duration || 0))
+          setText((curText) => curText || latest.text || '')
+          return String(latest.id)
+        }
+        return null
+      })
     } catch {
       /* ignore */
     }
@@ -557,15 +641,25 @@ export default function TtsStudio({
     mp3Url?: string
   }) {
     const t = Date.now()
-    setJobId(res.id)
-    // stream inline (không ?download=) — tránh trình duyệt tải file khi <audio> play
-    setAudioUrl(`${res.audioUrl}${res.audioUrl.includes('?') ? '&' : '?'}t=${t}`)
+    const finalAudio = `${res.audioUrl}${res.audioUrl.includes('?') ? '&' : '?'}t=${t}`
     const mp3 = res.mp3Url || `/api/tts/studio/jobs/${res.id}/audio.mp3`
-    setMp3Url(`${mp3}${mp3.includes('?') ? '&' : '?'}download=1&t=${t}`)
+    const finalMp3 = `${mp3}${mp3.includes('?') ? '&' : '?'}download=1&t=${t}`
+    setJobId(res.id)
+    setAudioUrl(finalAudio)
+    setMp3Url(finalMp3)
     setDuration(res.duration)
+    try {
+      localStorage.setItem(TTS_ACTIVE_JOB_LS_KEY, JSON.stringify({
+        id: res.id,
+        duration: res.duration,
+        audioUrl: finalAudio,
+        mp3Url: finalMp3,
+      }))
+    } catch {
+      /* ignore */
+    }
   }
 
-  /** Tải file rồi đóng mọi menu tải đang mở (lib startDownload là DOM thuần). */
   function triggerDownload(url: string | undefined, filename: string) {
     startDownload(url, filename)
     setDownloadMenuId(null)
@@ -2078,6 +2172,11 @@ export default function TtsStudio({
                     setMp3Url(null)
                     setJobId(null)
                     setDuration(0)
+                    try {
+                      localStorage.removeItem(TTS_ACTIVE_JOB_LS_KEY)
+                    } catch {
+                      /* ignore */
+                    }
                   }}
                 >
                   Xóa & Làm mới
