@@ -65,3 +65,43 @@ def test_stream_runner_can_skip_redundant_intermediate_h264(monkeypatch, tmp_pat
 
     assert result == raw
     assert called is False
+
+
+def test_rendering_optimizations_produce_correct_output():
+    """Smoke-test: bbox ROI paint must write ink pixels, not leave canvas blank."""
+    import numpy as np
+
+    renderer_module, _ = stream_runner._load_reference()
+
+    h, w = 64, 64
+    _canvas    = np.full((h, w, 3), 240.0, dtype=np.float32)   # light grey background
+    _ink_paint = np.full((h, w, 3), 10.0,  dtype=np.float32)   # dark ink
+
+    # Minimal renderer stand-in with the attributes the optimizer reads
+    class FakeRenderer:
+        out_h, out_w = h, w
+        drawn      = _canvas.copy()
+        ink_paint  = _ink_paint
+        color_img  = _canvas.copy()
+        ink_pixels = np.zeros((h, w), dtype=bool)
+        tip        = None
+
+        class cfg:
+            ink_reveal_radius = 2
+            brush_radius = 16
+
+    renderer = FakeRenderer()
+    # Mark the centre row as valid ink pixels
+    renderer.ink_pixels[h // 2, :] = True
+
+    stream_runner._apply_rendering_optimizations(renderer, renderer_module)
+
+    # Draw a horizontal segment across the canvas centre
+    renderer._reveal_ink_segment((0, h // 2), (w - 1, h // 2))
+
+    # drawn must differ from the original canvas in the ink region
+    changed = not np.allclose(renderer.drawn, _canvas)
+    assert changed, "bbox ROI paint wrote nothing — optimized renderer is broken"
+    # Pixels outside the ink_pixels mask must be untouched
+    assert np.allclose(renderer.drawn[0, 0], _canvas[0, 0]), \
+        "pixels outside ink_pixels mask were modified"

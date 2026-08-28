@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import './SrtImagePage.css'
 import { localize, useLocale } from '../app/i18n'
 import { BackTitle } from '../shared/components/BackTitle'
@@ -191,19 +191,27 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
     return () => window.removeEventListener('keydown', close)
   }, [helpKey])
 
+  // ponytail: debounce localStorage writes — the old effect fired synchronously
+  // on every keystroke/slider drag (65+ deps), blocking the main thread with
+  // JSON.stringify + setItem.  500 ms covers rapid drags without losing data.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      mediaFolder, audioPath, timelinePath, timelineText, srtPath, watermarkPath, outputName, outputPath,
-      resolution, targetPlatform, fps, crf, effect, transitionDuration, zoom, speed, volume,
-      previewSeconds, encoder, removeMetadata, delogoEnabled, delogoAuto, delogoRect,
-      drawingEnabled, drawingMode, drawingTool, drawingDetail, drawingThickness,
-      drawingStrokeOrder,
-      subtitleSize, subtitleOffset, subtitleFontFamily,
-      subtitleMargin, subtitleBackground, subtitleColor, subtitleBgColor, subtitleOpacity, logoEnabled, logoSource, logoText,
-      logoIcon, logoSize, logoFontSize, logoColor, logoOpacity, logoX, logoY,
-      logoMotion, logoScope, logoStart, logoEnd, logoVisibleSec, logoHiddenSec,
-      logoFadeSec, logoSafeMargin,
-    }))
+    clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        mediaFolder, audioPath, timelinePath, timelineText, srtPath, watermarkPath, outputName, outputPath,
+        resolution, targetPlatform, fps, crf, effect, transitionDuration, zoom, speed, volume,
+        previewSeconds, encoder, removeMetadata, delogoEnabled, delogoAuto, delogoRect,
+        drawingEnabled, drawingMode, drawingTool, drawingDetail, drawingThickness,
+        drawingStrokeOrder,
+        subtitleSize, subtitleOffset, subtitleFontFamily,
+        subtitleMargin, subtitleBackground, subtitleColor, subtitleBgColor, subtitleOpacity, logoEnabled, logoSource, logoText,
+        logoIcon, logoSize, logoFontSize, logoColor, logoOpacity, logoX, logoY,
+        logoMotion, logoScope, logoStart, logoEnd, logoVisibleSec, logoHiddenSec,
+        logoFadeSec, logoSafeMargin,
+      }))
+    }, 500)
+    return () => clearTimeout(saveTimerRef.current)
   }, [
     mediaFolder, audioPath, timelinePath, timelineText, srtPath, watermarkPath, outputName, outputPath,
     resolution, targetPlatform, fps, crf, effect, transitionDuration, zoom, speed, volume,
@@ -341,6 +349,22 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
       setOutputPath(`${outputPath.slice(0, slash + 1)}${name}`)
     }
   }
+
+  // ponytail: memoize logo prop — recreating this object literal on every render
+  // defeated React.memo on SubtitleLivePreview, forcing expensive re-renders
+  // even when unrelated state (outputName, audioPath, …) changed.
+  const logoProp = useMemo(() => ({
+    enabled: logoEnabled, source: logoSource, text: logoText, icon: logoIcon,
+    imagePath: watermarkPath, fontSize: logoFontSize, size: logoSize,
+    color: logoColor, opacity: logoOpacity, x: logoX, y: logoY,
+    motion: logoMotion, scope: logoScope, start: logoStart, end: logoEnd,
+    visibleSec: logoVisibleSec, hiddenSec: logoHiddenSec,
+    fadeSec: logoFadeSec, safeMargin: logoSafeMargin,
+  }), [
+    logoEnabled, logoSource, logoText, logoIcon, watermarkPath, logoFontSize,
+    logoSize, logoColor, logoOpacity, logoX, logoY, logoMotion, logoScope,
+    logoStart, logoEnd, logoVisibleSec, logoHiddenSec, logoFadeSec, logoSafeMargin,
+  ])
 
   const busy = sending || job?.status === 'queued' || job?.status === 'processing' || job?.status === 'paused'
   const statusText = job?.status === 'done'
@@ -733,7 +757,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
               delogoAuto={delogoAuto}
               delogoRect={delogoRect}
               onDelogoRectChange={setDelogoRect}
-              logo={{ enabled: logoEnabled, source: logoSource, text: logoText, icon: logoIcon, imagePath: watermarkPath, fontSize: logoFontSize, size: logoSize, color: logoColor, opacity: logoOpacity, x: logoX, y: logoY, motion: logoMotion, scope: logoScope, start: logoStart, end: logoEnd, visibleSec: logoVisibleSec, hiddenSec: logoHiddenSec, fadeSec: logoFadeSec, safeMargin: logoSafeMargin }}
+              logo={logoProp}
             />
           )}
         </div>
@@ -846,7 +870,7 @@ const PLATFORM_OPTIONS = [
     icon: <svg viewBox="0 0 24 24" fill="#1877F2" width="16" height="16"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg> },
 ]
 
-function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacity, fontSize, marginBottom, resolution, onResolutionChange, platform, onPlatformChange, mediaFolder, videoSrc, delogoEnabled, delogoAuto, delogoRect, onDelogoRectChange, logo }: PreviewProps) {
+const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacity, fontSize, marginBottom, resolution, onResolutionChange, platform, onPlatformChange, mediaFolder, videoSrc, delogoEnabled, delogoAuto, delogoRect, onDelogoRectChange, logo }: PreviewProps) {
   const { locale } = useLocale()
   const t = (vietnamese: string, english: string) => localize(locale, vietnamese, english)
   // Fetch kích thước thực tế của media khi resolution=auto
@@ -1115,7 +1139,7 @@ function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacit
       </div>
     </div>
   )
-}
+})
 
 // ─── Platform Chrome Overlay (accurate per-platform layouts) ─────────────────
 // ponytail: shared icon helpers avoid repetition across 4 platform branches
@@ -1140,7 +1164,7 @@ const Act = ({ ico, lbl }: { ico: React.ReactNode; lbl?: string }) => (
   <div className="plat-action">{ico}{lbl && <small>{lbl}</small>}</div>
 )
 
-function PlatformChrome({ platform }: { platform: string }) {
+const PlatformChrome = memo(function PlatformChrome({ platform }: { platform: string }) {
   if (platform === 'tiktok') return (
     <div className="plat-chrome plat-tiktok">
       <Bar/>
@@ -1260,4 +1284,4 @@ function PlatformChrome({ platform }: { platform: string }) {
   )
 
   return null
-}
+})

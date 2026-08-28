@@ -314,7 +314,6 @@ def run(job_id: str) -> None:
         if (get_job(job_id) or {}).get("status") == "cancelled":
             return
         _update(job_id, step="rendering", progress=52)
-        encoder = h264_hardware_encoder() or "libx264"
         duration = max(2, min(60, float(options.get("duration", 10))))
         fps = int(options.get("fps", 30))
         fps = fps if fps in {24, 30, 60} else 30
@@ -329,19 +328,19 @@ def run(job_id: str) -> None:
         # Only outline mode forces skeleton. Directional/centre modes require
         # grid cells so their requested route remains visible.
         ink_path = "skeleton" if stroke_order == "outline" else "grid"
-        _log(job_id, f"Rendering drawing strokes ({stroke_order}; OpenCV CPU; H.264={encoder})")
+        hw_encoder = h264_hardware_encoder() or "libx264"
+        _log(job_id, f"Rendering drawing strokes ({stroke_order}; H.264={hw_encoder})")
         renderer = Path(__file__).with_name("stream_runner.py")
         if not renderer.is_file():
             raise RuntimeError("Streaming drawing renderer is not bundled with this build")
         stream_dir = Path(job["work"]) / "stream"
         stream_dir.mkdir(exist_ok=True)
-        # OpenCV paints every pixel of every frame on CPU.  Paint a compact
-        # master, then let the verified hardware encoder restore export FPS
-        # and size; duration and user-facing output settings stay unchanged.
+        # GPU optimizations accelerate per-frame painting (OpenCL snapshot,
+        # buffer reuse, vectorized blend); resolution stays compact.
         render_long_edge, render_fps = _drawing_render_profile(
             width, height, fps, str(options.get("resolution", "720p")),
         )
-        _log(job_id, f"Fast drawing master: {render_long_edge}px · {render_fps} FPS → export {max(width, height)}px · {fps} FPS")
+        _log(job_id, f"Drawing master: {render_long_edge}px · {render_fps} FPS → export {max(width, height)}px · {fps} FPS")
         render_command = [
             str(_drawing_python()), "-u", str(renderer), str(source), "--out-dir", str(stream_dir),
             "--total-ms", str(round(duration * 1000)), "--fps", str(render_fps),
@@ -362,9 +361,9 @@ def run(job_id: str) -> None:
         if not generated:
             raise RuntimeError("Streaming renderer finished without an MP4 output")
         _update(job_id, step="encoding", progress=90)
-        _log(job_id, "Encoding H.264 output")
-        # Keep the requested export size/aspect even though the stroke engine
-        # internally uses an efficient drawing canvas.
+        # h264_encoder_args picks the best available GPU encoder cross-platform
+        # (NVENC / VideoToolbox / AMF / QSV / libx264 fallback).
+        _log(job_id, f"Encoding H.264 output ({hw_encoder})")
         _run(job_id, [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(generated[-1]),
             "-vf", canvas, "-r", str(fps), *h264_encoder_args(fast=True),
@@ -415,7 +414,13 @@ def _drawing_batch_workers(job_count: int) -> int:
 
 
 def _drawing_render_profile(width: int, height: int, fps: int, resolution: str) -> tuple[int, int]:
-    """Bound CPU painting cost; the final GPU pass restores requested size/FPS."""
+    """Bound painting cost; GPU accelerates per-frame ops, not resolution.
+
+    ponytail: painting scales O(pixels²) — increasing resolution from 960→1280
+    triples paint time while FFmpeg upscale only costs a few seconds. GPU
+    optimizations (buffer reuse, OpenCL snapshot, vectorized blend) help at any
+    resolution, so keep the same compact master for both paths.
+    """
     long_edge = 1280 if resolution == "4k" else min(960, max(width, height))
     return long_edge, min(15, fps)
 

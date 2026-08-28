@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -373,10 +374,13 @@ def is_video(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_EXTENSIONS
 
 
-def _encoder_args(use_gpu: bool, crf: int) -> list[str]:
+def _encoder_args(use_gpu: bool, crf: int, *, intermediate: bool = False) -> list[str]:
+    """Encoder args.  intermediate=True uses faster presets for throwaway segments."""
     if use_gpu:
-        return h264_encoder_args(quality=crf)
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf)]
+        # ponytail: fast=True → p3/veryfast cho segment trung gian, p5/fast cho final
+        return h264_encoder_args(quality=crf, fast=intermediate)
+    preset = "veryfast" if intermediate else "fast"
+    return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
 
 
 def _run_stage(job_id: str, cmd: list[str]) -> None:
@@ -425,7 +429,6 @@ def _prepare_video_segments(
     width: int, height: int, fps: int, crf: int, use_gpu: bool, zoom: str = "off",
     delogo_prefix: str = "",
 ) -> list[Path]:
-    segments: list[Path] = []
     # Parse delogo params 1 lần để check per-file
     dl_params: tuple[int, int, int, int] | None = None
     if delogo_prefix:
@@ -438,6 +441,10 @@ def _prepare_video_segments(
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
     )
     base_vf_dl = f"{delogo_prefix}{base_vf_no_dl}"
+
+    # ponytail: pre-compute mỗi segment trước khi song song hóa — random variant
+    # phải tuần tự để tránh 2 cảnh liên tiếp dùng cùng hướng Ken Burns.
+    segment_plans: list[tuple[int, Path, float, str, bool]] = []
     last_variant = -1
     for index, (source, duration) in enumerate(zip(media, durations)):
         variant = random.randrange(16)
@@ -445,23 +452,47 @@ def _prepare_video_segments(
             variant = (variant + random.randrange(1, 16)) % 16
         last_variant = variant
         motion = _motion_filter(zoom, width, height, fps, variant, duration)
-        # ponytail: chỉ delogo file thật sự có logo trong vùng đó
         use_dl = delogo_prefix and (not dl_params or _has_logo_region(source, *dl_params))
         chosen_vf = base_vf_dl if use_dl else base_vf_no_dl
         vf = f"{chosen_vf}{',' + motion if motion else ''},format=yuv420p"
-        if use_dl:
-            _log(job_id, f"Clip {index + 1}: delogo ✓ · {source.name}")
-        _log(job_id, f"Chuẩn bị clip {index + 1}/{len(durations)}: {source.name} ({duration:.2f}s)")
-        output = work / f"segment_{index:05d}.mp4"
+        segment_plans.append((index, source, duration, vf, use_dl))
+
+    total = len(segment_plans)
+    # ponytail: GPU encoder thường chỉ có 1-2 NVENC sessions → không nên song song.
+    # CPU có thể song song vì mỗi FFmpeg instance dùng core riêng.
+    workers = 1 if use_gpu else min(4, max(1, os.cpu_count() or 2))
+    segments: list[Path | None] = [None] * total
+    completed = 0
+
+    def _encode_one(plan: tuple[int, Path, float, str, bool]) -> tuple[int, Path]:
+        idx, source, duration, vf, did_dl = plan
+        if did_dl:
+            _log(job_id, f"Clip {idx + 1}: delogo ✓ · {source.name}")
+        _log(job_id, f"Chuẩn bị clip {idx + 1}/{total}: {source.name} ({duration:.2f}s)")
+        output = work / f"segment_{idx:05d}.mp4"
         cmd = ["ffmpeg", "-y"]
         cmd += ["-stream_loop", "-1"] if is_video(source) else ["-loop", "1"]
         cmd += ["-i", str(source), "-t", f"{duration:.3f}", "-vf", vf, "-an"]
-        cmd += _encoder_args(use_gpu, crf)
+        cmd += _encoder_args(use_gpu, crf, intermediate=True)
         cmd += ["-movflags", "+faststart", str(output)]
         _run_stage(job_id, cmd)
-        segments.append(output)
-        _update(job_id, status="processing", progress=round((index + 1) / len(durations) * 35, 1))
-    return segments
+        return idx, output
+
+    if workers > 1:
+        _log(job_id, f"Song song {workers} luồng encode segment")
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_encode_one, plan): plan[0] for plan in segment_plans}
+        for future in as_completed(futures):
+            if (get_job(job_id) or {}).get("status") == "cancelled":
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise InterruptedError
+            idx, output = future.result()
+            segments[idx] = output
+            completed += 1
+            _update(job_id, status="processing", progress=round(completed / total * 35, 1))
+
+    return [s for s in segments if s is not None]
 
 
 def create_job(

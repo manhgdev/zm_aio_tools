@@ -13,7 +13,11 @@ import math
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+import cv2
+import numpy as np
 
 
 def _load_reference():
@@ -145,6 +149,97 @@ def _apply_stroke_order(renderer_module, renderer, order: str) -> None:
     renderer.stroke_path = route
 
 
+# ── GPU / hot-path optimizations (ponytail: keep reference renderer unmodified) ──
+
+def _apply_rendering_optimizations(renderer, renderer_module) -> bool:
+    """Patch hot rendering methods for GPU-accelerated + optimized painting.
+
+    Returns True when OpenCL (GPU) acceleration is active.
+    """
+    h, w = renderer.out_h, renderer.out_w
+    cfg = renderer.cfg
+
+    use_gpu = cv2.ocl.haveOpenCL()
+    if use_gpu:
+        cv2.ocl.setUseOpenCL(True)
+        dev = cv2.ocl.Device.getDefault()
+        print(f"  GPU painting: OpenCL on {dev.name() if dev else 'unknown'}")
+    else:
+        print("  GPU painting: unavailable, using optimized CPU")
+
+    # Pre-allocate reusable buffers (avoid per-call allocation + GC pressure)
+    _segment_buf = np.zeros((h, w), dtype=np.uint8)
+    _mask_buf    = np.zeros((h, w), dtype=np.uint8)
+    # ink_pixels is bool HxW — convert once to uint8 for bitwise_and
+    _ink_u8      = renderer.ink_pixels.astype(np.uint8)
+    _snap_buf    = np.empty((h, w, 3), dtype=np.uint8)
+    ink_thickness = max(1, cfg.ink_reveal_radius * 2 + 1)
+
+    # Pre-convert color_img to float32 once (avoid per-stamp allocation)
+    _color_f32 = renderer.color_img.astype(np.float32)
+
+    def fast_reveal_ink_segment(start, end):
+        """Bounding-box ROI: only process pixels near the stroke segment.
+
+        For grid_edge=10 cells the bbox is typically ~30×30 px vs full 960×530 —
+        ~1000× fewer elements per call, called ~17k times per render.
+        """
+        r = ink_thickness + 1
+        x0 = max(0, min(start[0], end[0]) - r)
+        x1 = min(w, max(start[0], end[0]) + r + 1)
+        y0 = max(0, min(start[1], end[1]) - r)
+        y1 = min(h, max(start[1], end[1]) + r + 1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        roi_h, roi_w = y1 - y0, x1 - x0
+        seg_roi  = _segment_buf[y0:y1, x0:x1]
+        mask_roi = _mask_buf[y0:y1, x0:x1]
+        seg_roi[:] = 0
+        cv2.line(seg_roi,
+                 (start[0] - x0, start[1] - y0),
+                 (end[0] - x0,   end[1] - y0),
+                 255, thickness=ink_thickness, lineType=cv2.LINE_AA)
+        np.bitwise_and(seg_roi, _ink_u8[y0:y1, x0:x1], out=mask_roi)
+        mask3 = np.broadcast_to(mask_roi.view(bool)[:, :, np.newaxis], (roi_h, roi_w, 3))
+        np.copyto(renderer.drawn[y0:y1, x0:x1], renderer.ink_paint[y0:y1, x0:x1], where=mask3)
+
+    def fast_snapshot_with_tip(px, py):
+        """GPU: convertScaleAbs on UMat. CPU: reuse pre-allocated uint8 buffer."""
+        if use_gpu:
+            umat = cv2.UMat(renderer.drawn)
+            snap = cv2.convertScaleAbs(umat).get()
+        else:
+            np.copyto(_snap_buf, renderer.drawn, casting="unsafe")
+            snap = _snap_buf
+        if renderer.tip is not None:
+            renderer.tip.stamp(snap, px, py)
+        return snap
+
+    def fast_color_stamp(px, py, disk):
+        """Vectorized 3-channel blend: single broadcast op replaces Python loop."""
+        radius = cfg.brush_radius
+        y0, y1 = max(0, py - radius), min(h, py + radius + 1)
+        x0, x1 = max(0, px - radius), min(w, px + radius + 1)
+        if y1 <= y0 or x1 <= x0:
+            return
+        by0 = y0 - (py - radius)
+        by1 = disk.shape[0] - ((py + radius + 1) - y1)
+        bx0 = x0 - (px - radius)
+        bx1 = disk.shape[1] - ((px + radius + 1) - x1)
+        m3 = disk[by0:by1, bx0:bx1, np.newaxis]  # (H,W,1) broadcasts to 3ch
+        target = renderer.drawn[y0:y1, x0:x1]
+        source = _color_f32[y0:y1, x0:x1]
+        # target = target*(1-m) + source*m  (in-place on the drawn canvas view)
+        target *= (1.0 - m3)
+        target += source * m3
+
+    renderer._reveal_ink_segment = fast_reveal_ink_segment
+    renderer._snapshot_with_tip = fast_snapshot_with_tip
+    renderer._color_stamp = fast_color_stamp
+    return use_gpu
+
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
@@ -195,8 +290,14 @@ def main() -> int:
     )
     _apply_stroke_order(renderer_module, renderer, args.stroke_order)
     print(f"STROKE_ORDER={args.stroke_order}")
+
+    # Apply per-frame painting optimizations (OpenCL snapshot, buffer reuse,
+    # vectorized blend). H.264 encoding uses shared GPU detection via jobs.py.
+    gpu_active = _apply_rendering_optimizations(renderer, renderer_module)
+
     renderer.render_to(raw, args.total_ms)
     result = _finish_render(raw, final, args.fps, renderer_module, transcode=not args.skip_transcode)
+    print(f"GPU_PAINTING={'1' if gpu_active else '0'}")
     print(f"OUTPUT={result}")
     return 0
 
