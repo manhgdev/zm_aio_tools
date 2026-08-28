@@ -4,6 +4,7 @@ import type { RenderedVideo } from '@/features/project/project.types'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { IconDownload, IconFilm, IconRefresh } from '@/shared/components/Icons'
 import { localize, useLocale } from '@/app/i18n'
+import { toast } from 'sonner'
 import './RendersPage.css'
 
 const PAGE_SIZE = 10
@@ -84,19 +85,25 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
       const saved = await api.renameRender(item.renderId, name)
       setItems((current) => current.map((row) => row.renderId === item.renderId ? { ...row, name: saved.name } : row))
       setEditingId(null)
+      toast.success(t('Đã đổi tên video.', 'Video renamed.'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không đổi được tên render')
+      const msg = err instanceof Error ? err.message : t('Không đổi được tên render', 'Could not rename render')
+      setError(msg)
+      toast.error(msg)
     }
   }
 
   async function deleteRender(item: RenderedVideo) {
-    if (!window.confirm(`Xóa video “${renderName(item)}”? Thao tác này không thể hoàn tác.`)) return
+    if (!window.confirm(t(`Xóa video “${renderName(item)}”? Thao tác này không thể hoàn tác.`, `Delete video “${renderName(item)}”? This action cannot be undone.`))) return
     try {
       await api.deleteRender(item.renderId)
       setItems((current) => current.filter((row) => row.renderId !== item.renderId))
       if (viewing?.renderId === item.renderId) setViewing(null)
+      toast.success(t('Đã xóa video.', 'Video deleted.'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không xóa được video render')
+      const msg = err instanceof Error ? err.message : t('Không xóa được video render', 'Could not delete render')
+      setError(msg)
+      toast.error(msg)
     }
   }
 

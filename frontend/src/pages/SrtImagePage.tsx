@@ -724,20 +724,12 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
             )}
           </div>
           {job?.status === 'done' && job.id ? (
-            <SubtitleLivePreview
-              fontFamily={subtitleFontFamily}
-              textColor={subtitleColor}
-              bgStyle={subtitleBackground}
-              bgColor={subtitleBgColor}
-              bgOpacity={subtitleOpacity}
-              fontSize={subtitleSize}
-              marginBottom={subtitleMargin}
-              resolution={resolution}
-              onResolutionChange={setResolution}
-              platform={targetPlatform}
-              onPlatformChange={setTargetPlatform}
-              mediaFolder={mediaFolder}
-              videoSrc={`/api/srt-image/jobs/${job.id}/file`}
+            <video
+              key={job.id}
+              src={`/api/srt-image/jobs/${job.id}/file`}
+              controls
+              autoPlay
+              preload="auto"
             />
           ) : (
             <SubtitleLivePreview
@@ -826,7 +818,7 @@ type PreviewProps = {
   platform: string
   onPlatformChange: (platform: string) => void
   mediaFolder: string
-  videoSrc?: string
+
   delogoEnabled?: boolean
   delogoAuto?: boolean
   delogoRect?: { x: number; y: number; w: number; h: number }
@@ -870,7 +862,7 @@ const PLATFORM_OPTIONS = [
     icon: <svg viewBox="0 0 24 24" fill="#1877F2" width="16" height="16"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg> },
 ]
 
-const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacity, fontSize, marginBottom, resolution, onResolutionChange, platform, onPlatformChange, mediaFolder, videoSrc, delogoEnabled, delogoAuto, delogoRect, onDelogoRectChange, logo }: PreviewProps) {
+const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacity, fontSize, marginBottom, resolution, onResolutionChange, platform, onPlatformChange, mediaFolder, delogoEnabled, delogoAuto, delogoRect, onDelogoRectChange, logo }: PreviewProps) {
   const { locale } = useLocale()
   const t = (vietnamese: string, english: string) => localize(locale, vietnamese, english)
   // Fetch kích thước thực tế của media khi resolution=auto
@@ -1006,15 +998,6 @@ const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, text
               : { width: '100%' }),
           }}
         >
-          {videoSrc ? (
-            /* Video output: hiện video thật trong cùng khung, controls bên dưới */
-            <video
-              src={videoSrc}
-              controls
-              preload="metadata"
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#000', zIndex: 30 }}
-            />
-          ) : (
             <>
               {/* Media thật luôn hiển thị; delogo chỉ điều khiển vùng chọn logo. */}
               {mediaFolder ? (
@@ -1146,7 +1129,6 @@ const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, text
                 />
               )}
             </>
-          )}
         </div>
       </div>
     </div>

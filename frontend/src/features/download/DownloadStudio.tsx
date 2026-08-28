@@ -11,6 +11,7 @@ import { BackTitle } from '@/shared/components/BackTitle'
 import { localize, useLocale } from '@/app/i18n'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import { copyText } from '@/shared/lib/clipboard'
+import { toast } from 'sonner'
 import './DownloadStudio.css'
 
 const ACTIVE = new Set(['queued', 'running'])
@@ -500,8 +501,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
   async function copyDetailLog() {
     if (!detailLog) return
     try {
-      await copyText(detailLog)
-      alert(t('Đã sao chép log chi tiết', 'Detailed log copied'))
+      await copyText(detailLog, t('Đã sao chép log chi tiết.', 'Detailed log copied.'))
     } catch {
       setError(t('Không thể sao chép log', 'Could not copy log'))
     }
@@ -512,6 +512,7 @@ export default function DownloadStudio({ onBack, onUseInClone }: Props) {
       await downloadApi.clearLogs()
       setJobs((previous) => previous.map((job) => ({ ...job, log: [] })))
       setLogOpen(true)
+      toast.success(t('Đã xóa log.', 'Logs cleared.'))
     } catch (err) {
       setError(err instanceof Error ? err.message : t('Không thể xóa log', 'Could not clear logs'))
     }

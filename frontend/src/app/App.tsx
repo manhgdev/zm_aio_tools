@@ -1150,7 +1150,7 @@ export default function App() {
       )
       ) : null}
       </Suspense>
-      <Toaster position="bottom-center" theme={dark ? 'dark' : 'light'} richColors closeButton />
+      <Toaster position="top-right" theme={dark ? 'dark' : 'light'} richColors closeButton />
       <ExportSuccessModal
         isOpen={exportSuccessOpen}
         onClose={() => setExportSuccessOpen(false)}

@@ -13,6 +13,7 @@ import {
 } from "@/shared/components/Icons";
 import { BackTitle } from "@/shared/components/BackTitle";
 import { OutputFolderField } from "@/shared/components/OutputFolderField";
+import { copyText } from "@/shared/lib/clipboard";
 import FlowSeriesPanel, { type FlowSeriesSceneContext } from "./FlowSeriesPanel";
 import "./FlowPage.css";
 
@@ -923,20 +924,23 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     try {
       const text = await navigator.clipboard.readText();
       if (!text.trim()) {
-        setApiError(t("Clipboard đang trống.", "Clipboard is empty."));
+        const msg = t("Clipboard đang trống.", "Clipboard is empty.");
+        setApiError(msg);
+        toast.info(msg);
         return;
       }
       setPrompt(text);
       setPromptInputType("prompt");
       setImportName("");
       setApiError("");
+      toast.success(t("Đã dán nội dung từ clipboard.", "Pasted content from clipboard."));
     } catch {
-      setApiError(
-        t(
-          "Không đọc được clipboard. Hãy cấp quyền dán hoặc dùng Cmd/Ctrl+V.",
-          "Could not read the clipboard. Allow paste access or use Cmd/Ctrl+V.",
-        ),
+      const msg = t(
+        "Không đọc được clipboard. Hãy cấp quyền dán hoặc dùng Cmd/Ctrl+V.",
+        "Could not read the clipboard. Allow paste access or use Cmd/Ctrl+V.",
       );
+      setApiError(msg);
+      toast.error(msg);
     }
   };
   const createFlowJobs = async () => {
@@ -1304,18 +1308,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       })
       .join("\n");
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        if (!document.execCommand("copy")) throw new Error("COPY_FAILED");
-        textarea.remove();
-      }
+      await copyText(text, t('Đã sao chép log.', 'Logs copied.'));
       setLogsCopied(true);
       window.setTimeout(() => setLogsCopied(false), 1800);
     } catch (error) {

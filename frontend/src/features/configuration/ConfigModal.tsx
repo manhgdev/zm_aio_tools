@@ -7,6 +7,7 @@ import LicensePage from '@/features/license/LicensePage'
 import type { LicenseStatus } from '@/features/license/license.api'
 import { localize, useLocale } from '@/app/i18n'
 import { copyText } from '@/shared/lib/clipboard'
+import { toast } from 'sonner'
 import './ConfigModal.css'
 
 const PROVIDERS: CloudProviderId[] = [
@@ -552,10 +553,13 @@ export default function ConfigModal({
       const n = Math.max(1, Number(el?.keyCount || 0) || (el?.apiKeySet ? 1 : 0))
       setElSavedCount(el?.apiKeySet ? n : 0)
       setElSlots(Array.from({ length: Math.max(1, n) }, () => ''))
-      setMsg(typed.length > 0 ? 'Đã lưu. Đang tải lại danh sách giọng…' : 'Đã lưu.')
+      setMsg(typed.length > 0 ? t('Đã lưu. Đang tải lại danh sách giọng…', 'Saved. Reloading voices…') : t('Đã lưu.', 'Saved.'))
+      toast.success(t('Đã lưu cấu hình.', 'Settings saved.'))
       onSaved?.()
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Lưu thất bại')
+      const err = e instanceof Error ? e.message : t('Lưu thất bại', 'Save failed')
+      setMsg(err)
+      toast.error(err)
     } finally {
       setSaving(false)
     }
@@ -934,7 +938,13 @@ export default function ConfigModal({
                 disabled={logLoading}
                 onClick={() => {
                   if (!window.confirm(t('Xóa toàn bộ file log?', 'Delete all log files?'))) return
-                  void api.clearAppLogs().then(() => loadLogs()).catch((e: Error) => setLogErr(e.message))
+                  void api.clearAppLogs().then(() => {
+                    loadLogs()
+                    toast.success(t('Đã xóa log.', 'Logs deleted.'))
+                  }).catch((e: Error) => {
+                    setLogErr(e.message)
+                    toast.error(e.message)
+                  })
                 }}
               >
                 {t('Xóa log', 'Delete logs')}

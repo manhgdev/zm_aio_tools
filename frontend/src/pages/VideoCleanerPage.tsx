@@ -3,6 +3,7 @@ import { localize, useLocale } from '@/app/i18n'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import { copyText } from '@/shared/lib/clipboard'
+import { toast } from 'sonner'
 import './VideoCleanerPage.css'
 
 // Types
@@ -302,10 +303,9 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
   const copyDetailLog = async () => {
     if (!detailLog) return
     try {
-      await copyText(detailLog)
-      alert(t('Đã sao chép log chi tiết', 'Detailed log copied'))
+      await copyText(detailLog, t('Đã sao chép log chi tiết.', 'Detailed log copied.'))
     } catch {
-      alert(t('Không thể sao chép log', 'Could not copy log'))
+      toast.error(t('Không thể sao chép log', 'Could not copy log'))
     }
   }
 
@@ -314,8 +314,9 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
       await cleanerApi.clearLogs()
       setLogs([])
       setJobs((previous) => previous.map((job) => ({ ...job, logs: [] })))
+      toast.success(t('Đã xóa log.', 'Logs cleared.'))
     } catch {
-      alert(t('Không thể xóa log', 'Could not clear logs'))
+      toast.error(t('Không thể xóa log', 'Could not clear logs'))
     }
   }
 

@@ -8,6 +8,7 @@ import { AudioSlider, CaptionModePicker, ReviewLangFields, ReviewLeftPanel, Revi
 import { DEFAULT_REVIEW_SETTINGS, STYLE_TO_PIPE, modeLabel, resolveBuildMode, type ReviewSettings } from '@/features/studio/reviewSettings'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
+import { copyText } from '@/shared/lib/clipboard'
 import './FilmPage.css'
 
 type Props = { onBack: () => void; onOpenEditor?: (projectId: string) => void }
@@ -413,7 +414,7 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
   }
 
   function copyLog() {
-    navigator.clipboard?.writeText(logLines.join('\n')).catch(() => undefined)
+    void copyText(logLines.join('\n'), t('Đã sao chép nhật ký hoạt động.', 'Activity log copied.'))
   }
 
   async function clearJobLogs() {
@@ -615,7 +616,7 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
                 <button type="button" className="rv-ghost" onClick={() => setJobLogOpen((s) => ({ ...s, [job.id]: !logShown }))}>
                   📄 {t('Xem nhật ký tiến trình', 'View progress log')} ({lines.length} {t('dòng', 'lines')}) {logShown ? '▲' : '▼'}
                 </button>
-                <button type="button" className="rv-mini" onClick={() => navigator.clipboard?.writeText(lines.join('\n'))}>📋 {t('Chép log', 'Copy log')}</button>
+                <button type="button" className="rv-mini" onClick={() => void copyText(lines.join('\n'), t('Đã sao chép log.', 'Log copied.'))}>📋 {t('Chép log', 'Copy log')}</button>
                 {!showParts ? <span className="rv-mode-tag">{modeLabel(mode, t)}</span> : null}
               </div>
               {logShown ? <AutoLog className="rv-job-log" text={lines.join('\n') || t('[Hệ thống] đang chạy…', '[System] running…')} /> : null}

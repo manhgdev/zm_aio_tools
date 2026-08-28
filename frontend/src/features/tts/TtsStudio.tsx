@@ -6,6 +6,7 @@ import { IconHeadphones, IconHeart, IconMic, IconSpeaker } from '@/shared/compon
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import { studioApi } from '@/features/studio/studio.api'
+import { toast } from 'sonner'
 import {
   type TtsEngine,
   type TtsOutputFormat,
@@ -1184,21 +1185,26 @@ export default function TtsStudio({
 
   async function onPasteClipboard() {
     try {
-      const t = await navigator.clipboard.readText()
-      if (!t?.trim()) {
-        setError('Clipboard trống')
+      const tVal = await navigator.clipboard.readText()
+      if (!tVal?.trim()) {
+        const msg = t('Clipboard trống', 'Clipboard is empty')
+        setError(msg)
+        toast.info(msg)
         return
       }
-      if (looksLikeSrt(t) || inputMode === 'srt') {
-        applySrtContent(t)
+      if (looksLikeSrt(tVal) || inputMode === 'srt') {
+        applySrtContent(tVal)
       } else {
         setSrtRaw('')
         setInputMode('text')
-        setText(t)
+        setText(tVal)
         setError('')
       }
+      toast.success(t('Đã dán nội dung từ clipboard.', 'Pasted content from clipboard.'))
     } catch {
-      setError('Không đọc được clipboard — cho phép quyền dán hoặc Ctrl+V vào ô')
+      const msg = t('Không đọc được clipboard — cho phép quyền dán hoặc Ctrl+V vào ô', 'Could not read clipboard — allow paste permission or use Ctrl+V in the box')
+      setError(msg)
+      toast.error(msg)
     }
   }
 
