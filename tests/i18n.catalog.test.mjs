@@ -1013,3 +1013,19 @@ test('desktop APP and detailed logs allow selecting and copying text', async () 
   assert.match(clipboard, /document\.execCommand\('copy'\)/)
   assert.match(srtImage, /copyText\(logText\)/)
 })
+
+test('Flow offers bilingual prompt guides, templates showcase, preview, copy, and download', async () => {
+  const [page, tplComp, tplData] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/flow/FlowTemplatesPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/flow/flowTemplates.ts', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /FlowTemplatesPanel/)
+  assert.match(page, /setTemplatesModalOpen\(true\)/)
+  assert.match(tplComp, /Thư viện Prompt Mẫu & Hướng dẫn Flow/)
+  assert.match(tplComp, /Flow Prompt Guides & Templates/)
+  assert.match(tplComp, /downloadText/)
+  assert.match(tplComp, /Tải về \(\.txt\)/)
+  assert.match(tplData, /v1\.0-base-vietnam-2D-image\.txt/)
+  assert.match(tplData, /ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE V1\.0/)
+})

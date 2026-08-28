@@ -15,6 +15,7 @@ import { BackTitle } from "@/shared/components/BackTitle";
 import { OutputFolderField } from "@/shared/components/OutputFolderField";
 import { copyText } from "@/shared/lib/clipboard";
 import FlowSeriesPanel, { type FlowSeriesSceneContext } from "./FlowSeriesPanel";
+import { FlowTemplatesPanel } from "@/features/flow/FlowTemplatesPanel";
 import "./FlowPage.css";
 
 type FlowTab = "create" | "queue" | "history" | "logs";
@@ -561,6 +562,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     const routePanel = flowRoutePanel() || (readText(ACTIVE_PANEL_KEY, "video") as FlowRoutePanel);
     return routePanel === "accounts" || routePanel === "help" || routePanel === "series" ? routePanel : null;
   });
+  const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
   const [seriesDraft, setSeriesDraft] = useState<FlowSeriesSceneContext | null>(null);
   const [accounts, setAccounts] = useState<FlowAccount[]>(readAccounts);
   const [editingAccount, setEditingAccount] = useState<string | "new" | null>(
@@ -1665,16 +1667,16 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
           </section>
         )}
         {utilityView === "help" && (
-          <section className="flow-empty-panel">
-            <IconBook size={26} />
-            <h2>{t("Trợ giúp Flow", "Flow help")}</h2>
-            <p>
-              {t(
-                "Chọn Tài khoản để thêm hoặc kiểm tra session Google Flow.",
-                "Open Accounts to add or check a Google Flow session.",
-              )}
-            </p>
-          </section>
+          <FlowTemplatesPanel
+            onApplyTemplate={(content) => {
+              setPrompt(content);
+              setPromptInputType("prompt");
+              setImportName("");
+              setUtilityView(null);
+              setTab("create");
+              writeFlowRoutePanel(createKind === "image" ? "image" : "video");
+            }}
+          />
         )}
         {utilityView === "series" && (
           <FlowSeriesPanel
@@ -1858,6 +1860,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   <span>
                     {promptCount} {t("prompt", "prompts")}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setTemplatesModalOpen(true)}
+                    title={t("Thư viện prompt mẫu & hướng dẫn", "Prompt templates & guides")}
+                  >
+                    <IconBook size={14} /> {t("Prompt mẫu", "Templates")}
+                  </button>
                   <button type="button" onClick={() => void pastePrompt()}>
                     {t("Dán", "Paste")}
                   </button>
@@ -2767,6 +2776,28 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 </button>
               </footer>
             </section>
+          </div>
+        )}
+        {templatesModalOpen && (
+          <div
+            className="flow-template-modal-backdrop"
+            role="presentation"
+            onMouseDown={() => setTemplatesModalOpen(false)}
+          >
+            <div
+              style={{ width: "100%", maxWidth: "1020px", height: "88vh", display: "flex" }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <FlowTemplatesPanel
+                onClose={() => setTemplatesModalOpen(false)}
+                onApplyTemplate={(content) => {
+                  setPrompt(content);
+                  setPromptInputType("prompt");
+                  setImportName("");
+                  setTemplatesModalOpen(false);
+                }}
+              />
+            </div>
           </div>
         )}
       </section>
