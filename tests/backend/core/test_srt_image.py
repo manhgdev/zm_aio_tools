@@ -307,3 +307,26 @@ def test_completed_render_cache_survives_memory_state(monkeypatch, tmp_path):
 def test_relative_srt_image_output_stays_under_shared_app_folder(monkeypatch, tmp_path):
     monkeypatch.setattr("api.routes.srt_image.downloads_folder", lambda _tab: tmp_path / "ZM_AIO_TOOL" / "subtitles" / "image-video")
     assert _resolve_output_target("series-01/output.mp4") == tmp_path / "ZM_AIO_TOOL" / "subtitles" / "image-video" / "series-01" / "output.mp4"
+
+
+def test_build_subtitle_overlay_concat_renders_frames_and_ffconcat(tmp_path):
+    from pipeline.srt_image import _build_subtitle_overlay_concat
+    srt = tmp_path / "sub.srt"
+    srt.write_text(
+        "1\n00:00:01,000 --> 00:00:03,500\nXin chào các bạn\n\n"
+        "2\n00:00:04,000 --> 00:00:06,000\nPhụ đề không cần libass\n",
+        encoding="utf-8",
+    )
+    concat = _build_subtitle_overlay_concat(
+        srt, tmp_path, 1280, 720, font_name="system", font_size=8, margin_bottom=18,
+        bg_style="solid", text_color="#ffffff", bg_color="#000000", opacity=55,
+    )
+    assert concat.is_file()
+    text = concat.read_text(encoding="utf-8")
+    assert "file 'blank.png'" in text
+    assert "file 'cue_00000.png'" in text
+    assert "file 'cue_00001.png'" in text
+    assert (tmp_path / "subtitle_frames" / "blank.png").is_file()
+    assert (tmp_path / "subtitle_frames" / "cue_00000.png").is_file()
+    assert (tmp_path / "subtitle_frames" / "cue_00001.png").is_file()
+

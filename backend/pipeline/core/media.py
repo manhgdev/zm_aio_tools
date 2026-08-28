@@ -38,9 +38,13 @@ def _is_real_ff_bin(path: Path) -> bool:
 def _has_ffmpeg_filter(filter_name: str) -> bool:
     try:
         res = subprocess.run([_ff_bin("ffmpeg"), "-filters"], capture_output=True, text=True, timeout=5)
-        return filter_name in res.stdout
+        for line in res.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[1] == filter_name:
+                return True
+        return False
     except Exception:
-        return True
+        return False
 
 
 def _ff_bin(name: str) -> str:

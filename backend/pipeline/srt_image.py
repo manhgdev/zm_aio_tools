@@ -739,6 +739,198 @@ def _ffmpeg_subtitle(path: Path, font_name: str = "system", font_size: int = 8, 
     return f"subtitles=filename='{ass_ff}':fontsdir='{fonts_ff}'"
 
 
+def _parse_srt_blocks(srt_path: Path) -> list[tuple[float, float, str]]:
+    text = srt_path.read_text(encoding="utf-8-sig", errors="replace")
+    cues: list[tuple[float, float, str]] = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        lines = block.strip().splitlines()
+        for i, line in enumerate(lines):
+            m = re.match(
+                r"(\d{1,2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,\.]\d{3})",
+                line.strip(),
+            )
+            if m:
+                start = _seconds(m.group(1).replace(",", "."))
+                end = _seconds(m.group(2).replace(",", "."))
+                cue_text = "\n".join(l.strip() for l in lines[i + 1:] if l.strip())
+                cue_text = re.sub(r"<[^>]+>", "", cue_text)
+                if end > start and cue_text.strip():
+                    cues.append((start, end, cue_text.strip()))
+                break
+    return cues
+
+
+def _build_subtitle_overlay_concat(
+    srt_path: Path,
+    work: Path,
+    width: int,
+    height: int,
+    font_name: str = "system",
+    font_size: int = 8,
+    margin_bottom: int = 18,
+    bg_style: str = "solid",
+    text_color: str = "#ffffff",
+    bg_color: str = "#000000",
+    opacity: int = 55,
+) -> Path:
+    """Render high-resolution subtitle PNG sequence for native FFmpeg overlay (zero libass dependency)."""
+    from PIL import Image, ImageDraw, ImageFont
+    from pipeline.export.fonts import _resolve_font_name
+
+    cues = _parse_srt_blocks(srt_path)
+    frames_dir = work / "subtitle_frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Blank transparent frame
+    blank_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    blank_path = frames_dir / "blank.png"
+    blank_img.save(blank_path, format="PNG")
+
+    if not cues:
+        concat_path = frames_dir / "subtitles.ffconcat"
+        concat_path.write_text("ffconcat version 1.0\nfile 'blank.png'\n", encoding="utf-8")
+        return concat_path
+
+    # 2. Font mapping
+    _FONT_INFO: dict[str, str] = {
+        "system": "NotoSans-Bold.ttf",
+        "segoe": "Inter-Bold.ttf",
+        "arial": "Arimo-Bold.ttf",
+        "bold": "ArchivoBlack-Regular.ttf",
+        "helvetica": "Roboto-Bold.ttf",
+        "verdana": "OpenSans-Bold.ttf",
+        "tahoma": "Carlito-Bold.ttf",
+        "trebuchet": "FiraSans-Bold.ttf",
+        "rounded": "Nunito-Bold.ttf",
+        "impact": "Anton-Regular.ttf",
+        "georgia": "Merriweather-Bold.ttf",
+        "times": "Tinos-Bold.ttf",
+        "palatino": "Literata-Bold.ttf",
+        "garamond": "EBGaramond-Bold.ttf",
+        "courier": "CourierPrime-Bold.ttf",
+        "mono": "NotoSansMono-Bold.ttf",
+        "comic": "ComicNeue-Bold.ttf",
+        "cjk": "NotoSansSC-Bold.ttf",
+        "meiryo": "NotoSansJP-Bold.ttf",
+        "malgun": "NotoSansKR-Bold.ttf",
+    }
+    ttf_name = _FONT_INFO.get(font_name.lower(), "NotoSans-Bold.ttf")
+    font_file = _resolve_font_name(ttf_name) or _resolve_font_name("NotoSans-Bold.ttf") or _resolve_font_name("Arial.ttf")
+
+    # Font size relative to ASS 288p base
+    px_font_size = max(12, int(font_size * (height / 288)))
+    px_margin_bottom = int(margin_bottom * (height / 288))
+
+    font = None
+    if font_file:
+        try:
+            font = ImageFont.truetype(font_file, px_font_size)
+        except Exception:
+            font = None
+    if font is None:
+        font = ImageFont.load_default()
+
+    # Colors
+    tc = text_color.lstrip("#")
+    if len(tc) != 6:
+        tc = "ffffff"
+    tr, tg, tb = int(tc[0:2], 16), int(tc[2:4], 16), int(tc[4:6], 16)
+    text_rgba = (tr, tg, tb, 255)
+
+    bc = bg_color.lstrip("#")
+    if len(bc) != 6:
+        bc = "000000"
+    br, bgr, bb = int(bc[0:2], 16), int(bc[2:4], 16), int(bc[4:6], 16)
+    bg_alpha = max(0, min(255, int(255 * opacity / 100)))
+    bg_rgba = (br, bgr, bb, bg_alpha)
+
+    # Render each cue
+    for i, (start, end, cue_text) in enumerate(cues):
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Wrap text lines
+        raw_lines = [l.strip() for l in cue_text.replace("\\N", "\n").splitlines() if l.strip()]
+        lines: list[str] = []
+        max_line_width = int(width * 0.88)
+        for raw_line in raw_lines:
+            words = raw_line.split()
+            cur = ""
+            for w in words:
+                test = f"{cur} {w}".strip()
+                bbox = draw.textbbox((0, 0), test, font=font)
+                if bbox[2] - bbox[0] > max_line_width and cur:
+                    lines.append(cur)
+                    cur = w
+                else:
+                    cur = test
+            if cur:
+                lines.append(cur)
+
+        if not lines:
+            img.save(frames_dir / f"cue_{i:05d}.png", format="PNG")
+            continue
+
+        line_metrics: list[tuple[str, int, int]] = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
+            line_metrics.append((line, w, h))
+
+        line_spacing = int(px_font_size * 0.25)
+        total_text_h = sum(m[2] for m in line_metrics) + line_spacing * (len(line_metrics) - 1)
+        max_w = max(m[1] for m in line_metrics)
+
+        y_top = height - px_margin_bottom - total_text_h
+
+        pad_x = int(px_font_size * 0.4)
+        pad_y = int(px_font_size * 0.2)
+
+        if bg_style in ("solid", "box"):
+            box_left = max(0, (width - max_w) // 2 - pad_x)
+            box_right = min(width, (width + max_w) // 2 + pad_x)
+            box_top = max(0, y_top - pad_y)
+            box_bottom = min(height, y_top + total_text_h + pad_y)
+            radius = int(px_font_size * 0.2) if bg_style == "box" else 0
+            if radius > 0:
+                draw.rounded_rectangle([box_left, box_top, box_right, box_bottom], radius=radius, fill=bg_rgba)
+            else:
+                draw.rectangle([box_left, box_top, box_right, box_bottom], fill=bg_rgba)
+
+        cur_y = y_top
+        stroke_w = max(1, px_font_size // 10) if bg_style == "none" else 0
+        stroke_color = (0, 0, 0, 230) if bg_style == "none" else None
+
+        for line, lw, lh in line_metrics:
+            lx = (width - lw) // 2
+            if stroke_w > 0:
+                draw.text((lx, cur_y), line, font=font, fill=text_rgba, stroke_width=stroke_w, stroke_fill=stroke_color)
+            else:
+                draw.text((lx, cur_y), line, font=font, fill=text_rgba)
+            cur_y += lh + line_spacing
+
+        img.save(frames_dir / f"cue_{i:05d}.png", format="PNG")
+
+    # Build ffconcat
+    concat_lines = ["ffconcat version 1.0"]
+    cur_time = 0.0
+    for i, (start, end, _) in enumerate(cues):
+        if start > cur_time + 0.02:
+            gap = start - cur_time
+            concat_lines.append("file 'blank.png'")
+            concat_lines.append(f"duration {gap:.3f}")
+        dur = max(0.04, end - start)
+        concat_lines.append(f"file 'cue_{i:05d}.png'")
+        concat_lines.append(f"duration {dur:.3f}")
+        cur_time = end
+    concat_lines.append("file 'blank.png'")
+
+    concat_path = frames_dir / "subtitles.ffconcat"
+    concat_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+    return concat_path
+
+
 
 
 
@@ -1119,10 +1311,14 @@ def run(job_id: str) -> None:
             + (f",{zoom_filter}" if zoom_filter else "")
         )
         cmd = [_ff_bin("ffmpeg"), "-y", "-f", "concat", "-safe", "0", "-i", str(concat)]
+        next_input_idx = 1
+
         audio_index = None
         if job["audio"]:
-            audio_index = 1
+            audio_index = next_input_idx
+            next_input_idx += 1
             cmd += ["-i", job["audio"]]
+
         logo = opts.get("logo") if isinstance(opts.get("logo"), dict) else {}
         logo_asset = None
         if logo.get("enabled"):
@@ -1132,32 +1328,50 @@ def run(job_id: str) -> None:
                 logo_asset = _render_logo_asset(logo, work)
         watermark_index = None
         if logo_asset is not None:
-            watermark_index = 2 if audio_index is not None else 1
+            watermark_index = next_input_idx
+            next_input_idx += 1
             cmd += ["-loop", "1", "-i", str(logo_asset)]
+
         speed_filter = f",setpts=PTS/{speed:.6f}" if abs(speed - 1) > 0.001 else ""
         subtitle_filter = ""
+        subtitle_overlay_index = None
         if job["srt"]:
-            if not _has_ffmpeg_filter("subtitles"):
-                install_hint = (
-                    "brew install ffmpeg-full" if sys.platform == "darwin"
-                    else "cài đặt FFmpeg có hỗ trợ libass"
-                )
-                raise RuntimeError(
-                    f"FFmpeg hiện tại không hỗ trợ chèn phụ đề (thiếu filter 'subtitles' / libass).\n"
-                    f"Vui lòng chạy lệnh: {install_hint}"
-                )
             shifted_srt = shift_srt(
                 Path(job["srt"]), work / "subtitles-prepared.srt", subtitle_offset,
             )
-            subtitle_filter = "," + _ffmpeg_subtitle(
-                shifted_srt, subtitle_font, subtitle_size, subtitle_margin, subtitle_background,
-                subtitle_color, subtitle_bg_color, subtitle_opacity,
-            )
-            _log(
-                job_id,
-                f"Phụ đề: cỡ {subtitle_size} · lề dưới {subtitle_margin} · "
-                f"lệch {subtitle_offset:g}s · nền {subtitle_background}",
-            )
+            if _has_ffmpeg_filter("subtitles"):
+                subtitle_filter = "," + _ffmpeg_subtitle(
+                    shifted_srt, subtitle_font, subtitle_size, subtitle_margin, subtitle_background,
+                    subtitle_color, subtitle_bg_color, subtitle_opacity,
+                )
+                _log(
+                    job_id,
+                    f"Phụ đề: cỡ {subtitle_size} · lề dưới {subtitle_margin} · "
+                    f"lệch {subtitle_offset:g}s · nền {subtitle_background} (ASS filter)",
+                )
+            else:
+                _log(
+                    job_id,
+                    f"Phụ đề: cỡ {subtitle_size} · lề dưới {subtitle_margin} · "
+                    f"lệch {subtitle_offset:g}s · nền {subtitle_background} (PIL Overlay)",
+                )
+                subs_concat = _build_subtitle_overlay_concat(
+                    shifted_srt, work, width, height, subtitle_font, subtitle_size, subtitle_margin,
+                    subtitle_background, subtitle_color, subtitle_bg_color, subtitle_opacity,
+                )
+                subtitle_overlay_index = next_input_idx
+                next_input_idx += 1
+                cmd += ["-f", "concat", "-safe", "0", "-i", str(subs_concat)]
+
+        # ── Unified filter_complex graph ──────────────────────────────────
+        graph_steps: list[str] = []
+        current_v = "[0:v]"
+
+        # 1. Base scale + delogo + speed
+        graph_steps.append(f"{current_v}{base_vf}{speed_filter}[v_base]")
+        current_v = "[v_base]"
+
+        # 2. Watermark / Logo
         if watermark_index is not None:
             opacity = max(5, min(100, float(logo.get("opacity", 85)))) / 100
             scale = max(2, min(30, float(logo.get("size", 8)))) / 100
@@ -1178,20 +1392,29 @@ def run(job_id: str) -> None:
                 f"scale=-1:{max(12, round(height * scale))},"
                 if logo.get("source") == "image" else ""
             )
-            graph = (
-                f"[0:v]{base_vf}{speed_filter}[base];"
+            graph_steps.append(
                 f"[{watermark_index}:v]{logo_scale}format=rgba,"
-                f"colorchannelmixer=aa={opacity:.3f}[wm];"
-                f"[base][wm]overlay=x='{x}':y='{y}':shortest=1{enable}"
-                f"{subtitle_filter},format=yuv420p[vout]"
+                f"colorchannelmixer=aa={opacity:.3f}[wm]"
             )
-            cmd += ["-filter_complex", graph, "-map", "[vout]"]
-        else:
-            cmd += ["-vf", f"{base_vf}{subtitle_filter}{speed_filter},format=yuv420p"]
+            graph_steps.append(
+                f"{current_v}[wm]overlay=x='{x}':y='{y}':shortest=1{enable}[v_wm]"
+            )
+            current_v = "[v_wm]"
+
+        # 3. Subtitle (ASS filter hoặc PIL Overlay)
+        if subtitle_filter:
+            graph_steps.append(f"{current_v}{subtitle_filter}[v_sub]")
+            current_v = "[v_sub]"
+        elif subtitle_overlay_index is not None:
+            graph_steps.append(f"{current_v}[{subtitle_overlay_index}:v]overlay=format=auto:shortest=1[v_sub]")
+            current_v = "[v_sub]"
+
+        # 4. Final pixel format
+        graph_steps.append(f"{current_v}format=yuv420p[vout]")
+
+        cmd += ["-filter_complex", ";".join(graph_steps), "-map", "[vout]"]
         cmd += _encoder_args(use_gpu, crf)
         if audio_index is not None:
-            if watermark_index is None:
-                cmd += ["-map", "0:v:0"]
             cmd += ["-map", f"{audio_index}:a:0", "-af", f"volume={volume:.3f},atempo={speed:.6f}",
                     "-c:a", "aac", "-b:a", "192k", "-shortest"]
         if preview:
