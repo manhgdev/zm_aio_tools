@@ -6,7 +6,6 @@ import { FLOW_PROMPT_TEMPLATES, type FlowPromptTemplate, type FlowTemplateCatego
 import './FlowTemplatesPanel.css'
 
 type Props = {
-  onApplyTemplate?: (content: string, template: FlowPromptTemplate) => void
   onClose?: () => void
   embedded?: boolean
 }
@@ -23,7 +22,7 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url)
 }
 
-export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false }: Props) {
+export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
   const { locale } = useLocale()
   const t = (vi: string, en: string) => localize(locale, vi, en)
 
@@ -49,7 +48,12 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
 
   const copyPrompt = (tpl: FlowPromptTemplate) => {
     void navigator.clipboard.writeText(tpl.content).then(() => {
-      toast.success(t(`Đã sao chép: ${tpl.title.vi}`, `Copied: ${tpl.title.en}`))
+      toast.success(
+        t(
+          `Đã sao chép ${tpl.title.vi}! Hãy dán vào ChatGPT / Claude kèm file SRT để tạo danh sách prompt ảnh.`,
+          `Copied ${tpl.title.en}! Paste into ChatGPT / Claude with your SRT file to generate image prompts.`,
+        ),
+      )
     }).catch(() => {
       toast.error(t('Không thể sao chép văn bản', 'Failed to copy text'))
     })
@@ -60,14 +64,6 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
     toast.success(t(`Đang tải file ${tpl.filename}`, `Downloading ${tpl.filename}`))
   }
 
-  const handleApply = (tpl: FlowPromptTemplate) => {
-    if (onApplyTemplate) {
-      onApplyTemplate(tpl.content, tpl)
-      toast.success(t(`Đã chèn mẫu ${tpl.title.vi} vào ô prompt.`, `Inserted ${tpl.title.en} into prompt.`))
-      if (onClose) onClose()
-    }
-  }
-
   return (
     <div className={`flow-templates-panel${embedded ? ' is-embedded' : ''}`}>
       <header className="flow-templates-header">
@@ -75,11 +71,11 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
           <div className="flow-templates-title-row">
             <IconBook size={24} className="flow-templates-icon" />
             <div>
-              <h2>{t('Thư viện Prompt Mẫu & Hướng dẫn Flow', 'Flow Prompt Guides & Templates')}</h2>
+              <h2>{t('Thư viện Prompt Hệ Thống & Hướng dẫn Flow', 'Flow System Prompt Guides & Engines')}</h2>
               <p>
                 {t(
-                  'Các mẫu prompt hệ thống (System Prompt) và hướng dẫn chuẩn cho sản xuất ảnh 2D, video Veo 3 và Series theo audio.',
-                  'Standard system prompts and production guides for 2D images, Veo 3 videos, and audio-synced series.',
+                  'Các mẫu chỉ dẫn AI (System Prompt) chuẩn để đưa vào ChatGPT / Claude / Gemini phân tích file SRT hoặc Kịch bản thành chuỗi Prompt tạo ảnh/video đồng bộ theo Audio.',
+                  'Standard System Prompt Engines for ChatGPT / Claude / Gemini to analyze SRT or Scripts into audio-synced image/video prompt batches.',
                 )}
               </p>
             </div>
@@ -89,6 +85,33 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
               ×
             </button>
           )}
+        </div>
+
+        {/* ── Workflow Guide Steps ── */}
+        <div className="flow-workflow-steps">
+          <div className="flow-workflow-step">
+            <span className="flow-workflow-step-num">1</span>
+            <div>
+              <strong>{t('Copy hoặc Tải System Prompt', 'Copy or Download System Prompt')}</strong>
+              <small>{t('Lấy file mẫu bên dưới phù hợp với nhu cầu (Ảnh 2D / Video / Series).', 'Pick the matching template engine below (2D Image / Video / Series).')}</small>
+            </div>
+          </div>
+          <div className="flow-workflow-step-arrow">➔</div>
+          <div className="flow-workflow-step">
+            <span className="flow-workflow-step-num">2</span>
+            <div>
+              <strong>{t('Dán vào ChatGPT / Claude / Gemini', 'Paste into ChatGPT / Claude / Gemini')}</strong>
+              <small>{t('Gửi kèm file SRT, Audio hoặc Kịch bản để AI chia cảnh và xuất file prompt TXT.', 'Send your SRT, Audio, or Script for AI to segment visual beats and output a TXT prompt file.')}</small>
+            </div>
+          </div>
+          <div className="flow-workflow-step-arrow">➔</div>
+          <div className="flow-workflow-step">
+            <span className="flow-workflow-step-num">3</span>
+            <div>
+              <strong>{t('Nhập file TXT vào Flow để tạo', 'Import TXT into Flow to Generate')}</strong>
+              <small>{t('Quay lại tab Tạo trong Flow, bấm [Nhập TXT] để render hàng loạt tự động.', 'Back in Flow Create tab, click [Import TXT] to batch generate automatically.')}</small>
+            </div>
+          </div>
         </div>
 
         <div className="flow-templates-toolbar">
@@ -164,6 +187,9 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
             <article key={tpl.id} className="flow-template-card">
               <header className="flow-template-card-header">
                 <div className="flow-template-badges">
+                  <span className="flow-template-badge flow-template-badge--system">
+                    ⚙️ {t('Prompt Hệ Thống (AI Engine)', 'System Prompt Engine')}
+                  </span>
                   <span className="flow-template-badge flow-template-badge--lang">
                     {tpl.lang === 'vi' ? '🇻🇳 Tiếng Việt' : '🌐 English'}
                   </span>
@@ -184,6 +210,9 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
               </header>
 
               <footer className="flow-template-card-footer">
+                <div className="flow-template-usage-hint">
+                  <span>💡 {t('Dùng cho ChatGPT / Claude / Gemini để phân tích SRT / Audio.', 'For ChatGPT / Claude / Gemini to analyze SRT / Audio.')}</span>
+                </div>
                 <div className="flow-template-card-actions">
                   <button
                     type="button"
@@ -195,11 +224,11 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
                   </button>
                   <button
                     type="button"
-                    className="flow-template-btn"
+                    className="flow-template-btn flow-template-btn--copy"
                     onClick={() => copyPrompt(tpl)}
-                    title={t('Sao chép nội dung vào Clipboard', 'Copy content to clipboard')}
+                    title={t('Sao chép Prompt Hệ Thống để dán vào ChatGPT / Claude', 'Copy System Prompt to paste into ChatGPT / Claude')}
                   >
-                    📋 {t('Copy', 'Copy')}
+                    📋 {t('Sao chép Prompt Hệ Thống', 'Copy System Prompt')}
                   </button>
                   <button
                     type="button"
@@ -210,15 +239,6 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
                     <IconDownload size={14} /> {t('Tải về (.txt)', 'Download (.txt)')}
                   </button>
                 </div>
-                {onApplyTemplate && (
-                  <button
-                    type="button"
-                    className="flow-template-btn flow-template-btn--apply"
-                    onClick={() => handleApply(tpl)}
-                  >
-                    🚀 {t('Dùng mẫu này', 'Use template')}
-                  </button>
-                )}
               </footer>
             </article>
           ))}
@@ -226,13 +246,14 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
           {/* Placeholder cards for upcoming templates */}
           <article className="flow-template-card flow-template-card--placeholder">
             <div className="flow-template-badges">
+              <span className="flow-template-badge">⚙️ System Prompt</span>
               <span className="flow-template-badge">🌐 English</span>
               <span className="flow-template-badge">🎨 2D Image</span>
               <span className="flow-template-badge">v1.0</span>
             </div>
             <h3 className="flow-template-card-title">{t('ZMTOOL Audio-First 2D Engine (Bản Tiếng Anh)', 'ZMTOOL Audio-First 2D Engine (English Base)')}</h3>
             <p className="flow-template-card-desc">
-              {t('Mẫu prompt tối ưu hóa cho thị trường quốc tế, xuất prompt tiếng Anh AI-optimized bám sát audio tiếng Anh.', 'Optimized prompt template for international markets, exporting audio-synced AI-optimized English prompts.')}
+              {t('Mẫu prompt hệ thống tối ưu hóa cho thị trường quốc tế, phân tích SRT/audio tiếng Anh xuất chuỗi prompt AI-optimized.', 'System prompt engine for international markets, analyzing English SRT/audio to output AI-optimized prompts.')}
             </p>
             <div className="flow-template-placeholder-note">
               <span>⏳ {t('Sắp cập nhật bổ sung', 'Coming soon')}</span>
@@ -241,13 +262,14 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
 
           <article className="flow-template-card flow-template-card--placeholder">
             <div className="flow-template-badges">
+              <span className="flow-template-badge">⚙️ System Prompt</span>
               <span className="flow-template-badge">🎬 Video Veo 3</span>
               <span className="flow-template-badge">Motion</span>
               <span className="flow-template-badge">v1.0</span>
             </div>
             <h3 className="flow-template-card-title">{t('Veo 3 Motion & Camera Direction Engine', 'Veo 3 Motion & Camera Direction Engine')}</h3>
             <p className="flow-template-card-desc">
-              {t('Mẫu prompt chuyên sâu điều khiển góc máy, chuyển động camera (dolly, pan, tilt, orbit) và âm thanh sống động cho Veo 3.', 'Advanced prompt template controlling camera movements (dolly, pan, tilt, orbit) and cinematic audio for Veo 3.')}
+              {t('Mẫu prompt hệ thống phân tích nhịp video, điều khiển chuyển động camera (dolly, pan, tilt, orbit) và âm thanh sống động cho Veo 3.', 'System prompt engine analyzing video pacing, camera directions (dolly, pan, tilt, orbit), and dynamic audio for Veo 3.')}
             </p>
             <div className="flow-template-placeholder-note">
               <span>⏳ {t('Sắp cập nhật bổ sung', 'Coming soon')}</span>
@@ -256,13 +278,14 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
 
           <article className="flow-template-card flow-template-card--placeholder">
             <div className="flow-template-badges">
+              <span className="flow-template-badge">⚙️ System Prompt</span>
               <span className="flow-template-badge">📚 Series</span>
               <span className="flow-template-badge">Continuity</span>
               <span className="flow-template-badge">v1.0</span>
             </div>
             <h3 className="flow-template-card-title">{t('Series Continuity & Character Anchor Engine', 'Series Continuity & Character Anchor Engine')}</h3>
             <p className="flow-template-card-desc">
-              {t('Mẫu prompt giữ nhất quán nhân vật, phong cách nghệ thuật và bối cảnh qua hàng chục tập phim dài hạn.', 'Prompt template for character consistency, style anchoring, and long-form episodic series storytelling.')}
+              {t('Mẫu prompt hệ thống giữ nhất quán nhân vật (Character Bible), phong cách nghệ thuật và bối cảnh qua hàng chục tập phim.', 'System prompt engine maintaining character consistency (Character Bible), style anchoring, and episodic story continuity.')}
             </p>
             <div className="flow-template-placeholder-note">
               <span>⏳ {t('Sắp cập nhật bổ sung', 'Coming soon')}</span>
@@ -283,7 +306,10 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
           >
             <header className="flow-template-modal-header">
               <div>
-                <small className="flow-template-modal-badge">{previewTemplate.filename}</small>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <small className="flow-template-modal-badge">{previewTemplate.filename}</small>
+                  <span className="flow-template-badge flow-template-badge--system">⚙️ {t('Prompt Hệ Thống', 'System Prompt Engine')}</span>
+                </div>
                 <h2 id="flow-template-modal-title">{locale === 'en' ? previewTemplate.title.en : previewTemplate.title.vi}</h2>
               </div>
               <button
@@ -295,6 +321,16 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
                 ×
               </button>
             </header>
+
+            <div className="flow-template-modal-notice">
+              <span>💡</span>
+              <p>
+                {t(
+                  'Hướng dẫn: Hãy sao chép hoặc tải file này, sau đó dán vào ChatGPT / Claude / Gemini kèm file SRT hoặc Kịch bản để AI chia cảnh và xuất danh sách prompt hình ảnh/video.',
+                  'Guide: Copy or download this file, then paste it into ChatGPT / Claude / Gemini with your SRT or Script file for AI to segment scenes and output image/video prompts.',
+                )}
+              </p>
+            </div>
 
             <div className="flow-template-modal-body">
               <pre className="flow-template-code">{previewTemplate.content}</pre>
@@ -309,10 +345,10 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
               <div className="flow-template-modal-actions">
                 <button
                   type="button"
-                  className="flow-template-btn"
+                  className="flow-template-btn flow-template-btn--copy"
                   onClick={() => copyPrompt(previewTemplate)}
                 >
-                  📋 {t('Sao chép nội dung', 'Copy content')}
+                  📋 {t('Sao chép Prompt Hệ Thống', 'Copy System Prompt')}
                 </button>
                 <button
                   type="button"
@@ -321,18 +357,6 @@ export function FlowTemplatesPanel({ onApplyTemplate, onClose, embedded = false 
                 >
                   <IconDownload size={14} /> {t('Tải về file (.txt)', 'Download (.txt)')}
                 </button>
-                {onApplyTemplate && (
-                  <button
-                    type="button"
-                    className="flow-template-btn flow-template-btn--apply"
-                    onClick={() => {
-                      handleApply(previewTemplate)
-                      setPreviewTemplate(null)
-                    }}
-                  >
-                    🚀 {t('Dùng mẫu này trong Flow', 'Use in Flow')}
-                  </button>
-                )}
                 <button
                   type="button"
                   className="flow-template-btn flow-template-btn--neutral"

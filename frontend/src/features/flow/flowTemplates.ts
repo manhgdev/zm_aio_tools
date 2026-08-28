@@ -1,5 +1,6 @@
 export type FlowTemplateCategory = 'image' | 'video' | 'series' | 'guide'
 export type FlowTemplateLang = 'vi' | 'en'
+export type FlowTemplateType = 'system_prompt' | 'single_prompt'
 
 export type FlowPromptTemplate = {
   id: string
@@ -7,6 +8,7 @@ export type FlowPromptTemplate = {
     vi: string
     en: string
   }
+  type: FlowTemplateType
   category: FlowTemplateCategory
   lang: FlowTemplateLang
   version: string
@@ -355,15 +357,16 @@ export const FLOW_PROMPT_TEMPLATES: FlowPromptTemplate[] = [
       vi: 'ZMTOOL Audio-First 2D Engine V1.0 (Tiếng Việt)',
       en: 'ZMTOOL Audio-First 2D Engine V1.0 (Vietnamese Base)',
     },
+    type: 'system_prompt',
     category: 'image',
     lang: 'vi',
     version: 'v1.0',
     description: {
-      vi: 'Máy sản xuất video giáo dục minh họa 2D tự động từ chủ đề đến prompt hình ảnh theo audio. Chuyển đổi kịch bản/SRT thành visual beat và chuỗi prompt bám sát nhịp âm thanh.',
-      en: 'Automated 2D educational illustration video production engine from topic to image prompts based on audio. Converts script/SRT into visual beats and synced prompts.',
+      vi: 'Bộ System Prompt chuẩn đưa vào ChatGPT / Claude / Gemini để phân tích file SRT / Audio / Kịch bản thành danh sách Prompt ảnh 2D theo visual beat bám sát nhịp âm thanh.',
+      en: 'Standard System Prompt for ChatGPT / Claude / Gemini to analyze SRT / Audio / Scripts into audio-synced 2D visual beat image prompts.',
     },
     filename: 'v1.0-base-vietnam-2D-image.txt',
-    tags: ['2D Illustration', 'Audio-First', 'Tiếng Việt', 'System Prompt', 'YouTube Education'],
+    tags: ['System Prompt Engine', 'Phân tích SRT', '2D Illustration', 'Audio-First', 'Tiếng Việt', 'YouTube Education'],
     content: BASE_VIETNAM_2D_IMAGE_PROMPT,
   },
 ]

@@ -75,6 +75,72 @@
   color: var(--ink, var(--foreground, #18181b));
 }
 
+/* ── Workflow Guide Steps ── */
+.flow-workflow-steps {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  background: var(--background, #f4f4f5);
+  border: 1px solid var(--line, var(--border, rgba(0, 0, 0, 0.1)));
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+
+.flow-workflow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.flow-workflow-step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary, #0284c7);
+  color: var(--primary-foreground, #fff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.flow-workflow-step strong {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--ink, var(--foreground, #18181b));
+  line-height: 1.3;
+}
+
+.flow-workflow-step small {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted-foreground, #71717a);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.flow-workflow-step-arrow {
+  color: var(--muted-foreground, #71717a);
+  font-size: 0.9rem;
+  font-weight: 700;
+  user-select: none;
+}
+
+@media (max-width: 768px) {
+  .flow-workflow-steps {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .flow-workflow-step-arrow {
+    display: none;
+  }
+}
+
 .flow-templates-toolbar {
   display: flex;
   align-items: center;
@@ -220,6 +286,12 @@
   border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
 }
 
+.flow-template-badge--system {
+  background: color-mix(in srgb, #6366f1 14%, var(--surface, #fff));
+  color: #6366f1;
+  border: 1px solid color-mix(in srgb, #6366f1 30%, transparent);
+}
+
 .flow-template-card-title {
   margin: 0 0 8px;
   font-size: 1.05rem;
@@ -265,6 +337,16 @@
   border-top: 1px solid var(--line, var(--border, rgba(0, 0, 0, 0.08)));
 }
 
+.flow-template-usage-hint {
+  font-size: 0.75rem;
+  color: var(--muted-foreground, #71717a);
+  background: var(--muted, rgba(0, 0, 0, 0.03));
+  border: 1px dashed var(--line, var(--border, rgba(0, 0, 0, 0.1)));
+  padding: 6px 10px;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+
 .flow-template-card-actions {
   display: flex;
   gap: 8px;
@@ -302,14 +384,14 @@
   background: color-mix(in srgb, var(--primary, #0284c7) 20%, var(--surface, #fff));
 }
 
-.flow-template-btn--apply {
+.flow-template-btn--copy {
   background: var(--primary, #0284c7);
   border-color: var(--primary, #0284c7);
   color: var(--primary-foreground, #fff);
-  width: 100%;
+  flex: 1;
 }
 
-.flow-template-btn--apply:hover {
+.flow-template-btn--copy:hover {
   filter: brightness(1.08);
 }
 
@@ -374,15 +456,30 @@
   padding: 2px 8px;
   border-radius: 4px;
   display: inline-block;
-  margin-bottom: 4px;
   border: 1px solid color-mix(in srgb, var(--primary, #0284c7) 25%, transparent);
 }
 
 .flow-template-modal-header h2 {
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 1.1rem;
   font-weight: 700;
   color: var(--ink, var(--foreground, #18181b));
+}
+
+.flow-template-modal-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--primary, #0284c7) 8%, var(--surface, #fff));
+  border-bottom: 1px solid var(--line, var(--border, rgba(0, 0, 0, 0.08)));
+  font-size: 0.8rem;
+  color: var(--ink, var(--foreground, #18181b));
+  line-height: 1.45;
+}
+
+.flow-template-modal-notice p {
+  margin: 0;
 }
 
 .flow-template-modal-close {

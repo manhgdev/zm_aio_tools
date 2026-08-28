@@ -1696,16 +1696,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
           </section>
         )}
         {utilityView === "help" && (
-          <FlowTemplatesPanel
-            onApplyTemplate={(content) => {
-              setPrompt(content);
-              setPromptInputType("prompt");
-              setImportName("");
-              setUtilityView(null);
-              setTab("create");
-              writeFlowRoutePanel(createKind === "image" ? "image" : "video");
-            }}
-          />
+          <FlowTemplatesPanel />
         )}
         {utilityView === "series" && (
           <FlowSeriesPanel
@@ -2822,15 +2813,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
               style={{ width: "100%", maxWidth: "1020px", height: "88vh", display: "flex" }}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <FlowTemplatesPanel
-                onClose={() => setTemplatesModalOpen(false)}
-                onApplyTemplate={(content) => {
-                  setPrompt(content);
-                  setPromptInputType("prompt");
-                  setImportName("");
-                  setTemplatesModalOpen(false);
-                }}
-              />
+              <FlowTemplatesPanel onClose={() => setTemplatesModalOpen(false)} />
             </div>
           </div>
         )}
