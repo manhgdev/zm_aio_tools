@@ -836,6 +836,43 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         });
     }
   }, [backendReady, runtimeKnown, isDesktopApp, jobs, settings.autoDownload, settings.outputDir, locale, webOutputRootReady]);
+
+  const allCompletedOutputs = useMemo(() => {
+    const list: Array<{ job: FlowJob; outputIndex: number }> = [];
+    for (const job of jobs) {
+      if (job.status === "done" && Array.isArray(job.outputs) && job.outputs.length > 0) {
+        for (let i = 0; i < job.outputs.length; i++) {
+          list.push({ job, outputIndex: i });
+        }
+      }
+    }
+    return list;
+  }, [jobs]);
+
+  const currentPreviewIndex = useMemo(() => {
+    if (!preview) return -1;
+    return allCompletedOutputs.findIndex(
+      (item) => item.job.id === preview.job.id && item.outputIndex === preview.outputIndex,
+    );
+  }, [preview, allCompletedOutputs]);
+
+  const movePreview = (delta: number) => {
+    setPreview((current) => {
+      if (!current || allCompletedOutputs.length < 2) return current;
+      const currentIndex = allCompletedOutputs.findIndex(
+        (item) => item.job.id === current.job.id && item.outputIndex === current.outputIndex,
+      );
+      if (currentIndex === -1) {
+        const total = current.job.outputs?.length || 0;
+        if (total < 2) return current;
+        return { ...current, outputIndex: (current.outputIndex + delta + total) % total };
+      }
+      const total = allCompletedOutputs.length;
+      const nextIndex = (currentIndex + delta + total) % total;
+      return allCompletedOutputs[nextIndex];
+    });
+  };
+
   useEffect(() => {
     if (!preview) return;
     const navigate = (event: KeyboardEvent) => {
@@ -845,15 +882,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     };
     window.addEventListener("keydown", navigate);
     return () => window.removeEventListener("keydown", navigate);
-  }, [preview]);
-
-  const movePreview = (delta: number) => {
-    setPreview((current) => {
-      const total = current?.job.outputs?.length || 0;
-      if (!current || total < 2) return current;
-      return { ...current, outputIndex: (current.outputIndex + delta + total) % total };
-    });
-  };
+  }, [preview, allCompletedOutputs]);
 
   const promptCount = useMemo(
     () =>
@@ -2693,7 +2722,11 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
             >
               <header>
                 <div>
-                  <strong>{t("Xem trước kết quả", "Output preview")}</strong>
+                  <strong>
+                    {allCompletedOutputs.length > 1 && currentPreviewIndex >= 0
+                      ? `[${currentPreviewIndex + 1}/${allCompletedOutputs.length}] ${t("Xem trước kết quả", "Output preview")}`
+                      : t("Xem trước kết quả", "Output preview")}
+                  </strong>
                   <small>{preview.job.prompt}</small>
                 </div>
                 <button
@@ -2727,13 +2760,14 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                     title={t("Xem trước tệp kết quả", "Output file preview")}
                   />
                 )}
-                {(preview.job.outputs?.length || 0) > 1 && (
+                {allCompletedOutputs.length > 1 && (
                   <>
                     <button
                       className="flow-preview-nav is-previous"
                       type="button"
                       onClick={() => movePreview(-1)}
                       aria-label={t("Kết quả trước", "Previous output")}
+                      title={t("Kết quả trước (Phím ←)", "Previous output (Left Arrow)")}
                     >
                       <IconArrowRight size={22} />
                     </button>
@@ -2742,11 +2776,12 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                       type="button"
                       onClick={() => movePreview(1)}
                       aria-label={t("Kết quả tiếp theo", "Next output")}
+                      title={t("Kết quả tiếp theo (Phím →)", "Next output (Right Arrow)")}
                     >
                       <IconArrowRight size={22} />
                     </button>
                     <span className="flow-preview-counter" aria-live="polite">
-                      {preview.outputIndex + 1} / {preview.job.outputs?.length || 0}
+                      {currentPreviewIndex >= 0 ? currentPreviewIndex + 1 : preview.outputIndex + 1} / {allCompletedOutputs.length}
                     </span>
                   </>
                 )}
