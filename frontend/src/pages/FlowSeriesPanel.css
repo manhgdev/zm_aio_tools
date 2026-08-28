@@ -849,21 +849,33 @@
 }
 
 .fsp-auto-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px 10px;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .fsp-auto-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 0;
+  min-width: 120px;
+  flex: 1.1 1 130px;
+}
+
+.fsp-auto-field.fsp-field-wide {
+  flex: 1.5 1 160px;
+  min-width: 140px;
 }
 
 .fsp-auto-field.fsp-field-xs {
-  min-width: 68px;
+  flex: 0 0 74px;
+  min-width: 66px;
+  max-width: 80px;
+}
+
+.fsp-auto-field.fsp-field-xs select {
+  padding: 0 4px 0 6px;
 }
 
 .fsp-auto-field label {

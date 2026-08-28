@@ -788,7 +788,7 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
 
                     <div className="fsp-auto-grid">
                       {accounts.length > 0 && (
-                        <div className="fsp-auto-field">
+                        <div className="fsp-auto-field fsp-field-wide">
                           <label>{t('Tài khoản', 'Account')}</label>
                           <select
                             value={seriesSettings.accountId}
@@ -799,7 +799,7 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
                           </select>
                         </div>
                       )}
-                      <div className="fsp-auto-field">
+                      <div className="fsp-auto-field fsp-field-wide">
                         <label>{t('Model video', 'Video model')}</label>
                         <select
                           value={seriesSettings.model}
@@ -839,6 +839,8 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
                           onChange={(e) => saveSeriesSettings({ duration: e.target.value })}
                           aria-label={t('Thời lượng', 'Duration')}
                         >
+                          <option value="4">4s</option>
+                          <option value="6">6s</option>
                           <option value="8">8s</option>
                           <option value="10">10s</option>
                         </select>
