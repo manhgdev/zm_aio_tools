@@ -143,6 +143,7 @@ const ACCOUNTS_KEY = "zm-flow-veo:accounts:v1";
 const CREATE_KIND_KEY = "zm-flow-veo:create-kind:v1";
 const ACTIVE_PANEL_KEY = "zm-flow-veo:active-panel:v1";
 const IMAGE_MODE_KEY = "zm-flow-veo:image-mode:v1";
+const COLLAPSED_FOLDERS_KEY = "zm-flow-veo:collapsed-folders:v1";
 
 function flowRoutePanel(): FlowRoutePanel | null {
   if (typeof window === "undefined") return null;
@@ -573,12 +574,15 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     email: "",
     plan: "Pro" as FlowAccount["plan"],
   });
-  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(sessionStorage.getItem(COLLAPSED_FOLDERS_KEY) || "{}"); } catch { return {}; }
+  });
   const toggleFolderCollapsed = (groupKey: string) => {
-    setCollapsedFolders((prev) => ({
-      ...prev,
-      [groupKey]: !prev[groupKey],
-    }));
+    setCollapsedFolders((prev) => {
+      const next = { ...prev, [groupKey]: !prev[groupKey] };
+      try { sessionStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify(next)); } catch { /* ponytail: quota */ }
+      return next;
+    });
   };
   const [apiError, setApiError] = useState("");
   const [logsCopied, setLogsCopied] = useState(false);
