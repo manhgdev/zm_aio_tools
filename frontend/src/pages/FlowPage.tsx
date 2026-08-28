@@ -1891,7 +1891,6 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   setPromptInputType("prompt");
                   setImportName("");
                 }}
-                maxLength={8000}
                 placeholder={
                   createKind === "video"
                     ? t(
@@ -1911,7 +1910,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                     "One blank line separates each prompt.",
                   )}
                 </span>
-                <span>{prompt.length} / 8000</span>
+                <span>{prompt.length.toLocaleString()} {t("ký tự", "characters")}</span>
               </div>
               <div className="flow-import">
                 <div className="flow-import-row">
