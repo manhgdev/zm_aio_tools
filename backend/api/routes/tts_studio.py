@@ -146,6 +146,13 @@ def api_tts_studio_history():
     return list_history(50)
 
 
+@router.get("/api/tts/studio/jobs/{job_id}/progress")
+def api_tts_studio_job_progress(job_id: str):
+    from pipeline.tts.studio import get_job_progress
+
+    return get_job_progress(job_id)
+
+
 def _job_dir(job_id: str) -> Path:
     """Thư mục job đã kiểm traversal — job_id đến từ URL path param."""
     from pipeline.core.config import safe_child

@@ -128,6 +128,34 @@ def _voice_display(voice: str, lang: str = "vi") -> str:
 _jobs_lock = threading.Lock()
 _cancel_flags: dict[str, bool] = {}
 _running: dict[str, bool] = {}
+_job_progress: dict[str, dict[str, Any]] = {}
+
+
+def set_job_progress(job_id: str, current: int, total: int, message: str = "") -> None:
+    """Cập nhật tiến độ phần trăm và số lượng thực tế cho job đang xử lý."""
+    if not job_id:
+        return
+    with _jobs_lock:
+        total_safe = max(1, total)
+        current_safe = max(0, min(current, total_safe))
+        pct = int(min(99, max(1, (current_safe / total_safe) * 100)))
+        _job_progress[job_id] = {
+            "current": current_safe,
+            "total": total_safe,
+            "pct": pct,
+            "message": message or f"Đang xử lý {current_safe}/{total_safe} ({pct}%)",
+        }
+
+
+def get_job_progress(job_id: str) -> dict[str, Any]:
+    """Lấy tiến độ thực tế hiện tại của job."""
+    if not job_id:
+        return {"current": 0, "total": 0, "pct": 0, "message": ""}
+    with _jobs_lock:
+        return _job_progress.get(
+            job_id,
+            {"current": 0, "total": 0, "pct": 0, "message": ""},
+        )
 
 
 def mark_cancel(job_id: str) -> None:
@@ -294,11 +322,14 @@ def synth_text_job(
             if auto_split
             else [text.strip() or "."]
         )
+        total_chunks = len(chunks)
+        set_job_progress(job_id, 0, total_chunks, f"Bắt đầu tạo {total_chunks} câu…")
         part_paths: list[Path] = []
         part_durs: list[float] = []
         for i, chunk in enumerate(chunks):
             if _is_cancelled(job_id):
                 raise RuntimeError("Job đã hủy")
+            set_job_progress(job_id, i, total_chunks, f"Đang tạo câu {i + 1}/{total_chunks}…")
             part = job_dir / f"part_{i:03d}.wav"
             tts_segment(
                 chunk,
@@ -315,6 +346,8 @@ def synth_text_job(
             )
             part_paths.append(part)
             part_durs.append(ffprobe_duration(part))
+            set_job_progress(job_id, i + 1, total_chunks, f"Đã hoàn thành {i + 1}/{total_chunks} câu…")
+        set_job_progress(job_id, total_chunks, total_chunks, "Đang ghép nối âm thanh và tạo phụ đề…")
         gap = max(0, int(gap_ms)) / 1000.0
         # CapCut: cue ngắn (~42 ký tự), timeline ∝ audio từng part
         cues = cues_from_parts(
@@ -381,6 +414,7 @@ def synth_text_job(
         with _jobs_lock:
             _running.pop(job_id, None)
             _cancel_flags.pop(job_id, None)
+            _job_progress.pop(job_id, None)
 
 
 def synth_srt_job(
@@ -429,6 +463,8 @@ def synth_srt_job(
     with _jobs_lock:
         _running[job_id] = True
         _cancel_flags[job_id] = False
+    total_cues = len(cues)
+    set_job_progress(job_id, 0, total_cues, f"Bắt đầu tạo {total_cues} đoạn SRT…")
     part_paths: list[Path] = []
     out_cues: list[dict] = []
     cursor = 0.0
@@ -443,6 +479,7 @@ def synth_srt_job(
         for i, cue in enumerate(cues):
             if _is_cancelled(job_id):
                 raise RuntimeError("Job đã hủy")
+            set_job_progress(job_id, i, total_cues, f"Đang tạo đoạn SRT {i + 1}/{total_cues}…")
             text = str(cue.get("text") or "").strip() or "…"
             slot = max(0.15, float(cue["end"]) - float(cue["start"]))
             part = job_dir / f"cue_{i:03d}.wav"
@@ -486,6 +523,8 @@ def synth_srt_job(
                     "_srcEnd": src_end,
                 }
             )
+            set_job_progress(job_id, i + 1, total_cues, f"Đã hoàn thành {i + 1}/{total_cues} đoạn SRT…")
+        set_job_progress(job_id, total_cues, total_cues, "Đang xuất file âm thanh và phụ đề SRT…")
         wav = job_dir / "audio.wav"
         if keep_timeline:
             # Mix theo đúng timestamp SRT; _mix_timeline chặn từng audio trong slot.
@@ -593,6 +632,7 @@ def synth_srt_job(
         with _jobs_lock:
             _running.pop(job_id, None)
             _cancel_flags.pop(job_id, None)
+            _job_progress.pop(job_id, None)
 
 
 def _mix_timeline(parts: list[Path], cues: list[dict], out: Path) -> None:

@@ -204,6 +204,7 @@ export default function TtsStudio({
   const [busy, setBusy] = useState(false)
   const [busyKind, setBusyKind] = useState<'synth' | 'clone' | null>(null)
   const [busyProgress, setBusyProgress] = useState(0)
+  const [busyCustomMessage, setBusyCustomMessage] = useState('')
   const [progressMinimized, setProgressMinimized] = useState(false)
   const [error, setError] = useState('')
 
@@ -522,23 +523,13 @@ export default function TtsStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang])
 
-  // Progress giả lập khi chờ API TTS (server chưa stream %)
   useEffect(() => {
     if (!busy) {
       setBusyProgress(0)
-      return
+      setBusyCustomMessage('')
+    } else {
+      setProgressMinimized(false)
     }
-    setBusyProgress(4)
-    setProgressMinimized(false)
-    const id = window.setInterval(() => {
-      setBusyProgress((p) => {
-        if (p >= 92) return p
-        // chậm dần khi gần xong
-        const step = p < 40 ? 3.5 : p < 70 ? 2 : 0.8
-        return Math.min(92, p + step)
-      })
-    }, 400)
-    return () => window.clearInterval(id)
   }, [busy])
 
   useEffect(() => {
@@ -740,9 +731,25 @@ export default function TtsStudio({
     if ((!useSrt && !text.trim()) || (useSrt && !srtRaw.trim()) || !voice) return
     setBusyKind('synth')
     setBusy(true)
+    setBusyProgress(2)
+    setBusyCustomMessage(useSrt ? 'Đang chuẩn bị tạo giọng từ SRT…' : 'Đang chuẩn bị tạo giọng nói…')
     setError('')
     const requestJobId = crypto.randomUUID().replaceAll('-', '').slice(0, 12)
     activeJobIdRef.current = requestJobId
+
+    let progressTimer: number | undefined = window.setInterval(async () => {
+      if (cancelledJobIdsRef.current.has(requestJobId)) return
+      try {
+        const p = await api.ttsStudioJobProgress(requestJobId)
+        if (p && p.pct > 0) {
+          setBusyProgress(p.pct)
+          if (p.message) setBusyCustomMessage(p.message)
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 300)
+
     try {
       const res = await api.ttsStudioSynth({
         jobId: requestJobId,
@@ -765,6 +772,7 @@ export default function TtsStudio({
       })
       if (cancelledJobIdsRef.current.has(requestJobId)) return
       setBusyProgress(100)
+      setBusyCustomMessage('Đã hoàn thành!')
       applyJobUrls(res)
       // Cùng giọng + chữ + setting → server trả cache, không thêm lịch sử mới
       if (!(res as { cached?: boolean }).cached) await loadHistory()
@@ -774,6 +782,11 @@ export default function TtsStudio({
         setError(e instanceof Error ? e.message : 'Tạo giọng thất bại')
       }
     } finally {
+      if (progressTimer) {
+        window.clearInterval(progressTimer)
+        progressTimer = undefined
+      }
+      setBusyCustomMessage('')
       cancelledJobIdsRef.current.delete(requestJobId)
       if (activeJobIdRef.current === requestJobId) {
         activeJobIdRef.current = null
@@ -1184,13 +1197,14 @@ export default function TtsStudio({
 
   const busyTitle = busyKind === 'clone' ? 'Clone giọng nói' : 'Tạo giọng nói'
   const busyMessage =
-    busyKind === 'clone'
+    busyCustomMessage ||
+    (busyKind === 'clone'
       ? 'Đang tạo giọng clone…'
       : srtRaw.trim()
         ? 'Đang tạo giọng từ SRT…'
         : isVieneuVoice
           ? 'Đang tạo giọng VieNeu (lần đầu có thể nạp model)…'
-          : 'Đang tạo giọng nói…'
+          : 'Đang tạo giọng nói…')
 
   const historyPanel = (
     <TtsHistoryPanel

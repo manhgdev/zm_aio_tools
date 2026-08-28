@@ -308,6 +308,14 @@ export const api = {
       12_000,
     ),
 
+  ttsStudioJobProgress: (jobId: string) =>
+    fetchJson<{
+      current: number
+      total: number
+      pct: number
+      message: string
+    }>(`${base}/tts/studio/jobs/${encodeURIComponent(jobId)}/progress`, undefined, 3000),
+
   ttsStudioDelete: (jobId: string) =>
     fetchJson<{ ok: boolean }>(`${base}/tts/studio/jobs/${jobId}`, {
       method: 'DELETE',
