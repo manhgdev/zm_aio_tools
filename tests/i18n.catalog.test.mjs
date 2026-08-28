@@ -780,7 +780,7 @@ test('Flow WEB output saves automatically into a user-authorized folder', async 
   assert.match(source, /const queueKindGroups = useMemo/)
   assert.match(source, /aria-label=\{t\("Loại hàng đợi", "Queue type"\)\}/)
   assert.match(source, /t\("Tất cả", "All"\)/)
-  assert.match(source, /new Map<string, \{ kind: CreateKind; outputDir: string; outputFolder: string; displayOutputFolder: string; jobs: FlowJob\[\] \}>\(\)/)
+  assert.match(source, /new Map<string, \{ kind: CreateKind; outputDir: string; outputFolder: string; displayOutputFolder: string; jobs: FlowJob\[\]; maxCreatedAt: number \}>\(\)/)
   assert.doesNotMatch(source, /outputDir: flowKindOutputFolder/)
   assert.match(source, /function flowConfiguredOutputFolder/)
   assert.match(source, /if \(\/\^\(\?:\[A-Za-z\]:\[\\\\\/\]\|\[\\\\\/\]\)\/\.test\(outputDir\)\) return `\$\{outputDir\}\/\$\{kind\}`/)

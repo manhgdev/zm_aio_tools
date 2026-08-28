@@ -626,30 +626,35 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     return () => window.removeEventListener("popstate", applyRoute);
   }, []);
   const queueGroups = useMemo(() => {
-    const grouped = new Map<string, { kind: CreateKind; outputDir: string; outputFolder: string; displayOutputFolder: string; jobs: FlowJob[] }>();
-    [...jobs]
-      .sort((left, right) => (
-        left.kind === right.kind
-          ? left.createdAt - right.createdAt
-          : left.kind === "video" ? -1 : 1
-      ))
-      .forEach((job) => {
-        const outputDir = job.settings.outputDir || "";
-        const outputFolder = job.outputFolder || (isDesktopApp ? flowOutputParentPath(job.outputs?.[0]) : "");
-        const displayOutputFolder = job.displayOutputFolder || outputFolder;
-        const key = `${job.kind}\u0000${outputDir}`;
-        const group = grouped.get(key);
-        if (group) {
-          group.jobs.push(job);
-          if (!group.outputFolder && outputFolder) group.outputFolder = outputFolder;
-          if (!group.displayOutputFolder && displayOutputFolder) group.displayOutputFolder = displayOutputFolder;
-        }
-        else grouped.set(key, { kind: job.kind, outputDir, outputFolder, displayOutputFolder, jobs: [job] });
-      });
-    return [...grouped.values()].map((group) => ({
-      ...group,
-      jobs: [...group.jobs].sort((a, b) => a.index - b.index || a.createdAt - b.createdAt),
-    }));
+    const grouped = new Map<string, { kind: CreateKind; outputDir: string; outputFolder: string; displayOutputFolder: string; jobs: FlowJob[]; maxCreatedAt: number }>();
+    jobs.forEach((job) => {
+      const outputDir = job.settings.outputDir || "";
+      const outputFolder = job.outputFolder || (isDesktopApp ? flowOutputParentPath(job.outputs?.[0]) : "");
+      const displayOutputFolder = job.displayOutputFolder || outputFolder;
+      const key = `${job.kind}\u0000${outputDir}`;
+      const group = grouped.get(key);
+      if (group) {
+        group.jobs.push(job);
+        if (job.createdAt > group.maxCreatedAt) group.maxCreatedAt = job.createdAt;
+        if (!group.outputFolder && outputFolder) group.outputFolder = outputFolder;
+        if (!group.displayOutputFolder && displayOutputFolder) group.displayOutputFolder = displayOutputFolder;
+      } else {
+        grouped.set(key, {
+          kind: job.kind,
+          outputDir,
+          outputFolder,
+          displayOutputFolder,
+          jobs: [job],
+          maxCreatedAt: job.createdAt,
+        });
+      }
+    });
+    return [...grouped.values()]
+      .sort((left, right) => right.maxCreatedAt - left.maxCreatedAt)
+      .map((group) => ({
+        ...group,
+        jobs: [...group.jobs].sort((a, b) => a.index - b.index || a.createdAt - b.createdAt),
+      }));
   }, [isDesktopApp, jobs]);
   const queueKindGroups = useMemo(() => (
     (["video", "image"] as const)
