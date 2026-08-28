@@ -871,44 +871,55 @@ def _build_subtitle_overlay_concat(
             img.save(frames_dir / f"cue_{i:05d}.png", format="PNG")
             continue
 
-        line_metrics: list[tuple[str, int, int]] = []
+        # Collect line metrics with exact visual glyph bounding boxes
+        line_data: list[dict[str, Any]] = []
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
-            w = bbox[2] - bbox[0]
-            h = bbox[3] - bbox[1]
-            line_metrics.append((line, w, h))
+            l_min, t_min, r_max, b_max = bbox
+            line_w = max(1, r_max - l_min)
+            line_h = max(1, b_max - t_min)
+            line_data.append({
+                "text": line,
+                "left": l_min,
+                "top": t_min,
+                "w": line_w,
+                "h": line_h,
+            })
 
-        line_spacing = int(px_font_size * 0.25)
-        total_text_h = sum(m[2] for m in line_metrics) + line_spacing * (len(line_metrics) - 1)
-        max_w = max(m[1] for m in line_metrics)
+        line_spacing = max(2, int(px_font_size * 0.25))
+        total_text_h = sum(d["h"] for d in line_data) + line_spacing * (len(line_data) - 1)
+        max_w = max(d["w"] for d in line_data)
 
-        y_top = height - px_margin_bottom - total_text_h
+        pad_x = max(12, int(px_font_size * 0.45))
+        pad_y = max(8, int(px_font_size * 0.30))
 
-        pad_x = int(px_font_size * 0.4)
-        pad_y = int(px_font_size * 0.2)
+        box_w = max_w + pad_x * 2
+        box_h = total_text_h + pad_y * 2
+
+        box_left = max(0, (width - box_w) // 2)
+        box_right = min(width, box_left + box_w)
+        box_bottom = min(height, height - px_margin_bottom)
+        box_top = max(0, box_bottom - box_h)
 
         if bg_style in ("solid", "box"):
-            box_left = max(0, (width - max_w) // 2 - pad_x)
-            box_right = min(width, (width + max_w) // 2 + pad_x)
-            box_top = max(0, y_top - pad_y)
-            box_bottom = min(height, y_top + total_text_h + pad_y)
-            radius = int(px_font_size * 0.2) if bg_style == "box" else 0
+            radius = int(px_font_size * 0.22) if bg_style == "box" else 0
             if radius > 0:
                 draw.rounded_rectangle([box_left, box_top, box_right, box_bottom], radius=radius, fill=bg_rgba)
             else:
                 draw.rectangle([box_left, box_top, box_right, box_bottom], fill=bg_rgba)
 
-        cur_y = y_top
+        cur_line_visual_top = box_top + pad_y
         stroke_w = max(1, px_font_size // 10) if bg_style == "none" else 0
         stroke_color = (0, 0, 0, 230) if bg_style == "none" else None
 
-        for line, lw, lh in line_metrics:
-            lx = (width - lw) // 2
+        for d in line_data:
+            draw_x = (width - d["w"]) // 2 - d["left"]
+            draw_y = cur_line_visual_top - d["top"]
             if stroke_w > 0:
-                draw.text((lx, cur_y), line, font=font, fill=text_rgba, stroke_width=stroke_w, stroke_fill=stroke_color)
+                draw.text((draw_x, draw_y), d["text"], font=font, fill=text_rgba, stroke_width=stroke_w, stroke_fill=stroke_color)
             else:
-                draw.text((lx, cur_y), line, font=font, fill=text_rgba)
-            cur_y += lh + line_spacing
+                draw.text((draw_x, draw_y), d["text"], font=font, fill=text_rgba)
+            cur_line_visual_top += d["h"] + line_spacing
 
         img.save(frames_dir / f"cue_{i:05d}.png", format="PNG")
 
