@@ -20,7 +20,7 @@ const JOB_KEY = 'videoclone.srt-image.job-id.v1'
 const HELP = {
   media: ['Thư mục ảnh / video', 'Chọn một thư mục chứa toàn bộ ảnh hoặc clip dùng để dựng video. APP đọc trực tiếp trong thư mục và tự sắp xếp theo tên, không upload/copy từng video.', 'Dùng JPG, JPEG, JFIF, PNG, WEBP, BMP, MP4, MOV, MKV, WEBM, AVI hoặc M4V. Nên đặt tên 001, 002, 003… tương ứng từng dòng timeline.'],
   audio: ['File audio', 'Âm thanh narration chính của video. Audio có sẵn trong các clip đầu vào sẽ bị bỏ để tránh chồng tiếng.', 'Dùng MP3, WAV, M4A hoặc định dạng audio FFmpeg đọc được. Có thể bỏ qua nếu muốn video không có tiếng.'],
-  timeline: ['File timeline', 'Quyết định file ảnh/clip nào xuất hiện và xuất hiện trong bao lâu. Mỗi dòng timecode tương ứng một file theo thứ tự tên.', 'Hỗ trợ TXT, SRT, VTT, ASS/SSA, CSV, TSV, JSON và LRC. Ví dụ TXT: 001_[00.00.00.00-00.00.08.00] …'],
+  timeline: ['File timeline', 'Quyết định file ảnh/clip nào xuất hiện và xuất hiện trong bao lâu theo mốc timecode. Mỗi dòng timecode tương ứng một file theo thứ tự tên (001, 002, 003…).', 'Hỗ trợ TXT, SRT, VTT, ASS/SSA, CSV, TSV, JSON và LRC. Ví dụ TXT: 001_[00:00:00.00-00:00:08.50] hoặc [00:00-00:05]…'],
   output: ['File xuất', 'Chọn thư mục và tên video MP4 sẽ được lưu sau khi render. Nếu không chọn, APP lưu trong thư mục xuất mặc định.', 'Bấm Chọn để mở hộp thoại Windows. Ví dụ: D:\\Video\\lich-su-loai-nguoi.mp4.'],
   subtitles: ['File phụ đề', 'Chèn chữ phụ đề trực tiếp vào hình ảnh video.', 'Dùng file .SRT có timecode hợp lệ. Đây là file bắt buộc ở chế độ Ghép ảnh/video SRT.'],
   subtitleFontFamily: ['Phông chữ', 'Kiểu chữ (font) dùng cho phụ đề.', 'Nên chọn các font không chân (sans-serif) nét rõ như Noto Sans, Inter, Roboto để dễ đọc trên mọi thiết bị.'],
@@ -510,7 +510,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
                       className="siv-timeline-input"
                       aria-label={t('Dán nội dung timeline', 'Paste timeline content')}
                       value={timelineText}
-                      placeholder={t('Dán nội dung TXT, SRT, VTT, ASS, CSV hoặc JSON', 'Paste TXT, SRT, VTT, ASS, CSV, or JSON content')}
+                      placeholder={t('Dán nội dung timeline (ví dụ: 001_[00:00:00.00-00:00:08.50] hoặc [00:00 - 00:05] hoặc nội dung file SRT, VTT, CSV, JSON…)', 'Paste timeline content (e.g. 001_[00:00:00.00-00:00:08.50] or [00:00 - 00:05] or SRT, VTT, CSV, JSON text…)')}
                       onChange={(event) => setTimelineText(event.target.value)}
                     />
                   : <div className="siv-input"><span title={timelinePath}>{timelinePath || t('Không dùng timeline · ghép tuần tự', 'No timeline · merge sequentially')}</span></div>}
@@ -793,17 +793,90 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
 
       {helpKey && (
         <div className="siv-help-backdrop" role="presentation" onMouseDown={() => setHelpKey(null)}>
-          <section className="siv-help-dialog" role="dialog" aria-modal="true" aria-labelledby="siv-help-title" onMouseDown={(event) => event.stopPropagation()}>
+          <section className={`siv-help-dialog${helpKey === 'timeline' ? ' siv-help-dialog--timeline' : ''}`} role="dialog" aria-modal="true" aria-labelledby="siv-help-title" onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <small>Hướng dẫn sử dụng</small>
-                <h2 id="siv-help-title">{helpKey === 'timeline' ? t('File timeline', 'Timeline file') : HELP[helpKey][0]}</h2>
+                <small>{t('Hướng dẫn sử dụng', 'User Guide')}</small>
+                <h2 id="siv-help-title">{helpKey === 'timeline' ? t('File timeline & Các định dạng Timecode', 'Timeline File & Timecode Formats') : HELP[helpKey][0]}</h2>
               </div>
-              <button type="button" aria-label="Đóng hướng dẫn" onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>×</button>
+              <button type="button" aria-label={t('Đóng hướng dẫn', 'Close guide')} onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>×</button>
             </header>
-            <p>{helpKey === 'timeline' ? t('Có thể bỏ trống để ghép tuần tự toàn bộ media theo tên file.', 'Leave empty to merge all media sequentially by filename.') : HELP[helpKey][1]}</p>
-            <div><strong>{t('File hoặc thiết lập cần dùng', 'Required file or setting')}</strong><p>{helpKey === 'timeline' ? t('Tùy chọn. Khi dùng, mỗi timecode xác định cảnh và thời lượng tương ứng.', 'Optional. When provided, each timecode determines the matching scene and duration.') : HELP[helpKey][2]}</p></div>
-            <button type="button" className="siv-help-close" onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>Đã hiểu</button>
+            {helpKey === 'timeline' ? (
+              <div className="siv-help-scroll-content">
+                <p style={{ padding: '12px 0 8px', margin: 0, lineHeight: 1.55 }}>
+                  {t(
+                    'File timeline xác định thời điểm và độ dài từng cảnh. Ảnh/clip trong thư mục media sẽ tự động khớp lần lượt theo thứ tự tên file (001, 002, 003…). Hỗ trợ đa dạng các định dạng timecode sau:',
+                    'The timeline specifies the start and duration of each scene. Media files are matched sequentially in alphabetical order (001, 002, 003...). Supports the following timecode formats:',
+                  )}
+                </p>
+
+                <div className="siv-help-timeline-formats">
+                  <div className="siv-help-format-card">
+                    <div className="siv-help-format-title">📝 1. {t('Dạng Text Prompt / TXT (Khuyên dùng)', 'Text Prompt / TXT Format (Recommended)')}</div>
+                    <p className="siv-help-format-desc">{t('Dạng ngoặc vuông hoặc khoảng cách gạch ngang, hỗ trợ cả dấu hai chấm (:) và dấu chấm (.):', 'Square bracket or hyphen range, supports both colons (:) and dots (.):')}</p>
+                    <pre className="siv-help-code-block">{`001_[00:00:00.00-00:00:08.50] Mô tả cảnh mở đầu
+002_[00:00:08.50-00:00:15.00] Mô tả diễn biến tiếp
+003_[00.00.15.00-00.00.22.00] Cảnh quay trên cao
+[00:00 - 00:05] Cảnh 1
+[00:05 - 00:12] Cảnh 2
+00:00:00 - 00:00:08
+00:00:08 --> 00:00:16
+0 - 5.5
+5.5 - 12.0`}</pre>
+                  </div>
+
+                  <div className="siv-help-format-card">
+                    <div className="siv-help-format-title">💬 2. {t('File Phụ đề (.SRT / .VTT / .ASS / .SSA)', 'Subtitle Files (.SRT / .VTT / .ASS / .SSA)')}</div>
+                    <p className="siv-help-format-desc">{t('Mỗi mốc timecode phụ đề là 1 cảnh video tương ứng:', 'Each subtitle timecode block corresponds to 1 video scene:')}</p>
+                    <pre className="siv-help-code-block">{`1
+00:00:00,000 --> 00:00:05,500
+Cảnh 1
+
+2
+00:00:05,500 --> 00:00:12,000
+Cảnh 2`}</pre>
+                  </div>
+
+                  <div className="siv-help-format-card">
+                    <div className="siv-help-format-title">📊 3. {t('Bảng tính (.CSV / .TSV)', 'Spreadsheet Table (.CSV / .TSV)')}</div>
+                    <p className="siv-help-format-desc">{t('Bảng có cột start và end (hoặc from/to, in/out):', 'Table with start and end columns (or from/to, in/out):')}</p>
+                    <pre className="siv-help-code-block">{`start,end
+00:00:00,00:00:05.5
+00:00:05.5,00:00:12.0`}</pre>
+                  </div>
+
+                  <div className="siv-help-format-card">
+                    <div className="siv-help-format-title">📦 4. {t('Cấu trúc JSON (.JSON)', 'JSON Structure (.JSON)')}</div>
+                    <pre className="siv-help-code-block">{`[
+  { "start": 0, "end": 5.5 },
+  { "start": "00:00:05.5", "end": "00:00:12.0" }
+]`}</pre>
+                  </div>
+
+                  <div className="siv-help-format-card">
+                    <div className="siv-help-format-title">🎵 5. {t('Lời bài hát (.LRC)', 'Lyrics (.LRC)')}</div>
+                    <pre className="siv-help-code-block">{`[00:01.50] Câu hát 1
+[00:06.20] Câu hát 2`}</pre>
+                  </div>
+                </div>
+
+                <div style={{ margin: '8px 0 0', padding: '10px 12px' }}>
+                  <strong>{t('💡 Lưu ý quan trọng', '💡 Important Notes')}</strong>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
+                    {t(
+                      'Không bắt buộc phải có timeline. Khi không dùng timeline, APP sẽ tự động ghép tuần tự toàn bộ ảnh/video theo tên file (ảnh tĩnh mặc định 5s, clip video giữ nguyên độ dài gốc). Bạn có thể bấm [Đổi] để dán trực tiếp timeline mà không cần tạo file.',
+                      'A timeline is not mandatory. Without a timeline, the APP automatically merges all media in filename order (5s default per image, original length for videos). You can click [Switch] to paste timeline text directly without saving a file.',
+                    )}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p>{HELP[helpKey][1]}</p>
+                <div><strong>{t('File hoặc thiết lập cần dùng', 'Required file or setting')}</strong><p>{HELP[helpKey][2]}</p></div>
+              </>
+            )}
+            <button type="button" className="siv-help-close" onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>{t('Đã hiểu', 'Got it')}</button>
           </section>
         </div>
       )}
