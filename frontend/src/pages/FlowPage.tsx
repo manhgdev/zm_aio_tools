@@ -1079,12 +1079,26 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   };
   const cancelJob = (id: string) =>
     void flowRequest<Record<string, unknown>>(`/api/flow/jobs/${id}/cancel`, { method: "POST" })
-      .then(updateJob)
-      .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+      .then((raw) => {
+        updateJob(raw);
+        toast.success(t("Đã gửi yêu cầu hủy job.", "Job cancellation requested."));
+      })
+      .catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        setApiError(msg);
+        toast.error(msg);
+      });
   const retryJob = (id: string) =>
     void flowRequest<Record<string, unknown>>(`/api/flow/jobs/${id}/retry`, { method: "POST" })
-      .then(updateJob)
-      .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+      .then((raw) => {
+        updateJob(raw);
+        toast.success(t("Đã gửi lại job vào hàng đợi.", "Job queued for retry."));
+      })
+      .catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        setApiError(msg);
+        toast.error(msg);
+      });
   const deleteWebFlowOutputs = async (job: FlowJob) => {
     const root = webOutputRootRef.current;
     if (isDesktopApp || !root) return;
@@ -1101,10 +1115,15 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         await flowRequest(`/api/flow/jobs/${id}`, { method: "DELETE" });
         if (job) await deleteWebFlowOutputs(job);
         setJobs((current) => current.filter((item) => item.id !== id));
-      })().catch(() => setApiError(t(
-        "Không thể xóa đầy đủ job và file output của nó.",
-        "Could not fully delete the job and its output files.",
-      ))),
+        toast.success(t("Đã xóa job thành công.", "Job deleted successfully."));
+      })().catch(() => {
+        const msg = t(
+          "Không thể xóa đầy đủ job và file output của nó.",
+          "Could not fully delete the job and its output files.",
+        );
+        setApiError(msg);
+        toast.error(msg);
+      }),
     });
   };
   const cancelAllJobs = () => {
@@ -1117,8 +1136,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         .then(({ jobs: rows }) => {
           setJobs(normalizeFlowJobs(rows, accounts));
           setApiError("");
+          toast.success(t("Đã hủy tất cả job.", "All jobs cancelled."));
         })
-        .catch((error) => setApiError(error instanceof Error ? error.message : String(error))),
+        .catch((error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          setApiError(msg);
+          toast.error(msg);
+        }),
     });
   };
   const deleteAllJobs = () => {
@@ -1131,10 +1155,15 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         for (const job of jobs) await deleteWebFlowOutputs(job);
         setJobs(normalizeFlowJobs(rows, accounts));
         setApiError("");
-      })().catch(() => setApiError(t(
-        "Không thể xóa đầy đủ hàng đợi và file output.",
-        "Could not fully delete the queue and its output files.",
-      ))),
+        toast.success(t("Đã xóa tất cả job.", "All jobs deleted."));
+      })().catch(() => {
+        const msg = t(
+          "Không thể xóa đầy đủ hàng đợi và file output.",
+          "Could not fully delete the queue and its output files.",
+        );
+        setApiError(msg);
+        toast.error(msg);
+      }),
     });
   };
   const cancelFolderJobs = (outputDir: string, folderJobs: FlowJob[]) => {
@@ -1156,10 +1185,15 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       ).then(({ jobs: rows }) => {
         setJobs(normalizeFlowJobs(rows, accounts));
         setApiError("");
-      }).catch(() => setApiError(t(
-        "Không thể hủy các job trong thư mục này.",
-        "Could not cancel the jobs in this folder.",
-      ))),
+        toast.success(t("Đã hủy các job trong thư mục thành công.", "Folder jobs cancelled successfully."));
+      }).catch(() => {
+        const msg = t(
+          "Không thể hủy các job trong thư mục này.",
+          "Could not cancel the jobs in this folder.",
+        );
+        setApiError(msg);
+        toast.error(msg);
+      }),
     });
   };
   const deleteFolderJobs = (outputDir: string, folderJobs: FlowJob[]) => {
@@ -1182,10 +1216,15 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         for (const job of folderJobs) await deleteWebFlowOutputs(job);
         setJobs(normalizeFlowJobs(rows, accounts));
         setApiError("");
-      })().catch(() => setApiError(t(
-        "Không thể xóa đầy đủ thư mục và file output.",
-        "Could not fully delete the folder and its output files.",
-      ))),
+        toast.success(t("Đã xóa thư mục và các job thành công.", "Folder and jobs deleted successfully."));
+      })().catch(() => {
+        const msg = t(
+          "Không thể xóa đầy đủ thư mục và file output.",
+          "Could not fully delete the folder and its output files.",
+        );
+        setApiError(msg);
+        toast.error(msg);
+      }),
     });
   };
   const setDefaultAccount = async (id: string) => {
@@ -1210,8 +1249,11 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       ));
       setSettings((current) => ({ ...current, account: saved.label }));
       setApiError("");
+      toast.success(t("Đã đặt tài khoản mặc định thành công.", "Default account updated successfully."));
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : String(error));
+      const msg = error instanceof Error ? error.message : String(error);
+      setApiError(msg);
+      toast.error(msg);
     }
   };
   const connectAccount = (account: FlowAccount) =>

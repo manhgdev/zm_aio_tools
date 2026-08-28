@@ -355,8 +355,11 @@ export default function TtsStudio({
       try {
         await api.ttsStudioVoicePatch(v.id, { favorite: next })
         onRefreshVoices?.(lang)
+        toast.success(next ? t('Đã thêm vào yêu thích.', 'Added to favorites.') : t('Đã bỏ yêu thích.', 'Removed from favorites.'))
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Không lưu yêu thích')
+        const msg = e instanceof Error ? e.message : t('Không thể lưu yêu thích', 'Could not save favorite')
+        setError(msg)
+        toast.error(msg)
       } finally {
         setBusy(false)
         setBusyKind(null)
@@ -367,6 +370,7 @@ export default function TtsStudio({
     if (next) set.add(v.id)
     else set.delete(v.id)
     persistLocalFavorites(set)
+    toast.success(next ? t('Đã thêm vào yêu thích.', 'Added to favorites.') : t('Đã bỏ yêu thích.', 'Removed from favorites.'))
   }
 
   const sortedVoices = useMemo(() => {
@@ -859,7 +863,9 @@ export default function TtsStudio({
 
   async function onClone() {
     if (!cloneFile || !cloneName.trim()) {
-      setError('Chọn file audio và nhập tên giọng clone')
+      const msg = t('Chọn file audio và nhập tên giọng clone', 'Choose an audio file and enter a clone name')
+      setError(msg)
+      toast.error(msg)
       return
     }
     setBusyKind('clone')
@@ -875,9 +881,12 @@ export default function TtsStudio({
       setCloneFile(null)
       setCloneName('')
       setCloneTags([])
+      toast.success(t('Đã thêm giọng clone thành công!', 'Cloned voice added successfully!'))
       go('voice') // danh sách / quản lý ở tab riêng
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Clone thất bại')
+      const msg = e instanceof Error ? e.message : t('Clone thất bại', 'Clone failed')
+      setError(msg)
+      toast.error(msg)
     } finally {
       setBusy(false)
       setBusyKind(null)
@@ -903,8 +912,11 @@ export default function TtsStudio({
       }
       onRefreshVoices?.(lang)
       setEditingVoice(null)
+      toast.success(t('Đã lưu thông tin giọng thành công!', 'Voice metadata saved successfully!'))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Lưu thông tin giọng thất bại')
+      const msg = e instanceof Error ? e.message : t('Lưu thông tin giọng thất bại', 'Failed to save voice metadata')
+      setError(msg)
+      toast.error(msg)
       throw e
     } finally {
       setBusy(false)
@@ -928,8 +940,11 @@ export default function TtsStudio({
         setVoice('')
       }
       onRefreshVoices?.(lang)
+      toast.success(t('Đã xóa giọng thành công!', 'Voice deleted successfully!'))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Xóa giọng thất bại')
+      const msg = e instanceof Error ? e.message : t('Xóa giọng thất bại', 'Failed to delete voice')
+      setError(msg)
+      toast.error(msg)
     } finally {
       setBusy(false)
       setBusyKind(null)
@@ -948,8 +963,11 @@ export default function TtsStudio({
         setEngine(target)
       }
       onRefreshVoices?.(lang)
+      toast.success(t('Đã chuyển engine giọng thành công!', 'Voice engine updated successfully!'))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Chuyển engine thất bại')
+      const msg = e instanceof Error ? e.message : t('Chuyển engine thất bại', 'Failed to change engine')
+      setError(msg)
+      toast.error(msg)
     } finally {
       setBusy(false)
       setBusyKind(null)
@@ -998,19 +1016,21 @@ export default function TtsStudio({
           preferredVoiceRef.current = result.successes[0].voice.id
           setVoice(result.successes[0].voice.id)
         }
+        toast.success(t(`Đã chuyển ${result.successes.length} giọng sang ${bulkMoveTargetLabel}!`, `Moved ${result.successes.length} voices to ${bulkMoveTargetLabel}!`))
         return
       }
       // Partial: keep failed selected on source so user can retry; switch only on full success.
       setSelectedVoiceIds(new Set(result.failures.map((item) => item.voiceId)))
       setBulkMoveOpen(false)
       const details = result.failures.map((item) => `${item.voiceId}: ${item.error}`).join('; ')
-      setError(
-        `Đã chuyển ${result.successes.length}/${voiceIds.length} giọng sang ${bulkMoveTargetLabel}. ` +
-          `Thất bại ${result.failures.length} (vẫn chọn): ${details}`,
-      )
+      const warnMsg = `Đã chuyển ${result.successes.length}/${voiceIds.length} giọng sang ${bulkMoveTargetLabel}. ` +
+        `Thất bại ${result.failures.length} (vẫn chọn): ${details}`
+      setError(warnMsg)
+      toast.warning(warnMsg)
     } catch (e) {
-      // Preserve selection on hard API failure.
-      setError(e instanceof Error ? e.message : 'Chuyển nhiều giọng thất bại')
+      const msg = e instanceof Error ? e.message : t('Chuyển hàng loạt thất bại', 'Bulk move failed')
+      setError(msg)
+      toast.error(msg)
       setBulkMoveOpen(false)
     } finally {
       setBusy(false)
@@ -1223,7 +1243,12 @@ export default function TtsStudio({
       onPlay={playHistoryItem}
       onDelete={(h) => {
         if (playingHistoryId === h.id) stopHistoryPlayback()
-        void api.ttsStudioDelete(h.id).then(loadHistory)
+        void api.ttsStudioDelete(h.id).then(() => {
+          toast.success(t('Đã xóa bản thu thành công!', 'History item deleted successfully!'))
+          return loadHistory()
+        }).catch((e) => {
+          toast.error(e instanceof Error ? e.message : t('Xóa thất bại', 'Delete failed'))
+        })
       }}
       isDesktopApp={isDesktopApp}
       onReveal={(id, kind, style) => {
@@ -1975,7 +2000,10 @@ export default function TtsStudio({
                   const result = await studioApi.pickFolder()
                   return result.path || undefined
                 } : undefined}
-                onSave={() => localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)}
+                onSave={() => {
+                  localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)
+                  toast.success(t('Đã lưu thư mục xuất thành công!', 'Output directory saved successfully!'))
+                }}
                 defaultPath={t('Ví dụ: du-an-01 hoặc giong-doc.mp3', 'Example: project-01 or narration.mp3')}
                 appFolder="text-to-speech"
                 label={t('Thư mục đầu ra', 'Output folder')}

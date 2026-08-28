@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { toast } from 'sonner'
 import { localize, useLocale } from '@/app/i18n'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
@@ -175,6 +176,7 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
       setJob(result.jobs[0] ?? null)
       setBatchJobs(result.jobs.slice(1))
       setRunRequested(false)
+      toast.success(t('Đã thêm ảnh vào hàng đợi.', 'Image added to queue.'))
     } catch (error) {
       setJob({ id: '', status: 'error', progress: 0, step: 'error', error: error instanceof Error ? error.message : String(error) })
       setBatchJobs([])
@@ -205,15 +207,18 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
       setJob(updates[0] ?? null)
       setBatchJobs(updates.slice(1))
       setRunRequested(true)
+      toast.success(t('Đã bắt đầu tạo video vẽ tay.', 'Started drawing video generation.'))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setJob((current) => current ? { ...current, error: message } : { id: '', status: 'error', progress: 0, step: 'error', error: message })
+      toast.error(message)
     }
   }
   const cancelJob = async (jobId: string) => {
     await fetch(`/api/drawing/jobs/${jobId}/cancel`, { method: 'POST' })
     setJob((current) => current?.id === jobId ? { ...current, status: 'cancelled' } : current)
     setBatchJobs((current) => current.map((item) => item.id === jobId ? { ...item, status: 'cancelled' } : item))
+    toast.success(t('Đã hủy tạo video.', 'Generation cancelled.'))
   }
   const pickOutputDir = async () => {
     const response = await fetch('/api/system/pick-folder', { method: 'POST' })
@@ -253,7 +258,7 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
           <span className="drawing-label">{t('Loại dụng cụ', 'Tool')}</span>
           <div className="drawing-tools">{(['pencil', 'pen', 'marker', 'brush'] as Tool[]).map((id) => <button key={id} type="button" className={tool === id ? 'is-active' : ''} onClick={() => setTool(id)}>{({ pencil: t('Chì', 'Pencil'), pen: t('Bút', 'Pen'), marker: 'Marker', brush: t('Cọ', 'Brush') })[id]}</button>)}</div>
           <label className="drawing-field"><span>{t('Đường đi nét', 'Stroke route')}</span><select value={strokeOrder} onChange={(event) => setStrokeOrder(event.target.value as StrokeOrder)}><option value="natural">{t('Tự nhiên theo đối tượng', 'Natural by object')}</option><option value="outline">{t('Theo viền thật', 'True outlines')}</option><option value="region">{t('Từng vùng hoàn chỉnh', 'Complete one region')}</option><option value="reading">{t('Theo chữ · trái sang phải', 'Text · left to right')}</option><option value="center">{t('Từ tâm lan ra', 'Centre outward')}</option><option value="horizontal">{t('Quét ngang', 'Horizontal sweep')}</option><option value="vertical">{t('Quét dọc', 'Vertical sweep')}</option></select></label>
-          <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? () => pickOutputDir().catch(() => undefined) : undefined} onSave={() => window.localStorage.setItem(DRAWING_OUTPUT_DIR_KEY, outputDir)} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder="drawing" />
+          <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? () => pickOutputDir().catch(() => undefined) : undefined} onSave={() => { window.localStorage.setItem(DRAWING_OUTPUT_DIR_KEY, outputDir); toast.success(t('Đã lưu thư mục xuất thành công!', 'Output directory saved successfully!')) }} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder="drawing" />
           <label className="drawing-toggle"><input type="checkbox" checked={showOriginalEnd} onChange={(event) => setShowOriginalEnd(event.target.checked)} /><span>{t('Hiện ảnh gốc ở cuối', 'Reveal original at end')}</span></label>
         </section>
 

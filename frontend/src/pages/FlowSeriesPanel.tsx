@@ -449,33 +449,53 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
   }
   const addEpisode = async () => {
     if (!selected) return
-    try { await request(`/series/${selected.id}/episodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: episodeTitle }) }); setEpisodeTitle(''); await refresh(selected.id) } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+    try {
+      await request(`/series/${selected.id}/episodes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: episodeTitle }) })
+      setEpisodeTitle('')
+      await refresh(selected.id)
+      toast.success(t('Đã thêm tập mới.', 'New episode added.'))
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   }
   const addScene = async () => {
     if (!selected || !sceneDraft.episodeId || !sceneDraft.prompt.trim()) return
     try {
       await request(`/series/${selected.id}/episodes/${sceneDraft.episodeId}/scenes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sceneDraft) })
-      setSceneDraft({ episodeId: sceneDraft.episodeId, title: '', prompt: '', timecode: '' }); await refresh(selected.id)
+      setSceneDraft({ episodeId: sceneDraft.episodeId, title: '', prompt: '', timecode: '' })
+      await refresh(selected.id)
+      toast.success(t('Đã thêm cảnh mới.', 'New scene added.'))
     } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   }
   const updateScene = async (episode: Episode, scene: Scene, patch: Record<string, unknown>) => {
     if (!selected) return
-    try { await request(`/series/${selected.id}/episodes/${episode.id}/scenes/${scene.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }); await refresh(selected.id) } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+    try {
+      await request(`/series/${selected.id}/episodes/${episode.id}/scenes/${scene.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+      await refresh(selected.id)
+      toast.success(t('Đã lưu cảnh.', 'Scene saved.'))
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   }
   const approveKeyframe = async (episode: Episode, scene: Scene) => {
     if (!selected) return
     try {
       await request(`/series/${selected.id}/episodes/${episode.id}/scenes/${scene.id}/approve-keyframe?job_id=${encodeURIComponent(scene.keyframeJobId)}&output_index=0`, { method: 'POST' })
       await refresh(selected.id)
+      toast.success(t('Đã duyệt keyframe.', 'Keyframe approved.'))
     } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   }
   const deleteScene = async (episode: Episode, scene: Scene) => {
     if (!selected || !window.confirm(t('Xóa cảnh này?', 'Delete this scene?'))) return
-    try { await request(`/series/${selected.id}/episodes/${episode.id}/scenes/${scene.id}`, { method: 'DELETE' }); await refresh(selected.id) } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+    try {
+      await request(`/series/${selected.id}/episodes/${episode.id}/scenes/${scene.id}`, { method: 'DELETE' })
+      await refresh(selected.id)
+      toast.success(t('Đã xóa cảnh.', 'Scene deleted.'))
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   }
   const deleteEpisode = async (episode: Episode) => {
     if (!selected || !window.confirm(t('Xóa tập này cùng toàn bộ cảnh?', 'Delete this episode and all its scenes?'))) return
-    try { await request(`/series/${selected.id}/episodes/${episode.id}`, { method: 'DELETE' }); await refresh(selected.id) } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+    try {
+      await request(`/series/${selected.id}/episodes/${episode.id}`, { method: 'DELETE' })
+      await refresh(selected.id)
+      toast.success(t('Đã xóa tập.', 'Episode deleted.'))
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   }
   const toggleEpisode = (episodeId: string) => {
     setCollapsedEpisodes((prev) => {
