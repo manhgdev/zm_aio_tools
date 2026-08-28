@@ -244,21 +244,23 @@ export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
           ))}
 
           {/* Placeholder cards for upcoming templates */}
-          <article className="flow-template-card flow-template-card--placeholder">
-            <div className="flow-template-badges">
-              <span className="flow-template-badge">⚙️ System Prompt</span>
-              <span className="flow-template-badge">🌐 English</span>
-              <span className="flow-template-badge">🎨 2D Image</span>
-              <span className="flow-template-badge">v1.0</span>
-            </div>
-            <h3 className="flow-template-card-title">{t('ZMTOOL Audio-First 2D Engine (Bản Tiếng Anh)', 'ZMTOOL Audio-First 2D Engine (English Base)')}</h3>
-            <p className="flow-template-card-desc">
-              {t('Mẫu prompt hệ thống tối ưu hóa cho thị trường quốc tế, phân tích SRT/audio tiếng Anh xuất chuỗi prompt AI-optimized.', 'System prompt engine for international markets, analyzing English SRT/audio to output AI-optimized prompts.')}
-            </p>
-            <div className="flow-template-placeholder-note">
-              <span>⏳ {t('Sắp cập nhật bổ sung', 'Coming soon')}</span>
-            </div>
-          </article>
+          {(categoryFilter === 'all' || categoryFilter === 'video') && (langFilter === 'all' || langFilter === 'en') && (
+            <article className="flow-template-card flow-template-card--placeholder">
+              <div className="flow-template-badges">
+                <span className="flow-template-badge">⚙️ System Prompt</span>
+                <span className="flow-template-badge">🎬 Video Veo 3</span>
+                <span className="flow-template-badge">Motion</span>
+                <span className="flow-template-badge">v1.0</span>
+              </div>
+              <h3 className="flow-template-card-title">{t('Veo 3 Motion & Camera Direction Engine', 'Veo 3 Motion & Camera Direction Engine')}</h3>
+              <p className="flow-template-card-desc">
+                {t('Mẫu prompt hệ thống phân tích nhịp video, điều khiển chuyển động camera (dolly, pan, tilt, orbit) và âm thanh sống động cho Veo 3.', 'System prompt engine analyzing video pacing, camera directions (dolly, pan, tilt, orbit), and dynamic audio for Veo 3.')}
+              </p>
+              <div className="flow-template-placeholder-note">
+                <span>⏳ {t('Sắp cập nhật bổ sung', 'Coming soon')}</span>
+              </div>
+            </article>
+          )}
 
           <article className="flow-template-card flow-template-card--placeholder">
             <div className="flow-template-badges">
@@ -276,21 +278,23 @@ export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
             </div>
           </article>
 
-          <article className="flow-template-card flow-template-card--placeholder">
-            <div className="flow-template-badges">
-              <span className="flow-template-badge">⚙️ System Prompt</span>
-              <span className="flow-template-badge">📚 Series</span>
-              <span className="flow-template-badge">Continuity</span>
-              <span className="flow-template-badge">v1.0</span>
-            </div>
-            <h3 className="flow-template-card-title">{t('Series Continuity & Character Anchor Engine', 'Series Continuity & Character Anchor Engine')}</h3>
-            <p className="flow-template-card-desc">
-              {t('Mẫu prompt hệ thống giữ nhất quán nhân vật (Character Bible), phong cách nghệ thuật và bối cảnh qua hàng chục tập phim.', 'System prompt engine maintaining character consistency (Character Bible), style anchoring, and episodic story continuity.')}
-            </p>
-            <div className="flow-template-placeholder-note">
-              <span>⏳ {t('Sắp cập nhật bổ sung', 'Coming soon')}</span>
-            </div>
-          </article>
+          {(categoryFilter === 'all' || categoryFilter === 'series') && (
+            <article className="flow-template-card flow-template-card--placeholder">
+              <div className="flow-template-badges">
+                <span className="flow-template-badge">⚙️ System Prompt</span>
+                <span className="flow-template-badge">📚 Series</span>
+                <span className="flow-template-badge">Continuity</span>
+                <span className="flow-template-badge">v1.0</span>
+              </div>
+              <h3 className="flow-template-card-title">{t('Series Continuity & Character Anchor Engine', 'Series Continuity & Character Anchor Engine')}</h3>
+              <p className="flow-template-card-desc">
+                {t('Mẫu prompt hệ thống giữ nhất quán nhân vật (Character Bible), phong cách nghệ thuật và bối cảnh qua hàng chục tập phim.', 'System prompt engine maintaining character consistency (Character Bible), style anchoring, and episodic story continuity.')}
+              </p>
+              <div className="flow-template-placeholder-note">
+                <span>⏳ {t('Sắp cập nhật bổ sung', 'Coming soon')}</span>
+              </div>
+            </article>
+          )}
         </div>
       </div>
 

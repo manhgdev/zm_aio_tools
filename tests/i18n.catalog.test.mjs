@@ -1027,5 +1027,6 @@ test('Flow offers bilingual prompt guides, templates showcase, preview, copy, an
   assert.match(tplComp, /downloadText/)
   assert.match(tplComp, /Tải về \(\.txt\)/)
   assert.match(tplData, /v1\.0-base-vietnam-2D-image\.txt/)
+  assert.match(tplData, /v1\.0-base-english-2D-image\.txt/)
   assert.match(tplData, /ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE V1\.0/)
 })
