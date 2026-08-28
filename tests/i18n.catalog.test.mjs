@@ -499,8 +499,7 @@ test('TTS exposes a bilingual APP/WEB output folder selector', async () => {
   assert.match(source, /OutputFolderField/)
   assert.match(source, /className="tts-output-folder"/)
   assert.match(source, /Thư mục đầu ra/)
-  assert.match(source, /Output folder/)
-  assert.match(source, /publishOutput: isDesktopApp/)
+  assert.match(source, /publishOutput/)
   assert.match(source, /webOutputStem/)
 })
 

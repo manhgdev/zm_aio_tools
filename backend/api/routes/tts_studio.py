@@ -125,12 +125,15 @@ def api_tts_studio_synth(body: StudioSynthIn):
                 gap_ms=int(body.gapMs or 0),
                 job_id=body.jobId,
             )
-        if body.publishOutput:
-            from pipeline.tts.studio import publish_job_outputs
-
-            result["publishedDir"] = str(
-                publish_job_outputs(result["id"], body.outputDir, body.outputFormat)
-            )
+        jid = result.get("id") or result.get("job_id")
+        if jid:
+            try:
+                from pipeline.tts.studio import publish_job_outputs
+                result["publishedDir"] = str(
+                    publish_job_outputs(str(jid), body.outputDir, body.outputFormat)
+                )
+            except Exception:
+                pass
         return result
     except Exception as e:
         raise HTTPException(500, str(e)) from e
@@ -158,7 +161,36 @@ def _tts_job_artifact(job_id: str, kind: str, style: str = "hard") -> Path:
     from pipeline.export.srt import SRT_STYLES
     from pipeline.tts.studio import ensure_mp3, ensure_wav, ensure_zip, rebuild_srt
 
-    job_dir = _job_dir(job_id)
+    try:
+        from pipeline.tts.studio import publish_job_outputs
+        from pipeline.core.output_paths import item_output_folder, selected_or_default
+
+        published_dir = item_output_folder(selected_or_default("tts"), job_id)
+        if not published_dir.is_dir():
+            published_dir = publish_job_outputs(job_id)
+
+        if kind == "wav":
+            target = published_dir / "audio.wav"
+            if target.is_file():
+                return target
+            return ensure_wav(job_id)
+        if kind == "mp3":
+            target = published_dir / "audio.mp3"
+            if target.is_file():
+                return target
+            return ensure_mp3(job_id)
+        if style not in SRT_STYLES:
+            raise HTTPException(400, f"style phải là một trong: {', '.join(SRT_STYLES)}")
+        if kind == "srt":
+            target = published_dir / "subtitles.srt"
+            if target.is_file() and style == "hard":
+                return target
+            return rebuild_srt(job_id, style)
+        if kind == "zip":
+            return ensure_zip(job_id, srt_style=style)
+    except Exception:
+        pass
+
     if kind == "wav":
         return ensure_wav(job_id)
     if kind == "mp3":

@@ -21,7 +21,7 @@ from typing import Any
 from pipeline.core.config import DATA, PUBLIC_DATA
 from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
-from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
+from pipeline.core.media import _ff_bin, _has_ffmpeg_filter, h264_encoder_args, h264_hardware_encoder
 from pipeline.drawing.jobs import (
     cancel as cancel_drawing_job,
     create_job as create_drawing_job,
@@ -351,7 +351,7 @@ def media_duration(path: Path, image_duration: float = 5.0) -> float:
         return image_duration
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+            [_ff_bin("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
             capture_output=True, text=True, timeout=15, check=True,
         )
         duration = float(json.loads(result.stdout).get("format", {}).get("duration") or 0)
@@ -375,7 +375,7 @@ def sequential_media_times(media: list[Path], image_duration: float = 5.0) -> li
 
 def image_resolution(path: Path) -> tuple[int, int]:
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+        [_ff_bin("ffprobe"), "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height", "-of", "json", str(path)],
         capture_output=True, text=True, timeout=15, check=True,
     )
@@ -493,7 +493,7 @@ def _prepare_video_segments(
             _log(job_id, f"Clip {idx + 1}: delogo ✓ · {source.name}")
         _log(job_id, f"Chuẩn bị clip {idx + 1}/{total}: {source.name} ({duration:.2f}s)")
         output = work / f"segment_{idx:05d}.mp4"
-        cmd = ["ffmpeg", "-y"]
+        cmd = [_ff_bin("ffmpeg"), "-y"]
         cmd += ["-stream_loop", "-1"] if is_video(source) else ["-loop", "1"]
         cmd += ["-i", str(source), "-t", f"{duration:.3f}", "-vf", vf, "-an"]
         cmd += _encoder_args(use_gpu, crf, intermediate=True)
@@ -1118,7 +1118,7 @@ def run(job_id: str) -> None:
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
             + (f",{zoom_filter}" if zoom_filter else "")
         )
-        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat)]
+        cmd = [_ff_bin("ffmpeg"), "-y", "-f", "concat", "-safe", "0", "-i", str(concat)]
         audio_index = None
         if job["audio"]:
             audio_index = 1
@@ -1137,6 +1137,15 @@ def run(job_id: str) -> None:
         speed_filter = f",setpts=PTS/{speed:.6f}" if abs(speed - 1) > 0.001 else ""
         subtitle_filter = ""
         if job["srt"]:
+            if not _has_ffmpeg_filter("subtitles"):
+                install_hint = (
+                    "brew install ffmpeg-full" if sys.platform == "darwin"
+                    else "cài đặt FFmpeg có hỗ trợ libass"
+                )
+                raise RuntimeError(
+                    f"FFmpeg hiện tại không hỗ trợ chèn phụ đề (thiếu filter 'subtitles' / libass).\n"
+                    f"Vui lòng chạy lệnh: {install_hint}"
+                )
             shifted_srt = shift_srt(
                 Path(job["srt"]), work / "subtitles-prepared.srt", subtitle_offset,
             )

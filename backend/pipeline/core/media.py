@@ -34,6 +34,15 @@ def _is_real_ff_bin(path: Path) -> bool:
         return False
 
 
+@lru_cache(maxsize=16)
+def _has_ffmpeg_filter(filter_name: str) -> bool:
+    try:
+        res = subprocess.run([_ff_bin("ffmpeg"), "-filters"], capture_output=True, text=True, timeout=5)
+        return filter_name in res.stdout
+    except Exception:
+        return True
+
+
 def _ff_bin(name: str) -> str:
     """Trả binary name (hoặc full path) cho ffmpeg/ffprobe.
 
@@ -51,6 +60,16 @@ def _ff_bin(name: str) -> str:
         bundled = meipass_res / f"{name}{ext}"
         if _is_real_ff_bin(bundled):
             return str(bundled)
+
+    # Ưu tiên ffmpeg-full (keg-only brew có libass/freetype) nếu có trên macOS
+    if sys.platform == "darwin":
+        for custom_dir in (
+            Path("/opt/homebrew/opt/ffmpeg-full/bin"),
+            Path("/usr/local/opt/ffmpeg-full/bin"),
+        ):
+            custom_bin = custom_dir / f"{name}{ext}"
+            if custom_bin.is_file():
+                return str(custom_bin)
 
     seen: set[str] = set()
     for folder in os.environ.get("PATH", "").split(os.pathsep):

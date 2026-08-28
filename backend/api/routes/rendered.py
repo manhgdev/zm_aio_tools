@@ -46,10 +46,15 @@ def _export_mp4_paths() -> list[Path]:
     for folder in (
         downloads_folder("video-clone"),
         downloads_folder("film"),
+        downloads_folder("flow"),
+        downloads_folder("download-video"),
         downloads_folder("subtitle-image"),
         downloads_folder("drawing"),
+        downloads_folder("cleaner"),
+        downloads_folder("batch"),
     ):
-        paths.extend(folder.glob("*.mp4"))
+        if folder.is_dir():
+            paths.extend(folder.rglob("*.mp4"))
     # User-facing filenames may contain spaces, Unicode or share a basename in
     # different output folders. Deduplicate by absolute path, not by filename.
     seen: set[str] = set()

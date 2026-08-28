@@ -745,25 +745,32 @@ def ensure_mp3(job_id: str) -> Path:
 
 
 def publish_job_outputs(job_id: str, output_dir: str = "", output_format: str = "wav48") -> Path:
-    """Publish one TTS job into a stable user-selected root/job-id folder."""
+    """Publish one TTS job into a stable user-selected root/job-id folder under ZM_AIO_TOOL/text-to-speech."""
     target = item_output_folder(selected_or_default("tts", output_dir), job_id)
     source_srt = _job_dir(job_id) / "subs.srt"
     if source_srt.is_file():
         shutil.copy2(source_srt, target / "subtitles.srt")
 
-    if output_format == "mp3":
-        shutil.copy2(ensure_mp3(job_id), target / "audio.mp3")
-    elif output_format == "wav16":
-        subprocess.check_call(
-            [
-                "ffmpeg", "-y", "-i", str(ensure_wav(job_id)), "-map", "0:a:0", "-vn",
-                "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target / "audio.wav"),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    else:
-        shutil.copy2(ensure_wav(job_id), target / "audio.wav")
+    wav_file = ensure_wav(job_id)
+    mp3_file = ensure_mp3(job_id)
+
+    if wav_file.is_file():
+        shutil.copy2(wav_file, target / "audio.wav")
+    if mp3_file.is_file():
+        shutil.copy2(mp3_file, target / "audio.mp3")
+
+    if output_format == "wav16" and wav_file.is_file():
+        try:
+            subprocess.check_call(
+                [
+                    "ffmpeg", "-y", "-i", str(wav_file), "-map", "0:a:0", "-vn",
+                    "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target / "audio_16k.wav"),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
     return target
 
 

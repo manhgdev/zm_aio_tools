@@ -665,9 +665,9 @@ export default function TtsStudio({
         autoSplit: useSrt ? false : autoSplit,
         gapMs: useSrt ? 0 : gapOn ? gapMs : 0,
         title: (useSrt ? srtRaw : text).trim().slice(0, 48),
-        outputDir: isDesktopApp ? outputDir : '',
+        outputDir: outputDir || '',
         outputFormat,
-        publishOutput: isDesktopApp,
+        publishOutput: true,
       })
       if (cancelledJobIdsRef.current.has(requestJobId)) return
       setBusyProgress(100)
