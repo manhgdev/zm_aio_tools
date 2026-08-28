@@ -905,9 +905,11 @@ const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, text
   const frameRef = useRef<HTMLDivElement>(null)
   const [frameH, setFrameH] = useState(300)
   const [thumbIdx, setThumbIdx] = useState(0)
+  const [thumbTotal, setThumbTotal] = useState(0)
   const [mediaPreviewError, setMediaPreviewError] = useState(false)
   useEffect(() => {
     setThumbIdx(0)
+    setThumbTotal(0)
     setMediaPreviewError(false)
   }, [mediaFolder])
   const [logoClock, setLogoClock] = useState(0)
@@ -1022,7 +1024,17 @@ const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, text
                     src={`/api/srt-image/media-thumb?folder=${encodeURIComponent(mediaFolder)}&index=${thumbIdx}`}
                     alt=""
                     style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: mediaPreviewError ? 0 : 0.85 }}
-                    onLoad={() => setMediaPreviewError(false)}
+                    onLoad={(e) => {
+                      setMediaPreviewError(false)
+                      // Read total count from X-Total header via fetch (img tag has no header access)
+                      if (thumbTotal === 0) {
+                        const url = (e.currentTarget as HTMLImageElement).src
+                        fetch(url, { method: 'HEAD' }).then(r => {
+                          const n = Number(r.headers.get('x-total'))
+                          if (n > 0) setThumbTotal(n)
+                        }).catch(() => {})
+                      }
+                    }}
                     onError={() => setMediaPreviewError(true)}
                   />
                   {mediaPreviewError && (
@@ -1034,12 +1046,12 @@ const SubtitleLivePreview = memo(function SubtitleLivePreview({ fontFamily, text
                     position: 'absolute', top: 6, right: 6, zIndex: 22,
                     display: 'flex', gap: 3, alignItems: 'center',
                   }}>
-                    <button onClick={() => setThumbIdx(i => Math.max(0, i - 1))} style={{
+                    <button onClick={() => setThumbIdx(i => thumbTotal > 0 ? (i - 1 + thumbTotal) % thumbTotal : Math.max(0, i - 1))} style={{
                       width: 22, height: 22, border: 'none', borderRadius: 4,
                       background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 13, cursor: 'pointer', lineHeight: 1,
                     }}>◀</button>
-                    <span style={{ fontSize: 10, color: '#fff', textShadow: '0 1px 3px #000', fontWeight: 600 }}>{thumbIdx + 1}</span>
-                    <button onClick={() => setThumbIdx(i => i + 1)} style={{
+                    <span style={{ fontSize: 10, color: '#fff', textShadow: '0 1px 3px #000', fontWeight: 600 }}>{thumbIdx + 1}{thumbTotal > 0 ? `/${thumbTotal}` : ''}</span>
+                    <button onClick={() => setThumbIdx(i => thumbTotal > 0 ? (i + 1) % thumbTotal : i + 1)} style={{
                       width: 22, height: 22, border: 'none', borderRadius: 4,
                       background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 13, cursor: 'pointer', lineHeight: 1,
                     }}>▶</button>
