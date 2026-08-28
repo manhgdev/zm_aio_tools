@@ -805,7 +805,7 @@ class FlowService:
         if series_context:
             root = selected_or_default("flow", "")
             series_root = root / "series" / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series") / kind
-            folder = series_root / "anchors" if series_context.get("artifact") == "anchor" else series_root / f"tap-{int(series_context.get('episodeIndex') or 1):02d}" / f"canh-{int(series_context.get('sceneIndex') or 1):03d}"
+            folder = series_root / "anchors" if series_context.get("artifact") == "anchor" else series_root / f"tap-{int(series_context.get('episodeIndex') or 1):02d}"
         elif selected.is_absolute():
             flow_root = selected_or_default("flow", "")
             try:
@@ -833,6 +833,11 @@ class FlowService:
         settings = job.get("settings") or {}
         prefix = safe_output_part(settings.get("filePrefix") or job["kind"], str(job["kind"]))
         safe_suffix = re.sub(r"[^A-Za-z0-9]+", "", suffix).lower() or ("mp4" if job["kind"] == "video" else "png")
+        series_context = job.get("seriesContext") or {}
+        if series_context and series_context.get("sceneIndex"):
+            scene_idx = int(series_context.get("sceneIndex") or 1)
+            variant = f"_{output_index:02d}" if max(1, int(settings.get("count", 1))) > 1 else ""
+            return folder / f"canh-{scene_idx:03d}__{job['id'][:8]}__{prefix}{variant}.{safe_suffix}"
         input_index = int(job["inputIndex"])
         variant = f"_{output_index:02d}" if max(1, int(settings.get("count", 1))) > 1 else ""
         return folder / f"{input_index:03d}__{job['id']}__{prefix}_{input_index:03d}{variant}.{safe_suffix}"

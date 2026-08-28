@@ -88,7 +88,7 @@ def test_series_context_uses_previous_actual_end_frame_before_locked_anchors(mon
     series.update_scene(item["id"], item["episodes"][0]["id"], first["id"], {"endFrame": str(end)})
     context = series.generation_context(item["id"], item["episodes"][0]["id"], second["id"], "keyframe")
     assert context["sourceFiles"] == [str(end), anchor_one["path"], anchor_two["path"]]
-    assert context["outputDir"].endswith("/tap-01/canh-002")
+    assert context["outputDir"].endswith("/tap-01")
 
 
 def test_series_video_uses_previous_actual_end_frame_before_approved_keyframe(monkeypatch, tmp_path):
@@ -132,12 +132,12 @@ def test_series_output_is_isolated_by_kind_episode_and_scene(monkeypatch, tmp_pa
     monkeypatch.setattr(service_module, "selected_or_default", lambda _tab, _selected: output_root)
     flow = service_module.FlowService()
     folder = flow._output_folder({"kind": "image", "seriesContext": {"seriesSlug": "purple-gate", "episodeIndex": 1, "sceneIndex": 2}})
-    assert folder == output_root / "series" / "purple-gate" / "image" / "tap-01" / "canh-002"
+    assert folder == output_root / "series" / "purple-gate" / "image" / "tap-01"
 
     anchor = flow._output_folder({"kind": "image", "seriesContext": {"artifact": "anchor", "seriesSlug": "purple-gate"}})
     video = flow._output_folder({"kind": "video", "seriesContext": {"seriesSlug": "purple-gate", "episodeIndex": 1, "sceneIndex": 2}})
     assert anchor == output_root / "series" / "purple-gate" / "image" / "anchors"
-    assert video == output_root / "series" / "purple-gate" / "video" / "tap-01" / "canh-002"
+    assert video == output_root / "series" / "purple-gate" / "video" / "tap-01"
 
 
 def test_deleting_a_series_removes_only_its_dedicated_assets_and_outputs(monkeypatch, tmp_path):
@@ -201,7 +201,7 @@ def test_one_series_runs_keyframe_video_and_continuity_through_the_api(monkeypat
     )
     assert keyframe.status_code == 200
     assert captured[-1]["kind"] == "image"
-    assert captured[-1]["seriesContext"]["outputDir"].endswith("tap-01/canh-001")
+    assert captured[-1]["seriesContext"]["outputDir"].endswith("tap-01")
     assert captured[-1]["sourceFiles"] and captured[-1]["sourceFiles"][0].endswith(".png")
 
     keyframe_file = tmp_path / "keyframe.png"; keyframe_file.write_bytes(b"keyframe")

@@ -431,7 +431,7 @@ def generation_context(series_id: str, episode_id: str, scene_id: str, artifact:
     if not prompt:
         raise ValueError("Scene prompt is required")
     slug = safe_output_part(series.get("slug") or series.get("title") or "series", "series")
-    output_dir = f"{slug}/tap-{int(episode.get('index') or 1):02d}/canh-{int(scene.get('index') or 1):03d}"
+    output_dir = f"{slug}/tap-{int(episode.get('index') or 1):02d}"
     context = {
         "seriesId": series_id,
         "episodeId": episode_id,
