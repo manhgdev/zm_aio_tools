@@ -1007,11 +1007,14 @@ def run(job_id: str) -> None:
             dh = max(10, round(float(dl.get("h", 4)) / 100 * src_h))
             delogo_prefix = f"delogo=x={dx}:y={dy}:w={dw}:h={dh},"
             _log(job_id, f"Delogo: {dw}×{dh} tại ({dx},{dy}) trên {src_w}×{src_h}")
-        # ponytail: delogo bật → force segments để check logo per-file
+        # ponytail: delogo trên ảnh tĩnh + zoom=off → áp trong final FFmpeg pass
+        # (seg_delogo = delogo_prefix khi sources is media), không cần pre-encode từng clip.
+        # Video input và zoom PHẢI dùng per-clip segment vì cần re-encode.
+        all_images = all(not is_video(p) for p in media[:len(durations)])
         need_segments = (
             zoom_mode != "off"
-            or bool(delogo_prefix)
-            or any(is_video(path) for path in media[:len(durations)])
+            or (bool(delogo_prefix) and not all_images)
+            or not all_images
         )
         sources = (
             _prepare_video_segments(
