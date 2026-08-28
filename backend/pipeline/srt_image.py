@@ -57,12 +57,26 @@ def _file_signature(value: str) -> dict | None:
     if not value:
         return None
     path = Path(value)
-    stat = path.stat()
-    return {
-        "path": str(path.resolve()),
-        "size": stat.st_size,
-        "mtimeNs": stat.st_mtime_ns,
-    }
+    if not path.is_file():
+        return None
+    try:
+        size = path.stat().st_size
+        h = hashlib.sha256()
+        h.update(str(size).encode("utf-8"))
+        if size <= 1024 * 1024:  # <= 1MB (text, srt, timeline, small images)
+            h.update(path.read_bytes())
+        else:
+            with path.open("rb") as stream:
+                h.update(stream.read(65536))
+                stream.seek(max(0, size - 65536))
+                h.update(stream.read(65536))
+        return {
+            "name": path.name,
+            "size": size,
+            "hash": h.hexdigest(),
+        }
+    except OSError:
+        return None
 
 
 def _render_cache_key(job: dict) -> str:
@@ -904,22 +918,48 @@ def _motion_filter(
     )
 
 
+DRAWING_CACHE_ROOT = CACHE_ROOT / "drawing"
+
+
+def _drawing_cache_key(source: Path, d_opts: dict) -> str:
+    sig = _file_signature(str(source)) or {}
+    payload = {"source": sig, "options": d_opts}
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _drawing_video_sources(job_id: str, media: list[Path], durations: list[float], options: dict, work: Path) -> list[Path]:
     drawing = options.get("drawing") if isinstance(options.get("drawing"), dict) else {}
     if not drawing.get("enabled"):
         return media
     rendered = list(media)
-    drawing_jobs: dict[str, tuple[int, Path]] = {}
+    DRAWING_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    drawing_jobs: dict[str, tuple[int, Path, str]] = {}
+    cached_count = 0
     for index, (source, duration) in enumerate(zip(media, durations), start=1):
         if is_video(source):
             continue
-        drawing_job = create_drawing_job(source.name, source, {
+        d_opts = {
             "duration": max(2, min(60, duration)), "fps": int(options.get("fps", 30)),
             "resolution": drawing.get("resolution", "1080p"), "mode": drawing.get("mode", "hand"),
             "tool": drawing.get("tool", "pencil"), "detail": drawing.get("detail", 72),
             "thickness": drawing.get("thickness", 2), "strokeOrder": drawing.get("strokeOrder", "natural"),
-        })
-        drawing_jobs[drawing_job["id"]] = (index, source)
+        }
+        ckey = _drawing_cache_key(source, d_opts)
+        cached_video = DRAWING_CACHE_ROOT / f"{ckey}.mp4"
+        target = work / f"drawing_{index:05d}.mp4"
+        if cached_video.is_file() and cached_video.stat().st_size > 0:
+            try:
+                shutil.copy2(cached_video, target)
+                rendered[index - 1] = target
+                cached_count += 1
+                continue
+            except OSError:
+                pass
+        drawing_job = create_drawing_job(source.name, source, d_opts)
+        drawing_jobs[drawing_job["id"]] = (index, source, ckey)
+    if cached_count > 0:
+        _log(job_id, f"Tái sử dụng {cached_count}/{len(durations)} ảnh vẽ tay từ cache")
     if not drawing_jobs:
         return rendered
     workers = start_drawing_batch(list(drawing_jobs))
@@ -934,13 +974,18 @@ def _drawing_video_sources(job_id: str, media: list[Path], durations: list[float
             state = get_drawing_job(drawing_job_id)
             if state and state.get("status") not in {"done", "error", "cancelled"}:
                 continue
-            index, source = drawing_jobs[drawing_job_id]
+            index, source, ckey = drawing_jobs[drawing_job_id]
             if not state or state.get("status") != "done":
                 for remaining_id in pending - {drawing_job_id}:
                     cancel_drawing_job(remaining_id)
                 raise RuntimeError(f"Không vẽ được ảnh {source.name}: {(state or {}).get('error') or 'job bị hủy'}")
             target = work / f"drawing_{index:05d}.mp4"
             shutil.copy2(state["output"], target)
+            cached_video = DRAWING_CACHE_ROOT / f"{ckey}.mp4"
+            try:
+                shutil.copy2(state["output"], cached_video)
+            except OSError:
+                pass
             rendered[index - 1] = target
             pending.remove(drawing_job_id)
             completed = len(drawing_jobs) - len(pending)
@@ -966,7 +1011,7 @@ def run(job_id: str) -> None:
             shutil.copy2(cached, output)
             published = _publish_render(job_id, output, str(job.get("name") or ""))
             _update(job_id, status="done", progress=100, outputSize=output.stat().st_size)
-            _log(job_id, f"Hoàn thành: {output} ({output.stat().st_size / 1_048_576:.1f} MB) · Đã thêm: {published.name}")
+            _log(job_id, f"Hoàn thành (từ cache): {output} ({output.stat().st_size / 1_048_576:.1f} MB) · Đã thêm: {published.name}")
             return
         if not owns_cache_key:
             return
@@ -1016,14 +1061,13 @@ def run(job_id: str) -> None:
             dh = max(10, round(float(dl.get("h", 4)) / 100 * src_h))
             delogo_prefix = f"delogo=x={dx}:y={dy}:w={dw}:h={dh},"
             _log(job_id, f"Delogo: {dw}×{dh} tại ({dx},{dy}) trên {src_w}×{src_h}")
-        # ponytail: delogo trên ảnh tĩnh + zoom=off → áp trong final FFmpeg pass
-        # (seg_delogo = delogo_prefix khi sources is media), không cần pre-encode từng clip.
-        # Video input và zoom PHẢI dùng per-clip segment vì cần re-encode.
-        all_images = all(not is_video(p) for p in media[:len(durations)])
+        # ponytail: drawing videos và ảnh tĩnh khi zoom=off không cần encode segment trung gian,
+        # áp dụng delogo trực tiếp trong final pass.
+        all_raw_still = all(not is_video(Path(p)) for p in job["images"][:len(durations)])
+        is_drawing = bool(opts.get("drawing", {}).get("enabled")) if isinstance(opts.get("drawing"), dict) else False
         need_segments = (
             zoom_mode != "off"
-            or (bool(delogo_prefix) and not all_images)
-            or not all_images
+            or (not all_raw_still and not is_drawing)
         )
         sources = (
             _prepare_video_segments(
@@ -1037,9 +1081,9 @@ def run(job_id: str) -> None:
         for source, duration in zip(sources, durations):
             escaped = source.resolve().as_posix().replace("'", r"'\''")
             lines.append(f"file '{escaped}'")
-            if sources is media:
+            if sources is media and not is_video(source):
                 lines.append(f"duration {duration:.3f}")
-        if sources is media:
+        if sources is media and not is_video(media[len(durations) - 1]):
             lines.append(f"file '{media[len(durations) - 1].resolve().as_posix()}'")
         concat.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
