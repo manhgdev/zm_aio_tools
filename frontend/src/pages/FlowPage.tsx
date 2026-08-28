@@ -2006,17 +2006,24 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                       : ["1:1", "16:9", "9:16", "4:3", "3:4"]
                   }
                 />
-                {createKind === "video" ? (
-                  <FlowSelect
-                    label={t("Thời lượng", "Duration")}
-                    value={settings.duration}
-                    onChange={(duration) =>
-                      setSettings((current) => ({ ...current, duration }))
-                    }
-                    options={["8", "10"]}
-                    suffix={t(" giây", " sec")}
-                  />
-                ) : (
+                {createKind === "video" ? (() => {
+                  const plan = selectedFlowAccount(accounts, settings.account)?.plan;
+                  const isOmni = settings.model === "Omni Flash";
+                  // ponytail: Pro plan only exposes duration for Omni Flash
+                  const showDuration = plan === "Ultra" || isOmni;
+                  const durationOptions = isOmni ? ["4", "6", "8", "10"] : ["4", "6", "8"];
+                  return showDuration ? (
+                    <FlowSelect
+                      label={t("Thời lượng", "Duration")}
+                      value={durationOptions.includes(settings.duration) ? settings.duration : "8"}
+                      onChange={(duration) =>
+                        setSettings((current) => ({ ...current, duration }))
+                      }
+                      options={durationOptions}
+                      suffix={t(" giây", " sec")}
+                    />
+                  ) : null;
+                })() : (
                   <FlowSelect
                     label={t("Độ phân giải", "Resolution")}
                     value={settings.resolution}
