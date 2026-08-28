@@ -2221,31 +2221,34 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 return (
                   <div key={groupKey} className="flow-queue-group-item">
                     <header className={`flow-queue-kind-header${isCollapsed ? " is-collapsed" : ""}`}>
-                      <button
-                        type="button"
-                        className="flow-queue-folder-toggle"
-                        onClick={() => toggleFolderCollapsed(groupKey)}
-                        title={isCollapsed ? t("Mở rộng danh sách", "Expand list") : t("Thu nhỏ danh sách", "Collapse list")}
-                        aria-expanded={!isCollapsed}
-                        aria-label={isCollapsed ? t("Mở rộng danh sách", "Expand list") : t("Thu nhỏ danh sách", "Collapse list")}
-                      >
-                        <IconChevronDown
-                          size={15}
-                          style={{
-                            transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
-                            transition: "transform 180ms cubic-bezier(0.4, 0, 0.2, 1)",
-                          }}
-                        />
-                      </button>
-                      <div
-                        className="flow-queue-folder-path"
-                        onClick={() => toggleFolderCollapsed(groupKey)}
-                        title={folderPathText}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <small>
-                          {t("Thư mục kết quả", "Output folder")}: {folderPathText}
-                        </small>
+                      <div className="flow-queue-header-row">
+                        <button
+                          type="button"
+                          className="flow-queue-folder-toggle"
+                          onClick={() => toggleFolderCollapsed(groupKey)}
+                          aria-expanded={!isCollapsed}
+                          aria-label={isCollapsed ? t("Mở rộng danh sách", "Expand list") : t("Thu nhỏ danh sách", "Collapse list")}
+                        >
+                          <IconChevronDown
+                            size={14}
+                            style={{
+                              transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                              transition: "transform 180ms cubic-bezier(0.4, 0, 0.2, 1)",
+                            }}
+                          />
+                        </button>
+                        <div
+                          className="flow-queue-folder-path"
+                          onClick={() => toggleFolderCollapsed(groupKey)}
+                          title={folderPathText}
+                        >
+                          <small>{folderPathText}</small>
+                        </div>
+                        <div className="flow-queue-folder-actions">
+                          <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
+                          <button className="flow-text-button is-warning" type="button" disabled={!group.jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={() => cancelFolderJobs(group.outputDir, group.jobs)}>{t("Hủy", "Cancel")}</button>
+                          <button className="flow-text-button is-danger" type="button" onClick={() => deleteFolderJobs(group.outputDir, group.jobs)}>{t("Xóa", "Delete")}</button>
+                        </div>
                       </div>
                       <div className="flow-queue-folder-summary">
                         <span>{t("Tiến độ tổng", "Overall progress")}</span>
@@ -2261,11 +2264,6 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                         </div>
                         <strong>{summary.progress}%</strong>
                         <small>{t(`${summary.completed}/${summary.total} hoàn thành`, `${summary.completed}/${summary.total} completed`)}</small>
-                      </div>
-                      <div className="flow-queue-folder-actions">
-                        <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
-                        <button className="flow-text-button is-warning" type="button" disabled={!group.jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={() => cancelFolderJobs(group.outputDir, group.jobs)}>{t("Hủy", "Cancel")}</button>
-                        <button className="flow-text-button is-danger" type="button" onClick={() => deleteFolderJobs(group.outputDir, group.jobs)}>{t("Xóa", "Delete")}</button>
                       </div>
                     </header>
                     {!isCollapsed && group.jobs.map((job) => (

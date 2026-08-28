@@ -535,103 +535,103 @@
   position: sticky;
   top: 0;
   z-index: 5;
-  display: grid;
-  grid-template-columns: auto minmax(180px, 0.45fr) minmax(300px, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  min-height: 38px;
-  padding: 4px 10px 4px 8px;
-  border: 1px solid var(--line);
+  gap: 0;
+  padding: 5px 6px 4px 0;
   border-left: 3px solid var(--primary);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 95%, var(--background));
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-  backdrop-filter: blur(8px);
-  transition: all 160ms ease;
+  background: var(--background);
+  transition: border-color 160ms ease;
 }
 .flow-queue-kind-header.is-collapsed {
-  border-style: dashed;
-  background: var(--surface);
-  box-shadow: none;
+  border-left-style: dashed;
+  border-left-color: var(--muted-foreground);
+}
+/* Row 1: toggle + path + actions */
+.flow-queue-header-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding-left: 6px;
 }
 .flow-queue-folder-toggle {
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  width: 24px !important;
-  height: 24px !important;
-  min-height: 24px !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-height: 20px !important;
   padding: 0 !important;
-  border: 1px solid var(--line) !important;
-  border-radius: 5px !important;
-  background: var(--surface) !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  background: transparent !important;
   color: var(--muted-foreground) !important;
   cursor: pointer;
-  transition: all 150ms ease;
   flex-shrink: 0;
 }
 .flow-queue-folder-toggle:hover {
   background: var(--muted) !important;
   color: var(--ink) !important;
-  border-color: var(--primary) !important;
-}
-.flow-queue-kind-header > div {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-.flow-queue-kind-header > .flow-queue-folder-actions {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  min-width: 158px;
-  justify-content: flex-end;
 }
 .flow-queue-folder-path {
-  align-self: stretch;
-  align-content: center;
-  padding-right: 12px;
-  border-right: 2px solid color-mix(in srgb, var(--primary) 35%, var(--line));
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
 }
 .flow-queue-folder-path small {
   display: block;
   overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.flow-queue-folder-summary {
-  display: grid !important;
-  grid-template-columns: auto minmax(120px, 1fr) 34px minmax(90px, auto);
+.flow-queue-folder-actions {
+  display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 8px !important;
-  padding: 0 8px;
+  gap: 4px;
+  margin-left: auto;
+}
+.flow-queue-folder-actions .flow-text-button.is-warning {
+  color: #c57913 !important;
+}
+.flow-queue-folder-actions .flow-text-button.is-danger {
+  color: #c93646 !important;
+}
+/* Row 2: progress bar */
+.flow-queue-folder-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 6px 1px 32px;
 }
 .flow-queue-folder-summary > span,
 .flow-queue-folder-summary > strong,
 .flow-queue-folder-summary > small {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   line-height: 1;
   white-space: nowrap;
 }
 .flow-queue-folder-summary > span {
   color: var(--muted-foreground);
-  font-weight: 700;
 }
 .flow-queue-folder-summary > strong {
-  min-width: 34px;
   color: var(--primary);
   font-variant-numeric: tabular-nums;
+  min-width: 28px;
   text-align: right;
 }
 .flow-queue-folder-summary > small {
-  text-align: left;
-  min-width: 90px;
+  color: var(--muted-foreground);
 }
 .flow-queue-folder-progress {
-  width: 100%;
-  max-width: 520px;
-  height: 4px;
+  flex: 1;
+  height: 3px;
   overflow: hidden;
   border-radius: 99px;
   background: var(--line);
@@ -643,12 +643,6 @@
   background: var(--primary);
   transition: width 180ms ease;
 }
-.flow-queue-folder-actions .flow-text-button.is-warning {
-  color: #c57913 !important;
-}
-.flow-queue-folder-actions .flow-text-button.is-danger {
-  color: #c93646 !important;
-}
 .flow-queue-kind-header small,
 .flow-job-folder {
   overflow: hidden;
@@ -656,13 +650,6 @@
   font-size: 0.65rem;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.flow-queue-kind-header small {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
 .flow-queue-job {
   display: grid;
@@ -1814,14 +1801,6 @@
   font-size: 0.75rem;
 }
 @media (max-width: 980px) {
-  .flow-queue-kind-header {
-    grid-template-columns: minmax(220px, 0.7fr) minmax(300px, 1fr);
-  }
-  .flow-queue-folder-actions {
-    grid-column: 1 / -1;
-    min-width: 0 !important;
-    justify-self: end;
-  }
   .flow-log-row {
     grid-template-columns: 130px 62px minmax(220px, 1fr);
   }
@@ -1830,13 +1809,6 @@
   }
 }
 @media (max-width: 720px) {
-  .flow-queue-kind-header {
-    grid-template-columns: 1fr;
-  }
-  .flow-queue-folder-actions {
-    grid-column: auto;
-    justify-self: start;
-  }
   .flow-rail,
   .flow-rail.is-open {
     width: 52px;
