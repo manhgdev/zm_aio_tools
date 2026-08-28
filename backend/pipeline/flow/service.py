@@ -492,17 +492,28 @@ class FlowService:
                 raise RuntimeError(f"FLOW_MODEL_UNAVAILABLE: {model}")
 
     async def _prepare_ui_model(self, page, kind: str, model: str) -> None:
-        """Select a current Flow UI model for models without a stable REST key."""
-        await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=10_000)
+        """Select a current Flow UI model for models without a stable REST key.
+
+        Strategy:
+        1. Ensure settings panel is open (click the x1–x4 pill if tabs not visible).
+        2. Switch to the correct mode tab (Image / Video).
+        3. Click the model family selector and pick the right option.
+        """
+        await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=15_000)
+
+        # Step 1: Make sure settings panel is open (tabs visible)
         mode_pattern = re.compile(r"Image|Hình ảnh", re.I) if kind == "image" else re.compile(r"Video", re.I)
-        mode_matches = page.locator('[role="tab"]').filter(has_text=mode_pattern)
-        mode_tab = None
-        for index in range(await mode_matches.count()):
-            candidate = mode_matches.nth(index)
-            if await candidate.is_visible():
-                mode_tab = candidate
-                break
+
+        async def _visible_mode_tab():
+            for index in range(await page.locator('[role="tab"]').filter(has_text=mode_pattern).count()):
+                candidate = page.locator('[role="tab"]').filter(has_text=mode_pattern).nth(index)
+                if await candidate.is_visible():
+                    return candidate
+            return None
+
+        mode_tab = await _visible_mode_tab()
         if mode_tab is None:
+            # Panel not open — find and click the generation settings pill (x1–x4 count label)
             pills = page.locator('button[aria-haspopup="menu"]')
             trigger = None
             for index in range(await pills.count() - 1, -1, -1):
@@ -512,21 +523,27 @@ class FlowService:
                     trigger = candidate
                     break
             if trigger is None:
+                # Last chance: just click the last visible menu pill
+                for index in range(await pills.count() - 1, -1, -1):
+                    candidate = pills.nth(index)
+                    if await candidate.is_visible():
+                        trigger = candidate
+                        break
+            if trigger is None:
                 raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
             await trigger.click()
-            await asyncio.sleep(0.5)
-            mode_matches = page.locator('[role="tab"]').filter(has_text=mode_pattern)
-            for index in range(await mode_matches.count()):
-                candidate = mode_matches.nth(index)
-                if await candidate.is_visible():
-                    mode_tab = candidate
-                    break
+            await asyncio.sleep(0.7)
+            mode_tab = await _visible_mode_tab()
+
         if mode_tab is None:
             raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
+
+        # Step 2: Switch to Image / Video mode tab
         if await mode_tab.get_attribute("aria-selected") != "true":
             await mode_tab.click()
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.6)
 
+        # Step 3: Find and click model selector for this family
         family = re.compile(r"Nano Banana|Imagen", re.I) if kind == "image" else re.compile(r"Omni|Veo", re.I)
         selectors = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
         selector = None
@@ -539,7 +556,7 @@ class FlowService:
             raise RuntimeError(f"FLOW_UI_CHANGED: {kind} model selector was not found")
         if not _match_model_choice(model, await selector.inner_text()):
             await selector.click()
-            await asyncio.sleep(0.35)
+            await asyncio.sleep(0.5)
             choices = page.locator('[role="menuitem"], [role="option"]')
             selected = False
             for index in range(await choices.count()):
@@ -550,7 +567,13 @@ class FlowService:
                     selected = True
                     break
             if not selected:
-                raise RuntimeError(f"FLOW_MODEL_UNAVAILABLE: {model}")
+                # Collect visible choices for diagnostic
+                visible_texts = []
+                for index in range(await choices.count()):
+                    choice = choices.nth(index)
+                    if await choice.is_visible():
+                        visible_texts.append((await choice.inner_text()).strip())
+                raise RuntimeError(f"FLOW_MODEL_UNAVAILABLE: {model} — available: {visible_texts}")
 
     async def _prepare_ui_format(self, page, ratio: str, duration: str | None = None) -> None:
         """Select current numeric Flow tabs and verify the requested format.
