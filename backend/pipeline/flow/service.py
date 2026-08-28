@@ -39,6 +39,26 @@ def _job_concurrency(settings: dict[str, Any]) -> int:
     return max(1, min(_MAX_CONCURRENT_JOBS_PER_ACCOUNT, value))
 
 
+def _match_model_choice(requested: str, text: str) -> bool:
+    req = requested.strip().lower()
+    t = re.sub(r"\s+", " ", text).strip().lower()
+    if req in t:
+        return True
+    if req == "omni flash":
+        return "omni" in t or "flash" in t
+    if "lower priority" in req:
+        return "lower priority" in t or "lite [lower priority]" in t
+    if req == "veo 3.1 - lite":
+        return "lite" in t and "lower" not in t
+    if req == "veo 3.1 - fast":
+        return "fast" in t
+    if req == "veo 3.1 - quality":
+        return "quality" in t
+    if "nano banana" in req:
+        return "nano" in t or "banana" in t or "imagen" in t
+    return False
+
+
 class FlowService:
     def __init__(self) -> None:
         self._account_active: dict[str, int] = {}
@@ -456,7 +476,7 @@ class FlowService:
             raise RuntimeError("FLOW_UI_CHANGED: video model selector was not found")
         model_button = model_buttons.last
         current_model = (await model_button.inner_text()).strip()
-        if model.lower() not in current_model.lower():
+        if not _match_model_choice(model, current_model):
             await model_button.click()
             await asyncio.sleep(0.25)
             choices = page.locator('[role="menuitem"], [role="option"]')
@@ -464,7 +484,7 @@ class FlowService:
             for index in range(await choices.count()):
                 choice = choices.nth(index)
                 text = (await choice.inner_text()).strip()
-                if await choice.is_visible() and model.lower() in text.lower():
+                if await choice.is_visible() and _match_model_choice(model, text):
                     await choice.click()
                     selected = True
                     break
@@ -517,7 +537,7 @@ class FlowService:
                 break
         if selector is None:
             raise RuntimeError(f"FLOW_UI_CHANGED: {kind} model selector was not found")
-        if model.lower() not in (await selector.inner_text()).lower():
+        if not _match_model_choice(model, await selector.inner_text()):
             await selector.click()
             await asyncio.sleep(0.35)
             choices = page.locator('[role="menuitem"], [role="option"]')
@@ -525,7 +545,7 @@ class FlowService:
             for index in range(await choices.count()):
                 choice = choices.nth(index)
                 text = (await choice.inner_text()).strip()
-                if await choice.is_visible() and model.lower() in text.lower():
+                if await choice.is_visible() and _match_model_choice(model, text):
                     await choice.click()
                     selected = True
                     break
