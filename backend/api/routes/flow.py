@@ -380,6 +380,7 @@ def series_scene_generate(series_id: str, episode_id: str, scene_id: str, body: 
         context = series.generation_context(series_id, episode_id, scene_id, body.artifact, body.promptOverride)
         payload = {
             "prompts": [context["prompt"]],
+            "inputIndex": int(context.get("sceneIndex") or 1),
             "kind": "image" if body.artifact == "keyframe" else "video",
             "mode": "reference" if body.artifact == "keyframe" and context.get("sourceFiles") else "text",
             "accountId": body.accountId,

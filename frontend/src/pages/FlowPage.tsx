@@ -646,7 +646,10 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
         }
         else grouped.set(key, { kind: job.kind, outputDir, outputFolder, displayOutputFolder, jobs: [job] });
       });
-    return [...grouped.values()];
+    return [...grouped.values()].map((group) => ({
+      ...group,
+      jobs: [...group.jobs].sort((a, b) => a.index - b.index || a.createdAt - b.createdAt),
+    }));
   }, [isDesktopApp, jobs]);
   const queueKindGroups = useMemo(() => (
     (["video", "image"] as const)

@@ -141,8 +141,10 @@ class SeriesRunner:
             }
             if artifact == "keyframe":
                 job_settings["model"] = image_model
+            input_index = int(scene.get("index") or ctx.get("sceneIndex") or 1)
             jobs = service.enqueue({
                 "prompts": [ctx["prompt"]],
+                "inputIndex": input_index,
                 "kind": "image" if artifact == "keyframe" else "video",
                 "mode": "reference" if ctx.get("sourceFiles") else "text",
                 "accountId": account_id,

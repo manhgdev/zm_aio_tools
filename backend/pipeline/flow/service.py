@@ -363,8 +363,9 @@ class FlowService:
         created = []
         for index, prompt in enumerate(prompts, 1):
             now = time.time()
+            job_input_index = int(payload.get("inputIndex") or series_context.get("sceneIndex") or index)
             job = {
-                "id": uuid.uuid4().hex[:12], "inputIndex": index, "kind": kind,
+                "id": uuid.uuid4().hex[:12], "inputIndex": job_input_index, "kind": kind,
                 "mode": mode, "prompt": prompt, "accountId": account_id,
                 "inputType": input_type,
                 "settings": settings, "sourceFiles": source_files,
@@ -378,7 +379,7 @@ class FlowService:
             if series_context:
                 from . import series
                 series.register_job(job)
-            self._log("info", "job_queued", job_id=job["id"], account_id=account_id, details={"kind": job["kind"], "inputIndex": index})
+            self._log("info", "job_queued", job_id=job["id"], account_id=account_id, details={"kind": job["kind"], "inputIndex": job_input_index})
             created.append(job)
             threading.Thread(target=self._run_sync, args=(job["id"],), daemon=True, name=f"flow-job-{job['id']}").start()
         return created
