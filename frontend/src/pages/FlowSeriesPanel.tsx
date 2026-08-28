@@ -20,6 +20,7 @@ export type SeriesGenSettings = {
   ratio: string
   duration: string
   resolution: string
+  concurrency?: string
 }
 export type FlowAccount = { id: string; label: string; status: string; plan?: 'Ultra' | 'Pro' }
 
@@ -99,6 +100,7 @@ function readSeriesSettings(): SeriesGenSettings {
         ratio: flow.ratio || '16:9',
         duration: flow.duration || '8',
         resolution: flow.resolution || '1K',
+        concurrency: flow.concurrency || '3',
       }
     }
   } catch {}
@@ -170,6 +172,7 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
       ratio: saved.ratio || '16:9',
       duration: saved.duration || '8',
       resolution: saved.resolution || '1K',
+      concurrency: saved.concurrency || '3',
     }
   })
 
@@ -253,7 +256,7 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
     const accountId = seriesSettings.accountId || accounts[0]?.id || ''
     if (!accountId) { toast.error(t('Cần chọn tài khoản Flow.', 'A Flow account is required.')); return }
     try {
-      const raw = await request<{ runId: string; status: string }>(`/series/${selected.id}/run`, {
+      const raw = await request<{ runId: string; status: string; total?: number; enqueued?: number }>(`/series/${selected.id}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -264,14 +267,16 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
             ratio: seriesSettings.ratio,
             duration: seriesSettings.duration,
             resolution: seriesSettings.resolution,
+            concurrency: seriesSettings.concurrency || '3',
           },
           imageModel,
           autoApprove,
           mode: autoMode,
         }),
       })
-      setActiveRun({ runId: raw.runId, status: raw.status, total: 0, done: 0, currentSceneId: '', currentStep: '', errors: [] })
-      toast.success(t('Đã bắt đầu tự động hoá.', 'Automation started.'))
+      setActiveRun({ runId: raw.runId, status: raw.status, total: raw.total || 0, done: 0, currentSceneId: '', currentStep: '', errors: [] })
+      toast.success(t(`Đã đẩy ${raw.enqueued || raw.total || ''} cảnh vào Hàng đợi Flow.`, `Enqueued ${raw.enqueued || raw.total || ''} scenes into Flow Queue.`))
+      void refresh(selected.id)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     }
@@ -862,6 +867,18 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
                           ) : (
                             <option value="8">8s</option>
                           )}
+                        </select>
+                      </div>
+                      <div className="fsp-auto-field fsp-field-xs">
+                        <label>{t('Luồng', 'Threads')}</label>
+                        <select
+                          value={seriesSettings.concurrency || '3'}
+                          onChange={(e) => saveSeriesSettings({ concurrency: e.target.value })}
+                          aria-label={t('Luồng chạy song song', 'Parallel threads')}
+                        >
+                          {['1', '2', '3', '4', '5', '6'].map((c) => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
                         </select>
                       </div>
                       <div className="fsp-auto-field">

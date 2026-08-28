@@ -451,9 +451,14 @@ def generation_context(series_id: str, episode_id: str, scene_id: str, artifact:
             context["sourceFiles"] = [str(end_frame)]
             return context
         keyframe = Path(str(scene.get("approvedKeyframe") or ""))
-        if not keyframe.is_file():
-            raise ValueError("Approve a keyframe before generating this scene video")
-        context["sourceFiles"] = [str(keyframe)]
+        if keyframe.is_file():
+            context["sourceFiles"] = [str(keyframe)]
+            return context
+        # Fallback to series anchor assets or reference assets if no approved keyframe
+        anchor_ids = [str(value) for value in series.get("anchorAssets") or []]
+        requested_ids = [str(value) for value in scene.get("referenceAssetIds") or []] or anchor_ids
+        source_paths = _asset_paths(series, requested_ids)
+        context["sourceFiles"] = source_paths[:1] if source_paths else []
         return context
     anchor_ids = [str(value) for value in series.get("anchorAssets") or []]
     locked_ids = [

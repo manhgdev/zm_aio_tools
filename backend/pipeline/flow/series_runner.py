@@ -105,6 +105,7 @@ class SeriesRunner:
         mode: str = "full",
     ) -> str:
         from . import series as series_mod
+        from .service import service
 
         s = series_mod.get_series(series_id)
         if not s:
@@ -120,8 +121,6 @@ class SeriesRunner:
                 status = str(scene.get("status") or "draft")
                 if status in _SKIP_STATUSES:
                     continue
-                if mode == "videos_only" and not scene.get("approvedKeyframe"):
-                    continue
                 scenes_to_run.append((dict(episode), dict(scene)))
 
         run_id = _id()
@@ -129,13 +128,32 @@ class SeriesRunner:
         with self._guard:
             self._runs[run_id] = run
 
-        threading.Thread(
-            target=self._orchestrate,
-            args=(run, series_id, scenes_to_run, account_id, settings, image_model, auto_approve, mode),
-            daemon=True,
-            name=f"series-run-{run_id}",
-        ).start()
+        artifact = "keyframe" if mode == "keyframes_only" else "video"
+        for episode, scene in scenes_to_run:
+            try:
+                ctx = series_mod.generation_context(series_id, str(episode["id"]), str(scene["id"]), artifact)
+            except Exception:
+                continue
+            job_settings = {
+                **settings,
+                "outputDir": ctx["outputDir"],
+                "count": 1,
+            }
+            if artifact == "keyframe":
+                job_settings["model"] = image_model
+            jobs = service.enqueue({
+                "prompts": [ctx["prompt"]],
+                "kind": "image" if artifact == "keyframe" else "video",
+                "mode": "reference" if ctx.get("sourceFiles") else "text",
+                "accountId": account_id,
+                "settings": job_settings,
+                "sourceFiles": ctx.get("sourceFiles") or [],
+                "seriesContext": ctx,
+            })
+            if jobs:
+                series_mod.register_job(jobs[0])
 
+        run.mark_done()
         return run_id
 
     def _process_scene(

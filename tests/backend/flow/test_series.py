@@ -95,11 +95,6 @@ def test_series_video_uses_previous_actual_end_frame_before_approved_keyframe(mo
     monkeypatch.setattr(store, "ROOT", tmp_path / "flow-store")
     item = series.create_from_script(_script(1, 2))["series"]
     episode, first, scene = item["episodes"][0], *item["episodes"][0]["scenes"]
-    try:
-        series.generation_context(item["id"], episode["id"], scene["id"], "video")
-        assert False, "video should need an approved keyframe"
-    except ValueError:
-        pass
     keyframe = tmp_path / "keyframe.png"; keyframe.write_bytes(b"image")
     series.approve_keyframe(item["id"], episode["id"], scene["id"], str(keyframe))
     end = tmp_path / "end.png"; end.write_bytes(b"image")
