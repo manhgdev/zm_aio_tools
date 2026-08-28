@@ -2010,20 +2010,25 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   const plan = selectedFlowAccount(accounts, settings.account)?.plan;
                   const isOmni = settings.model === "Omni Flash";
                   const isQuality = settings.model === "Veo 3.1 - Quality";
-                  // ponytail: Lite, Lite [Lower Priority], Fast are fixed 8s. Only Omni Flash & Ultra Quality have selectable duration.
-                  const showDuration = isOmni || (plan === "Ultra" && isQuality);
-                  const durationOptions = isOmni ? ["4", "6", "8", "10"] : ["4", "6", "8"];
-                  return showDuration ? (
+                  const isSelectable = isOmni || (plan === "Ultra" && isQuality);
+                  const durationOptions = isOmni
+                    ? ["4", "6", "8", "10"]
+                    : isQuality && plan === "Ultra"
+                      ? ["4", "6", "8"]
+                      : ["8"];
+                  const currentValue = durationOptions.includes(settings.duration) ? settings.duration : "8";
+                  return (
                     <FlowSelect
                       label={t("Thời lượng", "Duration")}
-                      value={durationOptions.includes(settings.duration) ? settings.duration : "8"}
+                      value={currentValue}
                       onChange={(duration) =>
                         setSettings((current) => ({ ...current, duration }))
                       }
                       options={durationOptions}
+                      disabled={!isSelectable}
                       suffix={t(" giây", " sec")}
                     />
-                  ) : null;
+                  );
                 })() : (
                   <FlowSelect
                     label={t("Độ phân giải", "Resolution")}
@@ -2854,6 +2859,7 @@ function FlowSelect({
   options,
   suffix = "",
   online = false,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -2861,6 +2867,7 @@ function FlowSelect({
   options: string[];
   suffix?: string;
   online?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <label>
@@ -2869,6 +2876,7 @@ function FlowSelect({
         <select
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          disabled={disabled}
         >
           {options.map((option) => (
             <option key={option} value={option}>
