@@ -532,9 +532,9 @@
 }
 .flow-queue-kind-header {
   display: grid;
-  grid-template-columns: minmax(260px, 0.58fr) minmax(440px, 1fr) auto;
+  grid-template-columns: minmax(180px, 0.45fr) minmax(360px, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-height: 34px;
   padding: 3px 0 3px 9px;
   border-left: 2px solid color-mix(in srgb, var(--primary) 45%, transparent);
@@ -548,7 +548,7 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 158px;
   justify-content: flex-end;
 }
@@ -566,7 +566,7 @@
 }
 .flow-queue-folder-summary {
   display: grid !important;
-  grid-template-columns: auto minmax(160px, 1fr) auto auto;
+  grid-template-columns: auto minmax(120px, 1fr) 34px minmax(90px, auto);
   align-items: center;
   gap: 8px !important;
   padding: 0 8px;
@@ -583,13 +583,14 @@
   font-weight: 700;
 }
 .flow-queue-folder-summary > strong {
-  min-width: 30px;
+  min-width: 34px;
   color: var(--primary);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 .flow-queue-folder-summary > small {
   text-align: left;
+  min-width: 90px;
 }
 .flow-queue-folder-progress {
   width: 100%;
