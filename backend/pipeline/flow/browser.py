@@ -61,9 +61,15 @@ class BrowserManager:
 
     async def stop(self) -> None:
         if self._ctx:
-            await self._ctx.close()
+            try:
+                await self._ctx.close()
+            except Exception:
+                pass
         if self._pw:
-            await self._pw.stop()
+            try:
+                await self._pw.stop()
+            except Exception:
+                pass
         self._ctx = None
         self._pw = None
         self._page = None
