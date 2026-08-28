@@ -1818,6 +1818,12 @@ html.dark .tts-wave-box {
   font-weight: 600;
 }
 
+.tts-dash-item[data-dash-id="export"],
+#tts-export,
+.tts-export-grid {
+  overflow: visible;
+}
+
 .tts-export-menu-wrap {
   position: relative;
 }
@@ -1832,7 +1838,41 @@ html.dark .tts-wave-box {
   right: auto;
   top: auto;
   bottom: calc(100% + 8px);
-  min-width: 190px;
+  min-width: 210px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--tts-line);
+  background: var(--tts-card);
+  box-shadow: 0 12px 28px -4px rgba(15, 23, 42, 0.2), 0 4px 12px -2px rgba(15, 23, 42, 0.1);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tts-export-srt-menu button {
+  width: 100% !important;
+  height: auto !important;
+  min-height: 32px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  padding: 8px 12px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  color: var(--tts-ink) !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  transition: background-color 0.15s ease, color 0.15s ease !important;
+}
+
+.tts-export-srt-menu button:hover {
+  background: var(--tts-blue-soft) !important;
+  color: var(--tts-blue) !important;
 }
 
 /* History */

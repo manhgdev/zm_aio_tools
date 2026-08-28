@@ -2126,7 +2126,7 @@ export default function TtsStudio({
                   aria-expanded={mainSrtMenuOpen}
                   onClick={() => setMainSrtMenuOpen((open) => !open)}
                 >
-                  <IconList size={14} /> Xuất SRT cho CapCut
+                  <IconList size={14} /> {t('Xuất SRT cho CapCut', 'Export SRT for CapCut')}
                 </button>
                 {mainSrtMenuOpen && jobId && (
                   <div className="tts-dl-menu tts-export-srt-menu" role="menu">
@@ -2135,11 +2135,14 @@ export default function TtsStudio({
                         key={opt.id}
                         type="button"
                         role="menuitem"
-                        onClick={() =>
-                          isDesktopApp
-                            ? void revealTtsOutput('srt', opt.id)
-                            : triggerDownload(`/api/tts/studio/jobs/${jobId}/subs.srt?style=${opt.id}&t=${Date.now()}`, `${webOutputStem}-${opt.id}.srt`)
-                        }
+                        onClick={() => {
+                          setMainSrtMenuOpen(false)
+                          if (isDesktopApp) {
+                            void revealTtsOutput('srt', opt.id)
+                          } else {
+                            triggerDownload(`/api/tts/studio/jobs/${jobId}/subs.srt?style=${opt.id}&t=${Date.now()}`, `${webOutputStem}-${opt.id}.srt`)
+                          }
+                        }}
                       >
                         {opt.label}
                       </button>
