@@ -2009,8 +2009,9 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 {createKind === "video" ? (() => {
                   const plan = selectedFlowAccount(accounts, settings.account)?.plan;
                   const isOmni = settings.model === "Omni Flash";
-                  // ponytail: Pro plan only exposes duration for Omni Flash
-                  const showDuration = plan === "Ultra" || isOmni;
+                  const isQuality = settings.model === "Veo 3.1 - Quality";
+                  // ponytail: Lite, Lite [Lower Priority], Fast are fixed 8s. Only Omni Flash & Ultra Quality have selectable duration.
+                  const showDuration = isOmni || (plan === "Ultra" && isQuality);
                   const durationOptions = isOmni ? ["4", "6", "8", "10"] : ["4", "6", "8"];
                   return showDuration ? (
                     <FlowSelect

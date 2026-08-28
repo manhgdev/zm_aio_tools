@@ -835,14 +835,33 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
                       <div className="fsp-auto-field fsp-field-xs">
                         <label>{t('Thời lượng', 'Duration')}</label>
                         <select
-                          value={seriesSettings.duration}
+                          value={
+                            seriesSettings.model === 'Omni Flash'
+                              ? seriesSettings.duration
+                              : seriesSettings.model === 'Veo 3.1 - Quality'
+                                ? (['4', '6', '8'].includes(seriesSettings.duration) ? seriesSettings.duration : '8')
+                                : '8'
+                          }
                           onChange={(e) => saveSeriesSettings({ duration: e.target.value })}
                           aria-label={t('Thời lượng', 'Duration')}
+                          disabled={seriesSettings.model !== 'Omni Flash' && seriesSettings.model !== 'Veo 3.1 - Quality'}
                         >
-                          <option value="4">4s</option>
-                          <option value="6">6s</option>
-                          <option value="8">8s</option>
-                          <option value="10">10s</option>
+                          {seriesSettings.model === 'Omni Flash' ? (
+                            <>
+                              <option value="4">4s</option>
+                              <option value="6">6s</option>
+                              <option value="8">8s</option>
+                              <option value="10">10s</option>
+                            </>
+                          ) : seriesSettings.model === 'Veo 3.1 - Quality' ? (
+                            <>
+                              <option value="4">4s</option>
+                              <option value="6">6s</option>
+                              <option value="8">8s</option>
+                            </>
+                          ) : (
+                            <option value="8">8s</option>
+                          )}
                         </select>
                       </div>
                       <div className="fsp-auto-field">
