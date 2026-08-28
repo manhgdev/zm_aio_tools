@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import './SrtImagePage.css'
 import { localize, useLocale } from '../app/i18n'
 import { BackTitle } from '../shared/components/BackTitle'
@@ -267,8 +268,11 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
       if (!response.ok) throw new Error(await response.text())
       setLogStart(0)
       setJob(await response.json())
+      toast.success(preview ? t('Đang bắt đầu tạo Preview…', 'Starting preview…') : t('Đang bắt đầu render…', 'Starting render…'))
     } catch (error) {
-      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: String(error) })
+      const msg = String(error)
+      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: msg })
+      toast.error(msg)
     } finally {
       setSending(false)
     }
@@ -278,13 +282,17 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
     if (!job?.id) return
     await fetch(`/api/srt-image/jobs/${job.id}/cancel`, { method: 'POST' })
     setJob({ ...job, status: 'cancelled' })
+    toast.success(t('Đã gửi yêu cầu hủy render.', 'Render cancellation requested.'))
   }
 
   async function togglePause() {
     if (!job?.id) return
     const paused = job.status !== 'paused'
     const response = await fetch(`/api/srt-image/jobs/${job.id}/pause?paused=${paused}`, { method: 'POST' })
-    if (response.ok) setJob({ ...job, status: paused ? 'paused' : 'processing' })
+    if (response.ok) {
+      setJob({ ...job, status: paused ? 'paused' : 'processing' })
+      toast.info(paused ? t('Đã tạm dừng render.', 'Render paused.') : t('Đang tiếp tục render.', 'Render resumed.'))
+    }
   }
 
   async function openFolder() {
@@ -293,7 +301,11 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
     else if (job?.id) params.set('job_id', job.id)
     const query = params.size ? `?${params}` : ''
     const response = await fetch(`/api/srt-image/open-folder${query}`, { method: 'POST' })
-    if (!response.ok) setJob(job ? { ...job, error: await response.text() } : job)
+    if (!response.ok) {
+      const err = await response.text()
+      setJob(job ? { ...job, error: err } : job)
+      toast.error(err)
+    }
   }
 
   async function chooseMediaFolder() {
@@ -301,9 +313,14 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
       const response = await fetch('/api/system/pick-media-folder', { method: 'POST' })
       if (!response.ok) throw new Error(await response.text())
       const result = await response.json()
-      if (result.ok && result.path) setMediaFolder(String(result.path))
+      if (result.ok && result.path) {
+        setMediaFolder(String(result.path))
+        toast.success(t('Đã chọn thư mục media.', 'Media folder selected.'))
+      }
     } catch (error) {
-      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: `Không chọn được thư mục: ${String(error)}` })
+      const msg = `Không chọn được thư mục: ${String(error)}`
+      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: msg })
+      toast.error(msg)
     }
   }
 
@@ -314,16 +331,28 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
       const result = await response.json()
       if (!result.ok || !result.path) return
       const path = String(result.path)
-      if (kind === 'audio') setAudioPath(path)
+      if (kind === 'audio') {
+        setAudioPath(path)
+        toast.success(t('Đã chọn file audio.', 'Audio file selected.'))
+      }
       else if (kind === 'timeline') {
         setTimelinePath(path)
         setTimelineText('')
         setTimelineMode('file')
+        toast.success(t('Đã chọn file timeline.', 'Timeline file selected.'))
       }
-      else if (kind === 'srt') setSrtPath(path)
-      else setWatermarkPath(path)
+      else if (kind === 'srt') {
+        setSrtPath(path)
+        toast.success(t('Đã chọn file phụ đề SRT.', 'SRT subtitle file selected.'))
+      }
+      else {
+        setWatermarkPath(path)
+        toast.success(t('Đã chọn ảnh logo.', 'Logo image selected.'))
+      }
     } catch (error) {
-      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: `Không chọn được file: ${String(error)}` })
+      const msg = `Không chọn được file: ${String(error)}`
+      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: msg })
+      toast.error(msg)
     }
   }
 
@@ -336,8 +365,11 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
       const path = String(result.path)
       setOutputPath(path)
       setOutputName(path.split(/[\\/]/).pop() || 'output.mp4')
+      toast.success(t('Đã chọn file xuất.', 'Output file selected.'))
     } catch (error) {
-      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: `Không chọn được file xuất: ${String(error)}` })
+      const msg = `Không chọn được file xuất: ${String(error)}`
+      setJob({ id: '', name: outputName, status: 'error', progress: 0, error: msg })
+      toast.error(msg)
     }
   }
 
@@ -463,13 +495,13 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
                 <label>Thư mục media <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('media') }}>i</span></label>
                 <div className="siv-input"><span>{mediaFolder || 'Chưa chọn thư mục ảnh/video'}</span></div>
                 <button onClick={chooseMediaFolder}>Chọn</button>
-                <button onClick={() => setMediaFolder('')} disabled={!mediaFolder}>Xóa</button>
+                <button onClick={() => { setMediaFolder(''); toast.success(t('Đã xóa thư mục media.', 'Media folder cleared.')) }} disabled={!mediaFolder}>Xóa</button>
               </div>
               <div className="siv-row">
                 <label>File audio <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('audio') }}>i</span></label>
                 <div className="siv-input"><span title={audioPath}>{audioPath || 'Không dùng audio'}</span></div>
                 <button onClick={() => chooseInputFile('audio')}>Chọn</button>
-                <button onClick={() => setAudioPath('')} disabled={!audioPath}>Xóa</button>
+                <button onClick={() => { setAudioPath(''); toast.success(t('Đã xóa file audio.', 'Audio file cleared.')) }} disabled={!audioPath}>Xóa</button>
               </div>
               <div className="siv-row siv-row--timeline">
                 <label>{t('File timeline', 'Timeline file')} <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('timeline') }}>i</span></label>
@@ -495,20 +527,20 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
                     >{t('Đổi', 'Switch')}</button>
                   </div>
                   <button onClick={() => { setTimelineMode('file'); void chooseInputFile('timeline') }}>{t('Chọn', 'Choose')}</button>
-                  <button onClick={() => { setTimelinePath(''); setTimelineText(''); setTimelineMode('file') }} disabled={!timelinePath && !timelineText}>{t('Xóa', 'Clear')}</button>
+                  <button onClick={() => { setTimelinePath(''); setTimelineText(''); setTimelineMode('file'); toast.success(t('Đã xóa timeline.', 'Timeline cleared.')) }} disabled={!timelinePath && !timelineText}>{t('Xóa', 'Clear')}</button>
                 </div>
               </div>
               <div className="siv-row">
                 <label>File xuất <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('output') }}>i</span></label>
                 <div className="siv-input siv-output-path"><span title={outputDirectory}>{outputDirectory}</span><input value={outputName.replace(/\.mp4$/i, '')} onChange={(e) => renameOutput(e.target.value)} /><b>.mp4</b></div>
                 <button onClick={chooseOutput}>Chọn</button>
-                <button onClick={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...cachedSettings(), outputName, outputPath }))}>{localize(locale, 'Lưu', 'Save')}</button>
+                <button onClick={() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...cachedSettings(), outputName, outputPath })); toast.success(t('Đã lưu cài đặt xuất video.', 'Output settings saved.')) }}>{localize(locale, 'Lưu', 'Save')}</button>
               </div>
               <div className="siv-row">
                 <label>File phụ đề <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('subtitles') }}>i</span></label>
                 <div className="siv-input"><span title={srtPath}>{srtPath || 'Chưa chọn phụ đề SRT'}</span></div>
                 <button onClick={() => chooseInputFile('srt')}>Chọn</button>
-                <button onClick={() => setSrtPath('')} disabled={!srtPath}>Xóa</button>
+                <button onClick={() => { setSrtPath(''); toast.success(t('Đã xóa file phụ đề SRT.', 'SRT subtitle file cleared.')) }} disabled={!srtPath}>Xóa</button>
               </div>
               {srtPath && (
                 <div className="siv-subtitle-options">
@@ -675,7 +707,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
                 <strong>Log chi tiết</strong>
                 <div>
                   <button type="button" onClick={() => void copyText(logText)}>Copy</button>
-                  <button type="button" onClick={() => setLogStart(job?.logs?.length || 0)}>Xóa</button>
+                  <button type="button" onClick={() => { setLogStart(job?.logs?.length || 0); toast.success(t('Đã xóa log.', 'Logs cleared.')) }}>Xóa</button>
                 </div>
               </header>
               <pre ref={logRef}>{logText}</pre>
@@ -695,8 +727,8 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
           </>
         ) : (
           <footer className="siv-actions">
-            <button className="primary" onClick={() => setTab('project')}>Lưu</button>
-            <button onClick={cancelSettings}>Hủy</button>
+            <button className="primary" onClick={() => { setTab('project'); toast.success(t('Đã lưu cài đặt.', 'Settings saved.')) }}>Lưu</button>
+            <button onClick={() => { cancelSettings(); toast.info(t('Đã hủy thay đổi cài đặt.', 'Settings changes cancelled.')) }}>Hủy</button>
           </footer>
         )}
           </section>

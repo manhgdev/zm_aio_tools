@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { applyEngineProfile, defaultSettings } from '@/app/appSettings'
 import { localize, useLocale } from '@/app/i18n'
 import type { ProjectSettings } from '@/features/project/project.types'
@@ -310,23 +311,30 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
     await fetch(`/api/drawing/jobs/${jobId}/cancel`, { method: 'POST' })
     await refresh()
   }
-
   async function deleteDrawingJob(jobId: string) {
     setError('')
     const response = await fetch(`/api/drawing/jobs/${jobId}`, { method: 'DELETE' })
     if (!response.ok) {
-      setError(await response.text())
+      const err = await response.text()
+      setError(err)
+      toast.error(err)
       await refresh()
       return
     }
     setDrawingPreview((current) => current?.id === jobId ? null : current)
     setDrawingJobs((current) => current.filter((item) => item.id !== jobId))
+    toast.success(t('Đã xóa job vẽ tay khỏi hàng đợi.', 'Drawing job deleted from queue.'))
   }
 
   async function deleteQueueJob(jobId: string) {
-    await studioApi.jobAction(jobId, 'remove')
-    if (editingQueueJob?.id === jobId) setEditingQueueJob(null)
-    await refresh()
+    try {
+      await studioApi.jobAction(jobId, 'remove')
+      if (editingQueueJob?.id === jobId) setEditingQueueJob(null)
+      await refresh()
+      toast.success(t('Đã xóa job khỏi hàng đợi.', 'Job deleted from queue.'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
   }
 
   async function editQueueJob(job: QueueJob) {
@@ -462,7 +470,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                 <option value="overwrite">{t('Ghi đè', 'Overwrite')}</option>
               </select>
             </div>
-            <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? async () => (await studioApi.pickFolder()).path || undefined : undefined} onSave={() => localStorage.setItem(BATCH_OUTPUT_DIR_LS, outputDir)} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder={tab === 'review' ? 'review' : 'clone'} label={t('Thư mục xuất', 'Output folder')} />
+            <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? async () => (await studioApi.pickFolder()).path || undefined : undefined} onSave={() => { localStorage.setItem(BATCH_OUTPUT_DIR_LS, outputDir); toast.success(t('Đã lưu thư mục xuất thành công!', 'Output directory saved successfully!')) }} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder={tab === 'review' ? 'review' : 'clone'} label={t('Thư mục xuất', 'Output folder')} />
           </section>
           {tab === 'review' ? (
             <div className="rv-page rv-embed">
@@ -470,7 +478,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                 <section className="rv-card">
                   <div className="rv-card-title">
                     <h2>{t('Cấu hình Review hàng loạt', 'Batch review setup')}</h2>
-                    <button type="button" className="rv-reset" onClick={() => setReviewSettings(DEFAULT_REVIEW_SETTINGS)}>↻ {t('Đặt lại', 'Reset')}</button>
+                    <button type="button" className="rv-reset" onClick={() => { setReviewSettings(DEFAULT_REVIEW_SETTINGS); toast.info(t('Đã đặt lại cấu hình.', 'Settings reset.')) }}>↻ {t('Đặt lại', 'Reset')}</button>
                   </div>
                   <p className="rv-hint">{t('Cài đặt bên dưới sẽ áp dụng cho tất cả video được thêm vào hàng đợi review hàng loạt.', 'The settings below apply to every video added to the batch review queue.')}</p>
                   <ReviewLangFields settings={reviewSettings} onChange={setReview} />
