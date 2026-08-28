@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import json
+import hashlib
 import csv
 import os
 import random
@@ -25,7 +26,13 @@ from pipeline.export.fonts import _resolve_font_name
 
 ROOT = DATA / "srt_image"
 ROOT.mkdir(parents=True, exist_ok=True)
+CACHE_ROOT = ROOT / "render-cache"
+CACHE_INDEX = CACHE_ROOT / "index.json"
+CACHE_VERSION = 1
 _LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
+_CACHE_CONDITION = threading.Condition()
+_CACHE_INFLIGHT: set[str] = set()
 _JOBS: dict[str, dict[str, Any]] = {}
 _PROCS: dict[str, subprocess.Popen] = {}
 _TIME = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)")
@@ -38,6 +45,89 @@ LOGO_RANDOM_POSITIONS = (
     (0.08, 0.10), (0.90, 0.62), (0.12, 0.60), (0.88, 0.12),
     (0.50, 0.68), (0.50, 0.08), (0.08, 0.68), (0.78, 0.38),
 )
+
+
+def _file_signature(value: str) -> dict | None:
+    if not value:
+        return None
+    path = Path(value)
+    stat = path.stat()
+    return {
+        "path": str(path.resolve()),
+        "size": stat.st_size,
+        "mtimeNs": stat.st_mtime_ns,
+    }
+
+
+def _render_cache_key(job: dict) -> str:
+    """Fingerprint every source and render option without reading large media files."""
+    payload = {
+        "version": CACHE_VERSION,
+        "images": [_file_signature(value) for value in job.get("images", [])],
+        "timeline": _file_signature(str(job.get("timeline") or "")),
+        "audio": _file_signature(str(job.get("audio") or "")),
+        "srt": _file_signature(str(job.get("srt") or "")),
+        "watermark": _file_signature(str(job.get("watermark") or "")),
+        "options": job.get("options") or {},
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _read_cache_index() -> dict:
+    try:
+        value = json.loads(CACHE_INDEX.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_cache_index(index: dict) -> None:
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    temporary = CACHE_INDEX.with_suffix(".tmp")
+    temporary.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(CACHE_INDEX)
+
+
+def _cached_render(key: str) -> Path | None:
+    with _CACHE_LOCK:
+        entry = _read_cache_index().get(key)
+        path = CACHE_ROOT / str(entry.get("file", "")) if isinstance(entry, dict) else None
+        return path if path and path.is_file() else None
+
+
+def _store_cached_render(key: str, source: Path) -> Path:
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    target = CACHE_ROOT / f"{key}.mp4"
+    temporary = CACHE_ROOT / f".{key}.tmp.mp4"
+    shutil.copy2(source, temporary)
+    temporary.replace(target)
+    with _CACHE_LOCK:
+        index = _read_cache_index()
+        index[key] = {"file": target.name, "size": target.stat().st_size, "createdAt": int(time.time())}
+        _write_cache_index(index)
+    return target
+
+
+def _claim_render_cache(job_id: str, key: str) -> tuple[Path | None, bool]:
+    """Return a hit, or reserve this key; identical concurrent jobs wait for its owner."""
+    while True:
+        cached = _cached_render(key)
+        if cached:
+            return cached, False
+        with _CACHE_CONDITION:
+            if key not in _CACHE_INFLIGHT:
+                _CACHE_INFLIGHT.add(key)
+                return None, True
+            _CACHE_CONDITION.wait(timeout=.25)
+        if (get_job(job_id) or {}).get("status") == "cancelled":
+            return None, False
+
+
+def _release_render_cache(key: str) -> None:
+    with _CACHE_CONDITION:
+        _CACHE_INFLIGHT.discard(key)
+        _CACHE_CONDITION.notify_all()
 
 
 def _seconds(value: str) -> float:
@@ -804,7 +894,21 @@ def run(job_id: str) -> None:
     job = get_job(job_id)
     if not job:
         return
+    cache_key = ""
+    owns_cache_key = False
     try:
+        cache_key = _render_cache_key(job)
+        cached, owns_cache_key = _claim_render_cache(job_id, cache_key)
+        if cached:
+            output = Path(job["output"])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cached, output)
+            published = _publish_render(job_id, output, str(job.get("name") or ""))
+            _update(job_id, status="done", progress=100, outputSize=output.stat().st_size)
+            _log(job_id, f"Hoàn thành: {output} ({output.stat().st_size / 1_048_576:.1f} MB) · Đã thêm: {published.name}")
+            return
+        if not owns_cache_key:
+            return
         _log(job_id, "Đang đọc timeline và kiểm tra media…")
         media = [Path(p) for p in job["images"]]
         timeline = str(job.get("timeline") or "")
@@ -1015,6 +1119,11 @@ def run(job_id: str) -> None:
             detail = "\n".join(stderr_tail[-12:])
             raise RuntimeError(f"FFmpeg kết thúc với mã {code}\n{detail}")
         path = Path(job["output"])
+        try:
+            _store_cached_render(cache_key, path)
+        except OSError:
+            # ponytail: cache là tối ưu tùy chọn; lỗi ghi cache không được làm hỏng video đã render.
+            pass
         published = _publish_render(job_id, path, str(job.get("name") or ""))
         _update(job_id, status="done", progress=100, outputSize=path.stat().st_size)
         _log(job_id, f"Hoàn thành: {path} ({path.stat().st_size / 1_048_576:.1f} MB) · Đã thêm: {published.name}")
@@ -1024,6 +1133,9 @@ def run(job_id: str) -> None:
         if (get_job(job_id) or {}).get("status") != "cancelled":
             _update(job_id, status="error", error=str(exc))
             _log(job_id, f"LỖI: {exc}")
+    finally:
+        if owns_cache_key and cache_key:
+            _release_render_cache(cache_key)
 
 
 def start(job_id: str) -> None:

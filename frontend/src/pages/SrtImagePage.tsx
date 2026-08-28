@@ -129,6 +129,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
   const [logoSafeMargin, setLogoSafeMargin] = useState(Number(cached.logoSafeMargin ?? 4))
   const [outputName, setOutputName] = useState(String(cached.outputName ?? 'output.mp4'))
   const [outputPath, setOutputPath] = useState(String(cached.outputPath ?? ''))
+  const [defaultOutputDirectory, setDefaultOutputDirectory] = useState('ZM_AIO_TOOL/subtitles/image-video/')
   const [job, setJob] = useState<Job | null>(null)
   const [sending, setSending] = useState(false)
   const [missingMedia, setMissingMedia] = useState<{ required: number; available: number; preview: boolean } | null>(null)
@@ -140,6 +141,16 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
     setMediaFolder(initialMediaFolder)
     setTab('project')
   }, [initialMediaFolder])
+
+  useEffect(() => {
+    void fetch('/api/system/resolve-output-folder?tab=subtitle-image', { method: 'POST' })
+      .then(async (response) => response.ok ? response.json() as Promise<{ path?: string }> : null)
+      .then((result) => {
+        const path = String(result?.path || '').replace(/[\\/]+$/, '')
+        if (path) setDefaultOutputDirectory(`${path}/`)
+      })
+      .catch(() => undefined)
+  }, [])
 
   // A render owns a server-side workspace.  Restore that workspace after an
   // F5 instead of leaving the user with an empty page while FFmpeg continues.
@@ -346,7 +357,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
   const outputSlash = Math.max(outputPath.lastIndexOf('\\'), outputPath.lastIndexOf('/'))
   const outputDirectory = outputPath
     ? outputPath.slice(0, outputSlash + 1)
-    : localize(locale, 'Thư mục mặc định\\', 'Default directory\\')
+    : defaultOutputDirectory
   const visibleLogs = (job?.logs || []).slice(logStart)
   const logText = visibleLogs.length
     ? visibleLogs.join('\n')

@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 
 from pipeline.core.media import _ff_bin, ffprobe_duration, h264_encoder_args, h264_hardware_encoder, video_size
+from pipeline.core.artifact_cache import ArtifactCache
 from pipeline.cleaner.cleaner_jobs import (
     update_job,
     append_job_log,
@@ -17,6 +18,7 @@ from pipeline.cleaner.cleaner_jobs import (
 )
 
 CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)) if sys.platform == "win32" else 0
+_CACHE = ArtifactCache("video-cleaner", version=2)
 
 # Gemini's sparkle watermark is intentionally icon-only, so an OCR-only probe
 # cannot describe it.  This small lower-right region matches that mark without
@@ -102,6 +104,17 @@ def run_cleaner_job_sync(job_id: str) -> None:
     append_job_log(job_id, f"Bắt đầu xử lý · {method}")
     
     try:
+        cache_key = _CACHE.key(
+            inputs=[Path(input_path)], settings=options, values={"method": method},
+        )
+        if _CACHE.restore(cache_key, {"output": Path(output_path)}):
+            out_size = Path(output_path).stat().st_size
+            update_job(job_id, {
+                "status": "done", "progress": 100.0, "outputSize": out_size,
+                "finishedAt": time.time(),
+            })
+            append_job_log(job_id, "Hoàn thành · Cache")
+            return
         duration_s = ffprobe_duration(input_path) or 100.0
         
         # Always resolve the same FFmpeg binary as the rest of the app.  A
@@ -216,6 +229,10 @@ def run_cleaner_job_sync(job_id: str) -> None:
             
         # Success
         out_size = Path(output_path).stat().st_size if Path(output_path).exists() else 0
+        try:
+            _CACHE.store(cache_key, {"output": Path(output_path)})
+        except OSError:
+            pass
         update_job(job_id, {
             "status": "done",
             "progress": 100.0,

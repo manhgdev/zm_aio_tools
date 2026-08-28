@@ -22,6 +22,7 @@ from typing import Any
 from pipeline.core.config import DATA, safe_child
 from pipeline.core.jobs import kill_process_tree
 from pipeline.core.output_paths import selected_or_default
+from pipeline.core.artifact_cache import ArtifactCache
 from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
 
 ROOT = DATA / "drawing"
@@ -29,6 +30,7 @@ ROOT.mkdir(parents=True, exist_ok=True)
 _LOCK = threading.Lock()
 _JOBS: dict[str, dict[str, Any]] = {}
 _PROCS: dict[str, subprocess.Popen] = {}
+_CACHE = ArtifactCache("drawing", version=2)
 _WORKERS: dict[str, threading.Thread] = {}
 
 
@@ -270,10 +272,23 @@ def run(job_id: str) -> None:
     if not job:
         return
     try:
-        _update(job_id, status="processing", step="line_map", progress=8)
-        _log(job_id, "Extracting line map")
         source = Path(job["input"])
         options = job["options"]
+        cache_key = _CACHE.key(inputs=[source], settings=options)
+        cached_targets = {
+            "drawing.mp4": Path(job["output"]),
+            "line-map.png": Path(job["lineMap"]),
+            "stroke-path.png": Path(job["strokePath"]),
+        }
+        if _CACHE.restore(cache_key, cached_targets):
+            target_dir = selected_or_default("drawing", str(options.get("outputDir") or ""))
+            published = target_dir / f"{Path(job['filename']).stem}_drawing_{job_id}.mp4"
+            shutil.copy2(job["output"], published)
+            _update(job_id, publishedOutput=str(published), status="done", step="done", progress=100)
+            _log(job_id, "Drawing video ready (cache)")
+            return
+        _update(job_id, status="processing", step="line_map", progress=8)
+        _log(job_id, "Extracting line map")
         width, height = _target_size(source, str(options.get("resolution", "720p")))
         detail = max(10, min(100, int(options.get("detail", 72))))
         low = max(.02, min(.25, (100 - detail) / 340))
@@ -360,6 +375,10 @@ def run(job_id: str) -> None:
         target_dir = selected_or_default("drawing", str(options.get("outputDir") or ""))
         published = target_dir / f"{Path(job['filename']).stem}_drawing_{job_id}.mp4"
         shutil.copy2(job["output"], published)
+        try:
+            _CACHE.store(cache_key, cached_targets)
+        except OSError:
+            pass
         _update(job_id, publishedOutput=str(published))
         _update(job_id, status="done", step="done", progress=100)
         _log(job_id, "Drawing video ready")

@@ -149,9 +149,10 @@ def delete_series(series_id: str) -> bool:
     if removed:
         shutil.rmtree(_series_folder(series_id), ignore_errors=True)
         slug = safe_output_part(str(series.get("slug") or series.get("title") or "series"), "series")
-        # A Series owns only these two dedicated output roots.  Never touch
-        # ordinary Flow jobs or output belonging to another Series.
+        # Remove the current dedicated Series root plus legacy pre-3.8 paths.
+        # Never touch ordinary Flow jobs or output belonging to another Series.
         for root in (downloads_folder("flow"), PUBLIC_DATA / "flow"):
+            shutil.rmtree(root / "series" / slug, ignore_errors=True)
             for kind in ("image", "video"):
                 shutil.rmtree(root / kind / slug, ignore_errors=True)
     return removed

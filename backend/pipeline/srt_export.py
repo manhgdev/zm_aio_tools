@@ -16,12 +16,14 @@ from pipeline.core.config import DATA
 from pipeline.core.executables import ytdlp_command
 from pipeline.core.output_paths import selected_or_default
 from pipeline.core.media import extract_audio
+from pipeline.core.artifact_cache import ArtifactCache
 from pipeline.export.srt import SRT_STYLES, _split_for_style, parse_srt, style_params, wrap_capcut_text, write_subtitle
 from pipeline.mt.api import translate_segments
 
 ROOT = DATA / "srt_export"
 _LOCK = threading.Lock()
 _JOBS: dict[str, dict[str, Any]] = {}
+_CACHE = ArtifactCache("srt-export", version=2)
 
 
 def _update(job_id: str, **values: Any) -> None:
@@ -201,6 +203,19 @@ def _run(job_id: str) -> None:
         _update(job_id, status="processing", progress=5, message="Đang đọc đầu vào")
         work = Path(job["outputDir"])
         source = Path(job["inputPath"]) if job.get("inputPath") else None
+        options = job.get("options") or {}
+        cache_key = _CACHE.key(
+            inputs=[source] if source else [], settings=options,
+            values={"sourceKind": job["sourceKind"], "sourceUrl": job.get("sourceUrl") or ""},
+        )
+        cached_files = _CACHE.files(cache_key)
+        if cached_files:
+            targets = {name: work / name for name in cached_files}
+            if _CACHE.restore(cache_key, targets):
+                files = list(cached_files)
+                published_dir = _publish_outputs(work, files, str(options.get("outputDir") or ""))
+                _update(job_id, status="done", progress=100, message=f"Đã xuất {len(files)} file · Cache", files=files, publishedDir=published_dir)
+                return
         platform_note = ""
         if job["sourceKind"] == "platform":
             cues, platform_note = _platform_subtitles(work, job["sourceUrl"], str(job.get("options", {}).get("sourceLang") or "auto"))
@@ -212,7 +227,6 @@ def _run(job_id: str) -> None:
         elif job["sourceKind"] == "caption":
             assert source is not None
             cues = _caption_cues(source)
-        options = job.get("options") or {}
         capcut_translated: list[dict[str, Any]] | None = None
         if job["sourceKind"] == "media" and str(options.get("recognitionEngine") or "whisper") == "capcut":
             assert source is not None
@@ -266,6 +280,10 @@ def _run(job_id: str) -> None:
             files = _write_outputs(work, cues, "subtitles")
         _zip_outputs(work, files, bilingual=mode == "bilingual", target_lang=lang if mode == "bilingual" else "")
         files.append("subtitles-all.zip")
+        try:
+            _CACHE.store(cache_key, {name: work / name for name in files})
+        except OSError:
+            pass
         published_dir = _publish_outputs(work, files, str(options.get("outputDir") or ""))
         suffix = f" · {platform_note}" if platform_note else ""
         _update(job_id, status="done", progress=100, message=f"Đã xuất {len(files)} file{suffix}", files=files, publishedDir=published_dir)

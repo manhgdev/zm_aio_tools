@@ -804,7 +804,7 @@ class FlowService:
         series_context = job.get("seriesContext") or {}
         if series_context:
             root = selected_or_default("flow", "")
-            series_root = root / kind / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series")
+            series_root = root / "series" / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series") / kind
             folder = series_root / "anchors" if series_context.get("artifact") == "anchor" else series_root / f"tap-{int(series_context.get('episodeIndex') or 1):02d}" / f"canh-{int(series_context.get('sceneIndex') or 1):03d}"
         elif selected.is_absolute():
             flow_root = selected_or_default("flow", "")

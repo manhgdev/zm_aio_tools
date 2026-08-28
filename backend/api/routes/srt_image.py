@@ -14,6 +14,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from pipeline.srt_image import ROOT, cancel, create_job, get_job, list_jobs, output_path, parse_timing_times, pause, start
+from pipeline.core.output_paths import downloads_folder
 
 router = APIRouter()
 MEDIA_SUFFIXES = {
@@ -25,6 +26,20 @@ TIMELINE_SUFFIXES = {".txt", ".srt", ".vtt", ".ass", ".ssa", ".csv", ".tsv", ".j
 
 def _natural_name(path: Path):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
+
+
+def _resolve_output_target(raw: str) -> Path | None:
+    """Anchor WEB-relative names under the shared SRT image/video output root."""
+    value = raw.strip()
+    if not value:
+        return None
+    selected = Path(value).expanduser()
+    target = selected if selected.is_absolute() else downloads_folder("subtitle-image") / selected
+    target = target.resolve()
+    if target.suffix.lower() != ".mp4":
+        raise HTTPException(400, "File xuất phải có đuôi .mp4")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def _media_size(folder: str) -> dict | None:
@@ -196,11 +211,7 @@ async def create(
                 "required": required,
                 "available": len(image_paths),
             })
-    output_target = None
-    if output_path.strip():
-        output_target = Path(output_path.strip()).expanduser().resolve()
-        if output_target.suffix.lower() != ".mp4":
-            raise HTTPException(400, "File xuất phải có đuôi .mp4")
+    output_target = _resolve_output_target(output_path)
     job = create_job(
         output_name, work, image_paths, audio_file, timeline_file, srt_file,
         opts, watermark_file, output_target,

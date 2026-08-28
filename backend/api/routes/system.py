@@ -955,7 +955,10 @@ def api_pick_folder():
 def api_pick_save_video(filename: str = "ghep-anh-video-srt.mp4"):
     """Mở native Save As dialog và trả về đường dẫn MP4 đầy đủ."""
     try:
+        from pipeline.core.output_paths import downloads_folder
+
         initial = f"{Path(filename).stem or 'ghep-anh-video-srt'}.mp4"
+        initial_dir = downloads_folder("subtitle-image")
         if os.name == "nt":
             path = _windows_native_dialog(
                 """
@@ -973,18 +976,20 @@ $dialog.Filter = 'Video MP4 (*.mp4)|*.mp4|Tất cả tệp (*.*)|*.*'
 $dialog.DefaultExt = 'mp4'
 $dialog.AddExtension = $true
 $dialog.FileName = $env:VIDEOCLONE_SAVE_NAME
+$dialog.InitialDirectory = $env:VIDEOCLONE_SAVE_DIR
 if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
     [Console]::Write($dialog.FileName)
 }
 $owner.Close()
 """,
-                {"VIDEOCLONE_SAVE_NAME": initial},
+                {"VIDEOCLONE_SAVE_NAME": initial, "VIDEOCLONE_SAVE_DIR": str(initial_dir)},
             )
         elif sys.platform == "darwin":
             path = _macos_native_dialog(
                 "set outputFile to choose file name with prompt "
                 f"{_apple_script_string('Chọn nơi lưu video')} "
-                f"default name {_apple_script_string(initial)}\n"
+                f"default name {_apple_script_string(initial)} "
+                f"default location (POSIX file {_apple_script_string(str(initial_dir))})\n"
                 "return POSIX path of outputFile"
             )
         else:
@@ -996,6 +1001,7 @@ $owner.Close()
                 root.attributes("-topmost", True)
                 path = filedialog.asksaveasfilename(
                     title="Chọn nơi lưu video", defaultextension=".mp4",
+                    initialdir=str(initial_dir),
                     initialfile=initial,
                     filetypes=[("Video MP4", "*.mp4"), ("Tất cả tệp", "*.*")],
                 )

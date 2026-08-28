@@ -8,6 +8,9 @@ from pipeline.srt_image import (
     _log,
     _logo_position,
     _render_logo_asset,
+    _render_cache_key,
+    _store_cached_render,
+    _cached_render,
     _text_logo_filter,
     _text_logo_position,
     LOGO_RANDOM_POSITIONS,
@@ -23,6 +26,7 @@ from pipeline.srt_image import (
     select_cues_for_media,
     shift_srt,
 )
+from api.routes.srt_image import _resolve_output_target
 
 
 def test_missing_media_can_be_skipped_only_after_confirmation():
@@ -264,3 +268,40 @@ def test_create_job_uses_selected_output(tmp_path):
         tmp_path / "subtitles.srt", {}, output_target=selected,
     )
     assert job["output"] == str(selected)
+
+
+def test_render_cache_key_covers_inputs_and_every_option(tmp_path):
+    media = tmp_path / "001.png"
+    timeline = tmp_path / "timeline.txt"
+    media.write_bytes(b"image-v1")
+    timeline.write_text("[00:00:00-00:00:05]", encoding="utf-8")
+    job = {
+        "images": [str(media)], "timeline": str(timeline), "audio": "",
+        "srt": "", "watermark": "", "options": {"fps": 30, "zoom": "off"},
+    }
+
+    first = _render_cache_key(job)
+    assert _render_cache_key(job) == first
+    assert _render_cache_key({**job, "options": {**job["options"], "fps": 60}}) != first
+    media.write_bytes(b"image-v2-is-different")
+    assert _render_cache_key(job) != first
+
+
+def test_completed_render_cache_survives_memory_state(monkeypatch, tmp_path):
+    import pipeline.srt_image as module
+    cache_root = tmp_path / "render-cache"
+    monkeypatch.setattr(module, "CACHE_ROOT", cache_root)
+    monkeypatch.setattr(module, "CACHE_INDEX", cache_root / "index.json")
+    source = tmp_path / "output.mp4"
+    source.write_bytes(b"rendered-video")
+
+    cached = _store_cached_render("same-settings", source)
+
+    assert cached.read_bytes() == b"rendered-video"
+    assert _cached_render("same-settings") == cached
+    assert module.CACHE_INDEX.is_file()
+
+
+def test_relative_srt_image_output_stays_under_shared_app_folder(monkeypatch, tmp_path):
+    monkeypatch.setattr("api.routes.srt_image.downloads_folder", lambda _tab: tmp_path / "ZM_AIO_TOOL" / "subtitles" / "image-video")
+    assert _resolve_output_target("series-01/output.mp4") == tmp_path / "ZM_AIO_TOOL" / "subtitles" / "image-video" / "series-01" / "output.mp4"

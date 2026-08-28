@@ -132,7 +132,12 @@ def test_series_output_is_isolated_by_kind_episode_and_scene(monkeypatch, tmp_pa
     monkeypatch.setattr(service_module, "selected_or_default", lambda _tab, _selected: output_root)
     flow = service_module.FlowService()
     folder = flow._output_folder({"kind": "image", "seriesContext": {"seriesSlug": "purple-gate", "episodeIndex": 1, "sceneIndex": 2}})
-    assert folder == output_root / "image" / "purple-gate" / "tap-01" / "canh-002"
+    assert folder == output_root / "series" / "purple-gate" / "image" / "tap-01" / "canh-002"
+
+    anchor = flow._output_folder({"kind": "image", "seriesContext": {"artifact": "anchor", "seriesSlug": "purple-gate"}})
+    video = flow._output_folder({"kind": "video", "seriesContext": {"seriesSlug": "purple-gate", "episodeIndex": 1, "sceneIndex": 2}})
+    assert anchor == output_root / "series" / "purple-gate" / "image" / "anchors"
+    assert video == output_root / "series" / "purple-gate" / "video" / "tap-01" / "canh-002"
 
 
 def test_deleting_a_series_removes_only_its_dedicated_assets_and_outputs(monkeypatch, tmp_path):
@@ -141,8 +146,8 @@ def test_deleting_a_series_removes_only_its_dedicated_assets_and_outputs(monkeyp
     monkeypatch.setattr(series, "PUBLIC_DATA", tmp_path / "public")
     first = series.create_series("First series")
     second = series.create_series("Second series")
-    first_output = tmp_path / "public" / "flow" / "image" / first["slug"] / "tap-01"
-    second_output = tmp_path / "public" / "flow" / "image" / second["slug"] / "tap-01"
+    first_output = tmp_path / "public" / "flow" / "series" / first["slug"] / "image" / "tap-01"
+    second_output = tmp_path / "public" / "flow" / "series" / second["slug"] / "image" / "tap-01"
     first_output.mkdir(parents=True); second_output.mkdir(parents=True)
     (first_output / "one.png").write_bytes(b"one")
     (second_output / "two.png").write_bytes(b"two")
