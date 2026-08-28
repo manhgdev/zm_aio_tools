@@ -1021,7 +1021,7 @@ test('Flow offers bilingual prompt guides, templates showcase, preview, copy, an
     readFile(new URL('../frontend/src/features/flow/flowTemplates.ts', import.meta.url), 'utf8'),
   ])
   assert.match(page, /FlowTemplatesPanel/)
-  assert.match(page, /setTemplatesModalOpen\(true\)/)
+  assert.match(page, /utilityView === "help"/)
   assert.match(tplComp, /Thư viện Prompt Hệ Thống & Hướng dẫn Flow/)
   assert.match(tplComp, /Flow System Prompt Guides & Engines/)
   assert.match(tplComp, /downloadText/)
