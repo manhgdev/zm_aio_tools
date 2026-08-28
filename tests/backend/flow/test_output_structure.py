@@ -135,13 +135,25 @@ def test_flow_outputs_share_root_and_job_delete_removes_the_right_child(monkeypa
     output.touch()
     job["outputs"] = [str(output)]
 
-    assert output == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video" / "Campaign-August" / "001__job-123__launch-video_01.mp4"
-
+    assert output == tmp_path / "Downloads" / "ZM_AIO_TOOL" / "flow" / "video" / "Campaign-August" / "001__job-123__launch-video_001.mp4"
     monkeypatch.setattr(service_module.store, "get_row", lambda _table, job_id: job if job_id == job["id"] else None)
     monkeypatch.setattr(service_module.store, "delete_row", lambda _table, job_id: job_id == job["id"])
 
     assert flow.delete_job("job-123") is True
     assert not output.parent.exists()
+
+
+def test_flow_filename_uses_prompt_index_instead_of_repeating_flow_01(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIDEO_CLONE_DESKTOP", raising=False)
+    monkeypatch.setattr(output_paths_module.Path, "home", lambda: tmp_path)
+    flow = service_module.FlowService()
+    settings = {"outputDir": "test", "filePrefix": "flow", "count": 1}
+
+    first = flow._output_path({"id": "a", "inputIndex": 1, "kind": "image", "settings": settings}, 1, "png")
+    second = flow._output_path({"id": "b", "inputIndex": 2, "kind": "image", "settings": settings}, 1, "png")
+
+    assert first.name.endswith("__flow_001.png")
+    assert second.name.endswith("__flow_002.png")
 
 
 def test_flow_delete_output_folder_removes_only_that_folder_and_its_jobs(monkeypatch, tmp_path):

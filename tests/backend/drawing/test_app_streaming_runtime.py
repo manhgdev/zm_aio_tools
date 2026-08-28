@@ -27,14 +27,22 @@ def test_streaming_reference_can_be_resolved_from_bundle(monkeypatch, tmp_path):
     assert hand == tmp_path / "references" / "whiteboard-stream-animation" / "assets" / "drawing-hand.png"
 
 
-def test_batch_uses_two_workers_on_a_typical_machine(monkeypatch):
+def test_batch_workers_follow_live_resources_with_a_machine_safe_cap(monkeypatch):
     monkeypatch.setattr(jobs.os, "cpu_count", lambda: 8)
-    assert jobs._drawing_batch_workers(100) == 2
+    monkeypatch.setattr(jobs, "adaptive_workers", lambda _requested, **kwargs: kwargs["cap"])
+    assert jobs._drawing_batch_workers(100) == 7
     assert jobs._drawing_batch_workers(1) == 1
+
+
+def test_batch_can_use_twelve_workers_on_a_high_core_machine(monkeypatch):
+    monkeypatch.setattr(jobs.os, "cpu_count", lambda: 18)
+    monkeypatch.setattr(jobs, "adaptive_workers", lambda _requested, **kwargs: kwargs["cap"])
+    assert jobs._drawing_batch_workers(100) == 12
 
 
 def test_batch_stays_sequential_on_small_machines(monkeypatch):
     monkeypatch.setattr(jobs.os, "cpu_count", lambda: 2)
+    monkeypatch.setattr(jobs, "adaptive_workers", lambda _requested, **kwargs: kwargs["cap"])
     assert jobs._drawing_batch_workers(100) == 1
 
 

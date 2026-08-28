@@ -15,7 +15,6 @@ import sys
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ from pipeline.core.jobs import kill_process_tree
 from pipeline.core.output_paths import selected_or_default
 from pipeline.core.artifact_cache import ArtifactCache
 from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
+from pipeline.core.resources import adaptive_workers, run_with_adaptive_workers
 
 ROOT = DATA / "drawing"
 ROOT.mkdir(parents=True, exist_ok=True)
@@ -408,8 +408,10 @@ def start(job_id: str) -> None:
 
 
 def _drawing_batch_workers(job_count: int) -> int:
-    """Use two renderers on normal desktops without overwhelming small machines."""
-    return min(job_count, 2 if (os.cpu_count() or 1) >= 6 else 1)
+    """Current elastic target based on live CPU/RAM, bounded per machine."""
+    cores = max(1, os.cpu_count() or 1)
+    cap = min(12, max(1, cores - 1), max(1, job_count))
+    return adaptive_workers(None, kind="cpu", cap=cap, tasks=job_count)
 
 
 def _drawing_render_profile(width: int, height: int, fps: int, resolution: str) -> tuple[int, int]:
@@ -418,8 +420,12 @@ def _drawing_render_profile(width: int, height: int, fps: int, resolution: str) 
     return long_edge, min(15, fps)
 
 
-def start_batch(job_ids: list[str]) -> None:
-    """Render a batch with bounded parallelism; every Drawing job is CPU-heavy."""
+def start_batch(job_ids: list[str]) -> int:
+    """Render with an elastic pool that expands when CPU/RAM becomes available."""
+    cores = max(1, os.cpu_count() or 1)
+    cap = min(12, max(1, cores - 1), max(1, len(job_ids)))
+    initial_workers = _drawing_batch_workers(len(job_ids))
+
     def worker() -> None:
         def render_one(job_id: str) -> None:
             if (get_job(job_id) or {}).get("status") == "cancelled":
@@ -430,9 +436,12 @@ def start_batch(job_ids: list[str]) -> None:
                 if not state or state.get("status") in {"done", "error", "cancelled"}:
                     break
                 time.sleep(.25)
-        with ThreadPoolExecutor(max_workers=_drawing_batch_workers(len(job_ids)), thread_name_prefix="drawing-batch-job") as pool:
-            list(pool.map(render_one, job_ids))
+        run_with_adaptive_workers(
+            job_ids, render_one, kind="cpu", cap=cap,
+            thread_name_prefix="drawing-batch-job",
+        )
     threading.Thread(target=worker, name="drawing-batch", daemon=True).start()
+    return initial_workers
 
 
 def cancel(job_id: str) -> bool:

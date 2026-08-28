@@ -21,7 +21,12 @@ from pipeline.core.config import DATA, PUBLIC_DATA
 from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
 from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
-from pipeline.drawing.jobs import create_job as create_drawing_job, get_job as get_drawing_job, start as start_drawing_job
+from pipeline.drawing.jobs import (
+    cancel as cancel_drawing_job,
+    create_job as create_drawing_job,
+    get_job as get_drawing_job,
+    start_batch as start_drawing_batch,
+)
 from pipeline.export.fonts import _resolve_font_name
 
 ROOT = DATA / "srt_image"
@@ -863,30 +868,46 @@ def _drawing_video_sources(job_id: str, media: list[Path], durations: list[float
     drawing = options.get("drawing") if isinstance(options.get("drawing"), dict) else {}
     if not drawing.get("enabled"):
         return media
-    rendered: list[Path] = []
+    rendered = list(media)
+    drawing_jobs: dict[str, tuple[int, Path]] = {}
     for index, (source, duration) in enumerate(zip(media, durations), start=1):
         if is_video(source):
-            rendered.append(source)
             continue
-        _log(job_id, f"Đang vẽ ảnh {index}/{len(durations)}: {source.name}")
         drawing_job = create_drawing_job(source.name, source, {
             "duration": max(2, min(60, duration)), "fps": int(options.get("fps", 30)),
             "resolution": drawing.get("resolution", "1080p"), "mode": drawing.get("mode", "hand"),
             "tool": drawing.get("tool", "pencil"), "detail": drawing.get("detail", 72),
             "thickness": drawing.get("thickness", 2), "strokeOrder": drawing.get("strokeOrder", "natural"),
         })
-        start_drawing_job(drawing_job["id"])
-        while True:
-            state = get_drawing_job(drawing_job["id"])
-            if not state or state.get("status") in {"done", "error", "cancelled"}:
-                break
+        drawing_jobs[drawing_job["id"]] = (index, source)
+    if not drawing_jobs:
+        return rendered
+    workers = start_drawing_batch(list(drawing_jobs))
+    _log(job_id, f"Đang vẽ {len(drawing_jobs)} ảnh · tự động {workers} luồng, co/giãn theo CPU/RAM")
+    pending = set(drawing_jobs)
+    while pending:
+        if (get_job(job_id) or {}).get("status") == "cancelled":
+            for drawing_job_id in pending:
+                cancel_drawing_job(drawing_job_id)
+            return rendered
+        for drawing_job_id in list(pending):
+            state = get_drawing_job(drawing_job_id)
+            if state and state.get("status") not in {"done", "error", "cancelled"}:
+                continue
+            index, source = drawing_jobs[drawing_job_id]
+            if not state or state.get("status") != "done":
+                for remaining_id in pending - {drawing_job_id}:
+                    cancel_drawing_job(remaining_id)
+                raise RuntimeError(f"Không vẽ được ảnh {source.name}: {(state or {}).get('error') or 'job bị hủy'}")
+            target = work / f"drawing_{index:05d}.mp4"
+            shutil.copy2(state["output"], target)
+            rendered[index - 1] = target
+            pending.remove(drawing_job_id)
+            completed = len(drawing_jobs) - len(pending)
+            _log(job_id, f"Đã vẽ ảnh {completed}/{len(drawing_jobs)}: {source.name}")
+            _update(job_id, status="processing", progress=round(completed / len(drawing_jobs) * 30, 1))
+        if pending:
             time.sleep(.25)
-        if not state or state.get("status") != "done":
-            raise RuntimeError(f"Không vẽ được ảnh {source.name}: {(state or {}).get('error') or 'job bị hủy'}")
-        target = work / f"drawing_{index:05d}.mp4"
-        shutil.copy2(state["output"], target)
-        rendered.append(target)
-        _update(job_id, status="processing", progress=round(index / len(durations) * 30, 1))
     return rendered
 
 

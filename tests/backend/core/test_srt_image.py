@@ -244,7 +244,8 @@ def test_drawing_mode_only_renders_still_images(monkeypatch, tmp_path):
         return {"id": "drawing-1"}
 
     monkeypatch.setattr("pipeline.srt_image.create_drawing_job", create_drawing)
-    monkeypatch.setattr("pipeline.srt_image.start_drawing_job", lambda _job_id: None)
+    batches: list[list[str]] = []
+    monkeypatch.setattr("pipeline.srt_image.start_drawing_batch", lambda job_ids: batches.append(job_ids))
     monkeypatch.setattr(
         "pipeline.srt_image.get_drawing_job",
         lambda _job_id: {"status": "done", "output": str(drawing_output)},
@@ -258,6 +259,7 @@ def test_drawing_mode_only_renders_still_images(monkeypatch, tmp_path):
     )
 
     assert submitted == [image]
+    assert batches == [["drawing-1"]]
     assert rendered[1] == video
 
 

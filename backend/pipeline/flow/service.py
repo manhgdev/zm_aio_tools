@@ -833,7 +833,9 @@ class FlowService:
         settings = job.get("settings") or {}
         prefix = safe_output_part(settings.get("filePrefix") or job["kind"], str(job["kind"]))
         safe_suffix = re.sub(r"[^A-Za-z0-9]+", "", suffix).lower() or ("mp4" if job["kind"] == "video" else "png")
-        return folder / f"{int(job['inputIndex']):03d}__{job['id']}__{prefix}_{output_index:02d}.{safe_suffix}"
+        input_index = int(job["inputIndex"])
+        variant = f"_{output_index:02d}" if max(1, int(settings.get("count", 1))) > 1 else ""
+        return folder / f"{input_index:03d}__{job['id']}__{prefix}_{input_index:03d}{variant}.{safe_suffix}"
 
     def _check_cancel(self, job_id: str) -> None:
         if job_id in self._cancelled:
