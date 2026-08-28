@@ -1412,7 +1412,7 @@ def run(job_id: str) -> None:
             next_input_idx += 1
             cmd += ["-loop", "1", "-i", str(logo_asset)]
 
-        speed_filter = f",setpts=PTS/{speed:.6f}" if abs(speed - 1) > 0.001 else ""
+        speed_filter = f"setpts=PTS/{speed:.6f}" if abs(speed - 1) > 0.001 else ""
         subtitle_filter = ""
         subtitle_overlay_index = None
         if job["srt"]:
@@ -1420,7 +1420,7 @@ def run(job_id: str) -> None:
                 Path(job["srt"]), work / "subtitles-prepared.srt", subtitle_offset,
             )
             if _has_ffmpeg_filter("subtitles"):
-                subtitle_filter = "," + _ffmpeg_subtitle(
+                subtitle_filter = _ffmpeg_subtitle(
                     shifted_srt, subtitle_font, subtitle_size, subtitle_margin, subtitle_background,
                     subtitle_color, subtitle_bg_color, subtitle_opacity,
                 )
@@ -1444,11 +1444,24 @@ def run(job_id: str) -> None:
                 cmd += ["-f", "concat", "-safe", "0", "-i", str(subs_concat)]
 
         # ── Unified filter_complex graph ──────────────────────────────────
+        def _chain(*parts: str) -> str:
+            tokens: list[str] = []
+            for item in parts:
+                if not item:
+                    continue
+                for token in item.split(","):
+                    clean = token.strip()
+                    if clean:
+                        tokens.append(clean)
+            return ",".join(tokens)
+
         graph_steps: list[str] = []
         current_v = "[0:v]"
 
         # 1. Base scale + delogo + speed
-        graph_steps.append(f"{current_v}{base_vf}{speed_filter}[v_base]")
+        base_chain = _chain(seg_delogo, f"scale={width}:{height}:force_original_aspect_ratio=decrease",
+                            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", f"fps={fps}", zoom_filter, speed_filter)
+        graph_steps.append(f"{current_v}{base_chain}[v_base]")
         current_v = "[v_base]"
 
         # 2. Watermark / Logo
@@ -1469,13 +1482,11 @@ def run(job_id: str) -> None:
                 enable_parts.append(f"between(t,{start:.3f},{end:.3f})")
             enable = f":enable='{'*'.join(enable_parts)}'" if enable_parts else ""
             logo_scale = (
-                f"scale=-1:{max(12, round(height * scale))},"
+                f"scale=-1:{max(12, round(height * scale))}"
                 if logo.get("source") == "image" else ""
             )
-            graph_steps.append(
-                f"[{watermark_index}:v]{logo_scale}format=rgba,"
-                f"colorchannelmixer=aa={opacity:.3f}[wm]"
-            )
+            wm_chain = _chain(logo_scale, "format=rgba", f"colorchannelmixer=aa={opacity:.3f}")
+            graph_steps.append(f"[{watermark_index}:v]{wm_chain}[wm]")
             graph_steps.append(
                 f"{current_v}[wm]overlay=x='{x}':y='{y}':shortest=1{enable}[v_wm]"
             )
@@ -1483,7 +1494,8 @@ def run(job_id: str) -> None:
 
         # 3. Subtitle (ASS filter hoặc PIL Overlay)
         if subtitle_filter:
-            graph_steps.append(f"{current_v}{subtitle_filter}[v_sub]")
+            sub_chain = _chain(subtitle_filter)
+            graph_steps.append(f"{current_v}{sub_chain}[v_sub]")
             current_v = "[v_sub]"
         elif subtitle_overlay_index is not None:
             graph_steps.append(f"{current_v}[{subtitle_overlay_index}:v]overlay=format=auto:shortest=1[v_sub]")
