@@ -79,6 +79,11 @@ def _transcode_with_app_encoder(raw: Path, final: Path, fps: int, renderer_modul
     return result
 
 
+def _finish_render(raw: Path, final: Path, fps: int, renderer_module, *, transcode: bool = True) -> Path:
+    """Keep raw MP4V when the parent pipeline will perform the final H.264 encode."""
+    return _transcode_with_app_encoder(raw, final, fps, renderer_module) if transcode else raw
+
+
 def _ordered_grid_cells(renderer_module, renderer, order: str) -> list[tuple[int, int]]:
     """Build a visible pen route without changing the reference renderer.
 
@@ -153,6 +158,7 @@ def main() -> int:
     parser.add_argument("--thickness", type=int, default=2)
     parser.add_argument("--stroke-order", choices=("natural", "outline", "region", "reading", "center", "horizontal", "vertical"), default="natural")
     parser.add_argument("--bare-tip", action="store_true")
+    parser.add_argument("--skip-transcode", action="store_true")
     args = parser.parse_args()
 
     renderer_module, hand_asset = _load_reference()
@@ -190,7 +196,7 @@ def main() -> int:
     _apply_stroke_order(renderer_module, renderer, args.stroke_order)
     print(f"STROKE_ORDER={args.stroke_order}")
     renderer.render_to(raw, args.total_ms)
-    result = _transcode_with_app_encoder(raw, final, args.fps, renderer_module)
+    result = _finish_render(raw, final, args.fps, renderer_module, transcode=not args.skip_transcode)
     print(f"OUTPUT={result}")
     return 0
 

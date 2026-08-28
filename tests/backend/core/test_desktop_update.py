@@ -64,6 +64,9 @@ def test_download_update_writes_the_release_asset(monkeypatch, tmp_path):
 def test_windows_update_script_uses_staged_replace_and_rollback(tmp_path):
     script = system._windows_update_script(tmp_path)
     text = script.read_text(encoding="utf-8")
+    assert "param([int]$AppPid" in text
+    assert "Wait-Process -Id $AppPid" in text
+    assert "[int]$Pid" not in text
     assert "Expand-Archive" in text
     assert "Move-Item -LiteralPath $Target -Destination $backup" in text
     assert "Move-Item -LiteralPath $backup -Destination $Target" in text

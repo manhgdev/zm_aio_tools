@@ -74,7 +74,7 @@ async def drawing_create_batch(images: list[UploadFile] = File(...), options: st
             temp.unlink(missing_ok=True)
     if start_now:
         start_batch([job["id"] for job in jobs])
-    return {"jobs": jobs, "mode": "sequential", "started": start_now}
+    return {"jobs": jobs, "mode": "parallel", "started": start_now}
 
 
 @router.post("/api/drawing/jobs/start")

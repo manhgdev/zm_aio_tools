@@ -528,6 +528,31 @@
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(2px);
 }
+.siv-live-logo {
+  position: absolute;
+  z-index: 19;
+  max-width: 30%;
+  overflow: hidden;
+  color: #fff;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  text-shadow: 0 2px 4px rgb(0 0 0 / 0.85);
+  transform: translate(-50%, -50%);
+  transition: left 220ms ease, top 220ms ease, opacity 100ms linear;
+  pointer-events: none;
+}
+.siv-live-logo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+@media (prefers-reduced-motion: reduce) {
+  .siv-live-logo {
+    transition: none;
+  }
+}
 .siv-help-dialog {
   width: min(470px, 100%);
   padding: 0;

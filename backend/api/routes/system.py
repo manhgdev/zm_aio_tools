@@ -186,9 +186,9 @@ def _download_update(asset: dict[str, Any], updates: Path, version: str) -> Path
 def _windows_update_script(updates: Path) -> Path:
     script = updates / "apply-update.ps1"
     script.write_text(
-        "param([int]$Pid,[string]$Zip,[string]$Target,[string]$Exe)\n"
+        "param([int]$AppPid,[string]$Zip,[string]$Target,[string]$Exe)\n"
         "$ErrorActionPreference = 'Stop'\n"
-        "Wait-Process -Id $Pid -ErrorAction SilentlyContinue\n"
+        "Wait-Process -Id $AppPid -ErrorAction SilentlyContinue\n"
         "$parent = Split-Path $Target -Parent\n"
         "$stamp = Get-Date -Format 'yyyyMMddHHmmss'\n"
         "$next = Join-Path $parent ((Split-Path $Target -Leaf) + '.new-' + $stamp)\n"
@@ -727,7 +727,7 @@ def api_update_apply():
     script = _windows_update_script(package.parent)
     subprocess.Popen([
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-        "-Pid", str(os.getpid()), "-Zip", str(package), "-Target", str(target), "-Exe", str(sys.executable),
+        "-AppPid", str(os.getpid()), "-Zip", str(package), "-Target", str(target), "-Exe", str(sys.executable),
     ], creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)))
     _set_update_state(phase="applying", message="Đang cài và khởi động lại ứng dụng…")
     threading.Timer(0.8, lambda: os._exit(0)).start()
@@ -872,7 +872,7 @@ $owner.Close()
 def api_pick_srt_image_file(kind: str):
     choices = {
         "audio": ("Chọn file audio", "Audio|*.mp3;*.wav;*.m4a;*.aac;*.flac;*.ogg|Tất cả tệp|*.*"),
-        "timeline": ("Chọn file timeline", "Timeline TXT hoặc SRT|*.txt;*.srt|Tất cả tệp|*.*"),
+        "timeline": ("Chọn file timeline", "Timeline|*.txt;*.srt;*.vtt;*.ass;*.ssa;*.csv;*.tsv;*.json;*.lrc|Tất cả tệp|*.*"),
         "srt": ("Chọn file phụ đề", "Phụ đề SRT|*.srt|Tất cả tệp|*.*"),
         "watermark": ("Chọn ảnh logo", "Ảnh|*.png;*.jpg;*.jpeg;*.jfif;*.webp;*.bmp|Tất cả tệp|*.*"),
     }

@@ -324,6 +324,7 @@
   "Dòng thời gian 01": "Timeline 01",
   "Dùng JPG, JPEG, JFIF, PNG, WEBP, BMP, MP4, MOV, MKV, WEBM, AVI hoặc M4V. Nên đặt tên 001, 002, 003… tương ứng từng dòng timeline.": "Use JPG, JPEG, JFIF, PNG, WEBP, BMP, MP4, MOV, MKV, WEBM, AVI or M4V. You should name 001, 002, 003... corresponding to each timeline line.",
   "Dùng MP3, WAV, M4A hoặc định dạng audio FFmpeg đọc được. Có thể bỏ qua nếu muốn video không có tiếng.": "Use MP3, WAV, M4A or readable FFmpeg audio format. You can skip it if you want the video to have no sound.",
+  "Hỗ trợ TXT, SRT, VTT, ASS/SSA, CSV, TSV, JSON và LRC. Ví dụ TXT: 001_[00.00.00.00-00.00.08.00] …": "Supports TXT, SRT, VTT, ASS/SSA, CSV, TSV, JSON, and LRC. TXT example: 001_[00.00.00.00-00.00.08.00] …",
   "Dùng file .SRT có timecode hợp lệ. Đây là file bắt buộc ở chế độ Ghép ảnh/video SRT.": "Use a .SRT file with a valid timecode. This is a required file in SRT Photo/Video Collage mode.",
   "Dùng file TXT prompt ảnh/video, ví dụ: 001_[00.00.00.00-00.00.08.00] …": "Use TXT file to prompt photo/video, for example: 001_[00.00.00.00-00.00.08.00] …",
   "Dùng file phụ đề SRT — chạy Dịch toàn bộ": "Use SRT subtitle file — run Full Translation",

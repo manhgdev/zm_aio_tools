@@ -19,7 +19,7 @@ const JOB_KEY = 'videoclone.srt-image.job-id.v1'
 const HELP = {
   media: ['Thư mục ảnh / video', 'Chọn một thư mục chứa toàn bộ ảnh hoặc clip dùng để dựng video. APP đọc trực tiếp trong thư mục và tự sắp xếp theo tên, không upload/copy từng video.', 'Dùng JPG, JPEG, JFIF, PNG, WEBP, BMP, MP4, MOV, MKV, WEBM, AVI hoặc M4V. Nên đặt tên 001, 002, 003… tương ứng từng dòng timeline.'],
   audio: ['File audio', 'Âm thanh narration chính của video. Audio có sẵn trong các clip đầu vào sẽ bị bỏ để tránh chồng tiếng.', 'Dùng MP3, WAV, M4A hoặc định dạng audio FFmpeg đọc được. Có thể bỏ qua nếu muốn video không có tiếng.'],
-  timeline: ['File timeline', 'Quyết định file ảnh/clip nào xuất hiện và xuất hiện trong bao lâu. Mỗi dòng timecode tương ứng một file theo thứ tự tên.', 'Dùng file TXT prompt ảnh/video, ví dụ: 001_[00.00.00.00-00.00.08.00] …'],
+  timeline: ['File timeline', 'Quyết định file ảnh/clip nào xuất hiện và xuất hiện trong bao lâu. Mỗi dòng timecode tương ứng một file theo thứ tự tên.', 'Hỗ trợ TXT, SRT, VTT, ASS/SSA, CSV, TSV, JSON và LRC. Ví dụ TXT: 001_[00.00.00.00-00.00.08.00] …'],
   output: ['File xuất', 'Chọn thư mục và tên video MP4 sẽ được lưu sau khi render. Nếu không chọn, APP lưu trong thư mục xuất mặc định.', 'Bấm Chọn để mở hộp thoại Windows. Ví dụ: D:\\Video\\lich-su-loai-nguoi.mp4.'],
   subtitles: ['File phụ đề', 'Chèn chữ phụ đề trực tiếp vào hình ảnh video.', 'Dùng file .SRT có timecode hợp lệ. Đây là file bắt buộc ở chế độ Ghép ảnh/video SRT.'],
   subtitleFontFamily: ['Phông chữ', 'Kiểu chữ (font) dùng cho phụ đề.', 'Nên chọn các font không chân (sans-serif) nét rõ như Noto Sans, Inter, Roboto để dễ đọc trên mọi thiết bị.'],
@@ -441,9 +441,9 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
                 {timelineMode === 'paste'
                   ? <textarea
                       className="siv-timeline-input"
-                      aria-label={t('Dán nội dung TXT hoặc SRT', 'Paste TXT or SRT content')}
+                      aria-label={t('Dán nội dung timeline', 'Paste timeline content')}
                       value={timelineText}
-                      placeholder={t('Dán nội dung TXT hoặc SRT', 'Paste TXT or SRT content')}
+                      placeholder={t('Dán nội dung TXT, SRT, VTT, ASS, CSV hoặc JSON', 'Paste TXT, SRT, VTT, ASS, CSV, or JSON content')}
                       onChange={(event) => setTimelineText(event.target.value)}
                     />
                   : <div className="siv-input"><span title={timelinePath}>{timelinePath || t('Không dùng timeline · ghép tuần tự', 'No timeline · merge sequentially')}</span></div>}
@@ -722,6 +722,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
               delogoAuto={delogoAuto}
               delogoRect={delogoRect}
               onDelogoRectChange={setDelogoRect}
+              logo={{ enabled: logoEnabled, source: logoSource, text: logoText, icon: logoIcon, imagePath: watermarkPath, fontSize: logoFontSize, size: logoSize, color: logoColor, opacity: logoOpacity, x: logoX, y: logoY, motion: logoMotion, scope: logoScope, start: logoStart, end: logoEnd, visibleSec: logoVisibleSec, hiddenSec: logoHiddenSec, fadeSec: logoFadeSec, safeMargin: logoSafeMargin }}
             />
           )}
         </div>
@@ -795,6 +796,27 @@ type PreviewProps = {
   delogoAuto?: boolean
   delogoRect?: { x: number; y: number; w: number; h: number }
   onDelogoRectChange?: (r: { x: number; y: number; w: number; h: number }) => void
+  logo?: {
+    enabled: boolean
+    source: 'text' | 'image' | 'icon'
+    text: string
+    icon: string
+    imagePath: string
+    fontSize: number
+    size: number
+    color: string
+    opacity: number
+    x: number
+    y: number
+    motion: string
+    scope: string
+    start: number
+    end: number
+    visibleSec: number
+    hiddenSec: number
+    fadeSec: number
+    safeMargin: number
+  }
 }
 
 const SAMPLE_LINES = ['Đây là dòng phụ đề mẫu,', 'hiển thị trực tiếp theo cài đặt.']
@@ -813,7 +835,9 @@ const PLATFORM_OPTIONS = [
     icon: <svg viewBox="0 0 24 24" fill="#1877F2" width="16" height="16"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg> },
 ]
 
-function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacity, fontSize, marginBottom, resolution, onResolutionChange, platform, onPlatformChange, mediaFolder, videoSrc, delogoEnabled, delogoAuto, delogoRect, onDelogoRectChange }: PreviewProps) {
+function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacity, fontSize, marginBottom, resolution, onResolutionChange, platform, onPlatformChange, mediaFolder, videoSrc, delogoEnabled, delogoAuto, delogoRect, onDelogoRectChange, logo }: PreviewProps) {
+  const { locale } = useLocale()
+  const t = (vietnamese: string, english: string) => localize(locale, vietnamese, english)
   // Fetch kích thước thực tế của media khi resolution=auto
   const [mediaAp, setMediaAp] = useState<{ w: number; h: number } | null>(null)
   useEffect(() => {
@@ -846,6 +870,18 @@ function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacit
   const frameRef = useRef<HTMLDivElement>(null)
   const [frameH, setFrameH] = useState(300)
   const [thumbIdx, setThumbIdx] = useState(0)
+  const [mediaPreviewError, setMediaPreviewError] = useState(false)
+  useEffect(() => {
+    setThumbIdx(0)
+    setMediaPreviewError(false)
+  }, [mediaFolder])
+  const [logoClock, setLogoClock] = useState(0)
+  useEffect(() => {
+    if (!logo?.enabled || logo.motion !== 'random') { setLogoClock(0); return }
+    const startedAt = performance.now()
+    const timer = window.setInterval(() => setLogoClock((performance.now() - startedAt) / 1000), 100)
+    return () => window.clearInterval(timer)
+  }, [logo?.enabled, logo?.motion])
 
   // Đo chiều cao frame thực tế để tính scale đúng với ASS (PlayResY=288)
   useEffect(() => {
@@ -881,6 +917,26 @@ function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacit
   // ponytail: ASS Outline (padding hộp nền) là giá trị cố định PlayRes, không phải em-based
   // solid: Outline=1.2, box: Outline=2 — scale giống fontSize/margin
   const outlinePx = bgStyle === 'box' ? Math.round(2 * scale) : bgStyle === 'solid' ? Math.round(1.2 * scale) : 0
+  const logoCycle = Math.max(0.5, Number(logo?.visibleSec || 4)) + Math.max(0, Number(logo?.hiddenSec || 0))
+  const logoStep = Math.floor(logoClock / logoCycle)
+  const logoRandomPositions = [[0.08, 0.10], [0.90, 0.62], [0.12, 0.60], [0.88, 0.12], [0.50, 0.68], [0.50, 0.08], [0.08, 0.68], [0.78, 0.38]]
+  const logoRandomPosition = logoRandomPositions[logoStep % logoRandomPositions.length]
+  const logoMargin = Math.max(0, Math.min(20, Number(logo?.safeMargin || 0)))
+  const logoXPreview = logo?.motion === 'random'
+    ? logoMargin + logoRandomPosition[0] * (100 - logoMargin * 2)
+    : Math.max(0, Math.min(100, Number(logo?.x || 0)))
+  const logoYPreview = logo?.motion === 'random'
+    ? logoMargin + logoRandomPosition[1] * Math.max(0, 75 - logoMargin * 2)
+    : Math.max(0, Math.min(100, Number(logo?.y || 0)))
+  const logoLocalTime = logoClock % logoCycle
+  const logoVisible = logo?.motion !== 'random' || logoLocalTime < Math.max(0.5, Number(logo.visibleSec || 4))
+  const logoInScope = logo?.scope !== 'range' || (logoClock >= Number(logo.start || 0) && logoClock <= Number(logo.end || 0))
+  const logoFade = logo?.source === 'image' ? 0 : Math.max(0, Math.min(Number(logo?.fadeSec || 0), Number(logo?.visibleSec || 4) / 2))
+  const logoFadeFactor = !logoVisible ? 0 : logo?.motion !== 'random' || !logoFade ? 1 : Math.min(
+    1,
+    logoLocalTime / logoFade,
+    (Number(logo.visibleSec) - logoLocalTime) / logoFade,
+  )
 
 
   return (
@@ -927,11 +983,18 @@ function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacit
               {mediaFolder ? (
                 <>
                   <img
+                    key={`${mediaFolder}:${thumbIdx}`}
                     src={`/api/srt-image/media-thumb?folder=${encodeURIComponent(mediaFolder)}&index=${thumbIdx}`}
                     alt=""
-                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: mediaPreviewError ? 0 : 0.85 }}
+                    onLoad={() => setMediaPreviewError(false)}
+                    onError={() => setMediaPreviewError(true)}
                   />
+                  {mediaPreviewError && (
+                    <div className="siv-live-preview-bg" role="status">
+                      {t('Không tải được media xem trước', 'Unable to load preview media')}
+                    </div>
+                  )}
                   <div style={{
                     position: 'absolute', top: 6, right: 6, zIndex: 22,
                     display: 'flex', gap: 3, alignItems: 'center',
@@ -952,6 +1015,23 @@ function SubtitleLivePreview({ fontFamily, textColor, bgStyle, bgColor, bgOpacit
               )}
               {/* Platform UI chrome overlay */}
               <PlatformChrome platform={activePlatform} />
+              {logo?.enabled && logoInScope && (
+                <div
+                  className="siv-live-logo"
+                  style={{
+                    left: `${logoXPreview}%`,
+                    top: `${logoYPreview}%`,
+                    color: logo.color,
+                    opacity: Math.max(0.05, Math.min(1, logo.opacity / 100)) * logoFadeFactor,
+                    fontSize: logo.source === 'text' ? `${Math.max(6, logo.fontSize) * scale}px` : undefined,
+                    width: logo.source === 'image' ? `${Math.max(2, Math.min(30, logo.size))}%` : undefined,
+                  }}
+                >
+                  {logo.source === 'image' && logo.imagePath
+                    ? <img src={`/api/srt-image/logo-preview?path=${encodeURIComponent(logo.imagePath)}`} alt="" />
+                    : logo.source === 'icon' ? logo.icon : logo.text}
+                </div>
+              )}
               {/* Phụ đề mẫu */}
               <div
                 className="siv-live-caption-wrap"

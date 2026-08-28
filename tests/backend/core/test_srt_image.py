@@ -7,8 +7,10 @@ from pipeline.srt_image import (
     _ffmpeg_subtitle,
     _log,
     _logo_position,
+    _render_logo_asset,
     _text_logo_filter,
     _text_logo_position,
+    LOGO_RANDOM_POSITIONS,
     create_job,
     image_resolution,
     is_video,
@@ -155,6 +157,21 @@ def test_srt_can_supply_media_timing(tmp_path):
     assert parse_timing_times(timeline) == [(0.0, 2.0), (2.0, 5.0)]
 
 
+def test_common_timeline_formats_supply_media_timing(tmp_path):
+    samples = {
+        "timeline.vtt": "WEBVTT\n\n00:00.000 --> 00:02.000\nOne\n\n00:02.000 --> 00:05.000\nTwo\n",
+        "timeline.ass": "[Events]\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,One\nDialogue: 0,0:00:02.00,0:00:05.00,Default,,0,0,0,,Two\n",
+        "timeline.csv": "start,end,text\n0,2,One\n2,5,Two\n",
+        "timeline.tsv": "start_time\tend_time\ttext\n0\t2\tOne\n2\t5\tTwo\n",
+        "timeline.json": '{"scenes":[{"start":0,"end":2},{"startTime":"00:02.000","endTime":"00:05.000"}]}',
+        "timeline.lrc": "[00:00.00]One\n[00:02.00]Two\n[00:05.00]End\n",
+    }
+    for name, content in samples.items():
+        timeline = tmp_path / name
+        timeline.write_text(content, encoding="utf-8")
+        assert parse_timing_times(timeline) == [(0.0, 2.0), (2.0, 5.0)], name
+
+
 def test_sequential_media_times_works_without_a_timeline(monkeypatch, tmp_path):
     image = tmp_path / "001.jpg"
     video = tmp_path / "002.mp4"
@@ -186,7 +203,18 @@ def test_image_resolution_is_even(monkeypatch, tmp_path):
 
 def test_logo_position():
     assert "W*0.0000" in _logo_position(0, 0)[0]
-    assert "sin(t" in _logo_position(moving=True)[0]
+    assert "floor(t/6.000)" in _logo_position(moving=True)[0]
+
+
+def test_random_logo_positions_do_not_jump_to_adjacent_nearby_regions():
+    pairs = zip(LOGO_RANDOM_POSITIONS, (*LOGO_RANDOM_POSITIONS[1:], LOGO_RANDOM_POSITIONS[0]))
+    assert all((right[0] - left[0]) ** 2 + (right[1] - left[1]) ** 2 >= 0.16 for left, right in pairs)
+
+
+def test_text_logo_is_rendered_as_png_without_ffmpeg_drawtext(tmp_path):
+    output = _render_logo_asset({"source": "text", "text": "ZM TOOL", "fontSize": 24, "color": "#ffffff"}, tmp_path)
+    assert output == tmp_path / "logo-generated.png"
+    assert output.is_file()
 
 
 def test_video_extensions():

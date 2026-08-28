@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -319,17 +320,21 @@ def run(job_id: str) -> None:
             raise RuntimeError("Streaming drawing renderer is not bundled with this build")
         stream_dir = Path(job["work"]) / "stream"
         stream_dir.mkdir(exist_ok=True)
-        # The reference renderer paints every frame with OpenCV/NumPy.  1280px
-        # internal canvas keeps stroke motion smooth without making a 1080p
-        # export paint 2.25× as many pixels; final scale still honors output.
-        render_long_edge = min(max(width, height), 1600 if str(options.get("resolution")) == "4k" else 1280)
+        # OpenCV paints every pixel of every frame on CPU.  Paint a compact
+        # master, then let the verified hardware encoder restore export FPS
+        # and size; duration and user-facing output settings stay unchanged.
+        render_long_edge, render_fps = _drawing_render_profile(
+            width, height, fps, str(options.get("resolution", "720p")),
+        )
+        _log(job_id, f"Fast drawing master: {render_long_edge}px · {render_fps} FPS → export {max(width, height)}px · {fps} FPS")
         render_command = [
             str(_drawing_python()), "-u", str(renderer), str(source), "--out-dir", str(stream_dir),
-            "--total-ms", str(round(duration * 1000)), "--fps", str(fps),
+            "--total-ms", str(round(duration * 1000)), "--fps", str(render_fps),
             "--grid-edge", str(grid_edge), "--ink-path", ink_path,
             "--long-edge", str(render_long_edge),
             "--tool", tool, "--thickness", str(thickness),
             "--stroke-order", stroke_order,
+            "--skip-transcode",
         ]
         # Selecting the Pen is actionable: it uses the visible hand/pen tip
         # even when the user leaves the general drawing mode selected.
@@ -338,7 +343,7 @@ def run(job_id: str) -> None:
         _run_streaming_renderer(job_id, render_command, timeout=max(900, int(duration * 90)))
         if (get_job(job_id) or {}).get("status") == "cancelled":
             return
-        generated = sorted(stream_dir.glob("*_h264.mp4"), key=lambda item: item.stat().st_mtime)
+        generated = sorted(stream_dir.glob("drawing_*.mp4"), key=lambda item: item.stat().st_mtime)
         if not generated:
             raise RuntimeError("Streaming renderer finished without an MP4 output")
         _update(job_id, step="encoding", progress=90)
@@ -383,18 +388,31 @@ def start(job_id: str) -> None:
     worker.start()
 
 
+def _drawing_batch_workers(job_count: int) -> int:
+    """Use two renderers on normal desktops without overwhelming small machines."""
+    return min(job_count, 2 if (os.cpu_count() or 1) >= 6 else 1)
+
+
+def _drawing_render_profile(width: int, height: int, fps: int, resolution: str) -> tuple[int, int]:
+    """Bound CPU painting cost; the final GPU pass restores requested size/FPS."""
+    long_edge = 1280 if resolution == "4k" else min(960, max(width, height))
+    return long_edge, min(15, fps)
+
+
 def start_batch(job_ids: list[str]) -> None:
-    """Render a batch sequentially so local CPU/GPU is never oversubscribed."""
+    """Render a batch with bounded parallelism; every Drawing job is CPU-heavy."""
     def worker() -> None:
-        for job_id in job_ids:
+        def render_one(job_id: str) -> None:
             if (get_job(job_id) or {}).get("status") == "cancelled":
-                continue
+                return
             start(job_id)
             while True:
                 state = get_job(job_id)
                 if not state or state.get("status") in {"done", "error", "cancelled"}:
                     break
                 time.sleep(.25)
+        with ThreadPoolExecutor(max_workers=_drawing_batch_workers(len(job_ids)), thread_name_prefix="drawing-batch-job") as pool:
+            list(pool.map(render_one, job_ids))
     threading.Thread(target=worker, name="drawing-batch", daemon=True).start()
 
 

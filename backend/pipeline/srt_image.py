@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import json
+import csv
 import os
 import random
 import signal
@@ -20,6 +21,7 @@ from pipeline.core.output_paths import downloads_folder
 from pipeline.core.jobs import kill_process_tree
 from pipeline.core.media import h264_encoder_args, h264_hardware_encoder
 from pipeline.drawing.jobs import create_job as create_drawing_job, get_job as get_drawing_job, start as start_drawing_job
+from pipeline.export.fonts import _resolve_font_name
 
 ROOT = DATA / "srt_image"
 ROOT.mkdir(parents=True, exist_ok=True)
@@ -32,6 +34,10 @@ _SRT_RANGE = re.compile(
 )
 _TIMELINE_RANGE = re.compile(r"\[\s*([0-9:.,]+)\s*[-–—]\s*([0-9:.,]+)\s*\]")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+LOGO_RANDOM_POSITIONS = (
+    (0.08, 0.10), (0.90, 0.62), (0.12, 0.60), (0.88, 0.12),
+    (0.50, 0.68), (0.50, 0.08), (0.08, 0.68), (0.78, 0.38),
+)
 
 
 def _seconds(value: str) -> float:
@@ -91,6 +97,8 @@ def shift_srt(path: Path, output: Path, offset: float) -> Path:
 
 def _timeline_seconds(value: str) -> float:
     normalized = value.strip().replace(",", ".")
+    if re.fullmatch(r"\d+(?:\.\d+)?", normalized):
+        return float(normalized)
     dot_parts = normalized.split(".")
     if ":" not in normalized and len(dot_parts) == 4:
         hours, minutes, seconds, centiseconds = dot_parts
@@ -117,15 +125,87 @@ def parse_timeline_times(path: Path) -> list[tuple[float, float]]:
 
 
 def parse_timing_times(path: Path) -> list[tuple[float, float]]:
-    """Read either prompt TXT ranges or SRT cue ranges as media timing."""
-    if path.suffix.lower() == ".srt":
-        return parse_srt_times(path)
-    try:
-        return parse_timeline_times(path)
-    except ValueError:
-        # Pasted SRT arrives as ``timeline.txt`` from the browser.  Accept it
-        # too, rather than forcing the user to save a temporary file first.
-        return parse_srt_times(path)
+    """Read common prompt, subtitle, table, and structured timeline formats."""
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+
+    def ranges(values: list[tuple[object, object]]) -> list[tuple[float, float]]:
+        result: list[tuple[float, float]] = []
+        for left, right in values:
+            try:
+                start, end = _timeline_seconds(str(left)), _timeline_seconds(str(right))
+            except (TypeError, ValueError):
+                continue
+            if end > start:
+                result.append((start, end))
+        if not result:
+            raise ValueError("Timeline không có mốc thời gian hợp lệ")
+        return result
+
+    def arrow() -> list[tuple[float, float]]:
+        values = []
+        for line in text.splitlines():
+            if "-->" in line:
+                left, right = line.split("-->", 1)
+                values.append((left.strip(), right.strip().split()[0]))
+        return ranges(values)
+
+    def ass() -> list[tuple[float, float]]:
+        values = []
+        for line in text.splitlines():
+            if line.lstrip().lower().startswith("dialogue:"):
+                fields = line.split(":", 1)[1].split(",", 9)
+                if len(fields) >= 3:
+                    values.append((fields[1], fields[2]))
+        return ranges(values)
+
+    def table(delimiter: str) -> list[tuple[float, float]]:
+        rows = list(csv.reader(text.splitlines(), delimiter=delimiter))
+        if not rows:
+            raise ValueError("Timeline bảng trống")
+        header = [re.sub(r"[^a-z]", "", cell.lower()) for cell in rows[0]]
+        start_aliases, end_aliases = {"start", "starttime", "from", "in"}, {"end", "endtime", "to", "out"}
+        start_index = next((i for i, value in enumerate(header) if value in start_aliases), None)
+        end_index = next((i for i, value in enumerate(header) if value in end_aliases), None)
+        data = rows[1:] if start_index is not None and end_index is not None else rows
+        start_index, end_index = start_index or 0, end_index or 1
+        return ranges([(row[start_index], row[end_index]) for row in data if len(row) > max(start_index, end_index)])
+
+    def structured() -> list[tuple[float, float]]:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            payload = next((payload[key] for key in ("scenes", "items", "segments", "cues", "timeline", "data") if isinstance(payload.get(key), list)), [payload])
+        if not isinstance(payload, list):
+            raise ValueError("JSON timeline phải là danh sách")
+        values = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            start = next((item[key] for key in ("start", "startTime", "start_time", "from", "in") if key in item), None)
+            end = next((item[key] for key in ("end", "endTime", "end_time", "to", "out") if key in item), None)
+            values.append((start, end))
+        return ranges(values)
+
+    def lrc() -> list[tuple[float, float]]:
+        stamps = [int(minutes) * 60 + float(seconds.replace(",", "."))
+                  for minutes, seconds in re.findall(r"(?m)^\s*\[(\d+):(\d+(?:[.,]\d+)?)\]", text)]
+        return ranges(list(zip(stamps, stamps[1:])))
+
+    suffix = path.suffix.lower()
+    preferred = {
+        ".srt": arrow, ".vtt": arrow, ".ass": ass, ".ssa": ass,
+        ".csv": lambda: table(","), ".tsv": lambda: table("\t"),
+        ".json": structured, ".lrc": lrc,
+    }.get(suffix)
+    parsers = ([preferred] if preferred else []) + [
+        lambda: parse_timeline_times(path), arrow, ass, structured,
+        lambda: table(","), lambda: table("\t"), lrc,
+    ]
+    for parser in parsers:
+        try:
+            return parser()
+        except (ValueError, TypeError, IndexError, json.JSONDecodeError, csv.Error):
+            continue
+    raise ValueError("File không có timeline hợp lệ")
 
 
 def select_cues_for_media(
@@ -515,9 +595,23 @@ def _ffmpeg_subtitle(path: Path, font_name: str = "system", font_size: int = 8, 
 
 
 
-def _logo_position(x_percent: float = 88, y_percent: float = 88, moving: bool = False) -> tuple[str, str]:
+def _logo_step_axis(step: str, axis: int) -> str:
+    index = f"mod({step},{len(LOGO_RANDOM_POSITIONS)})"
+    expression = f"{LOGO_RANDOM_POSITIONS[-1][axis]:.4f}"
+    for position_index in range(len(LOGO_RANDOM_POSITIONS) - 2, -1, -1):
+        expression = f"if(eq({index},{position_index}),{LOGO_RANDOM_POSITIONS[position_index][axis]:.4f},{expression})"
+    return expression
+
+
+def _logo_position(x_percent: float = 88, y_percent: float = 88,
+                   moving: bool = False, cycle: float = 6,
+                   safe_margin: float = 4) -> tuple[str, str]:
     if moving:
-        return "(W-w)*(0.5+0.45*sin(t*0.37))", "(H-h)*(0.5+0.45*cos(t*0.29))"
+        margin = max(0, min(20, float(safe_margin))) / 100
+        step = f"floor(t/{max(0.5, cycle):.3f})"
+        x = f"W*{margin:.4f}+max(0,W-w-W*{margin * 2:.4f})*({_logo_step_axis(step, 0)})"
+        y = f"H*{margin:.4f}+max(0,H*0.75-h-H*{margin * 2:.4f})*({_logo_step_axis(step, 1)})"
+        return x, y
     x = max(0, min(100, float(x_percent))) / 100
     y = max(0, min(100, float(y_percent))) / 100
     return f"min(W-w,max(0,W*{x:.4f}))", f"min(H-h,max(0,H*{y:.4f}))"
@@ -529,9 +623,9 @@ def _text_logo_position(x_percent: float = 88, y_percent: float = 88,
     if moving:
         margin = max(0, min(20, float(safe_margin))) / 100
         step = f"floor(t/{max(0.5, cycle):.3f})"
-        x = f"W*{margin:.4f}+max(0,W-tw-W*{margin * 2:.4f})*mod(abs(sin({step}*12.9898+1.37)*43758.5453),1)"
+        x = f"W*{margin:.4f}+max(0,W-tw-W*{margin * 2:.4f})*({_logo_step_axis(step, 0)})"
         # Phụ đề nằm dưới: logo ngẫu nhiên chỉ dùng 75% chiều cao phía trên.
-        y = f"H*{margin:.4f}+max(0,H*0.75-th-H*{margin * 2:.4f})*mod(abs(sin({step}*78.233+2.71)*43758.5453),1)"
+        y = f"H*{margin:.4f}+max(0,H*0.75-th-H*{margin * 2:.4f})*({_logo_step_axis(step, 1)})"
         return x, y
     x = max(0, min(100, float(x_percent))) / 100
     y = max(0, min(100, float(y_percent))) / 100
@@ -582,6 +676,34 @@ def _text_logo_filter(logo: dict, height: int) -> str:
         f"fontcolor={color}:shadowcolor=black@0.85:shadowx=2:shadowy=2:"
         f"alpha='{alpha}':x='{x}':y='{y}'{enable}"
     )
+
+
+def _render_logo_asset(logo: dict, work: Path) -> Path:
+    """Render a text/icon logo once so FFmpeg does not require drawtext."""
+    from PIL import Image, ImageColor, ImageDraw, ImageFont
+
+    text = str(logo.get("text") if logo.get("source") == "text" else logo.get("icon", "★"))
+    font_size = max(6, min(160, int(logo.get("fontSize") or 10)))
+    font_path = _resolve_font_name("NotoSans-Bold.ttf")
+    font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
+    color = str(logo.get("color") or "#ffffff")
+    try:
+        fill = ImageColor.getrgb(color)
+    except ValueError:
+        fill = (255, 255, 255)
+    probe = Image.new("RGBA", (1, 1))
+    bounds = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font, stroke_width=0)
+    padding = 4
+    width = max(1, bounds[2] - bounds[0]) + padding * 2 + 2
+    height = max(1, bounds[3] - bounds[1]) + padding * 2 + 2
+    output = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(output)
+    origin = (padding - bounds[0], padding - bounds[1])
+    draw.text((origin[0] + 2, origin[1] + 2), text, font=font, fill=(0, 0, 0, 217))
+    draw.text(origin, text, font=font, fill=(*fill, 255))
+    target = work / "logo-generated.png"
+    output.save(target)
+    return target
 
 
 def _motion_filter(
@@ -790,10 +912,16 @@ def run(job_id: str) -> None:
             audio_index = 1
             cmd += ["-i", job["audio"]]
         logo = opts.get("logo") if isinstance(opts.get("logo"), dict) else {}
+        logo_asset = None
+        if logo.get("enabled"):
+            if logo.get("source") == "image" and job.get("watermark"):
+                logo_asset = Path(job["watermark"])
+            elif logo.get("source") in {"text", "icon"}:
+                logo_asset = _render_logo_asset(logo, work)
         watermark_index = None
-        if logo.get("enabled") and logo.get("source") == "image" and job.get("watermark"):
+        if logo_asset is not None:
             watermark_index = 2 if audio_index is not None else 1
-            cmd += ["-loop", "1", "-i", job["watermark"]]
+            cmd += ["-loop", "1", "-i", str(logo_asset)]
         speed_filter = f",setpts=PTS/{speed:.6f}" if abs(speed - 1) > 0.001 else ""
         subtitle_filter = ""
         if job["srt"]:
@@ -812,26 +940,33 @@ def run(job_id: str) -> None:
         if watermark_index is not None:
             opacity = max(5, min(100, float(logo.get("opacity", 85)))) / 100
             scale = max(2, min(30, float(logo.get("size", 8)))) / 100
-            x, y = _logo_position(logo.get("x", 88), logo.get("y", 88), logo.get("motion") == "random")
-            enable = ""
+            moving_logo = logo.get("motion") == "random"
+            visible = max(0.5, float(logo.get("visibleSec") or 4))
+            hidden = max(0, float(logo.get("hiddenSec") or 2))
+            cycle = visible + hidden
+            x, y = _logo_position(
+                logo.get("x", 88), logo.get("y", 88), moving_logo, cycle, logo.get("safeMargin", 4),
+            )
+            enable_parts = [f"lt(mod(t,{cycle:.3f}),{visible:.3f})"] if moving_logo else []
             if logo.get("scope") == "range":
                 start = max(0, float(logo.get("start", 0)))
                 end = max(start, float(logo.get("end", start)))
-                enable = f":enable='between(t,{start:.3f},{end:.3f})'"
+                enable_parts.append(f"between(t,{start:.3f},{end:.3f})")
+            enable = f":enable='{'*'.join(enable_parts)}'" if enable_parts else ""
+            logo_scale = (
+                f"scale=-1:{max(12, round(height * scale))},"
+                if logo.get("source") == "image" else ""
+            )
             graph = (
                 f"[0:v]{base_vf}{speed_filter}[base];"
-                f"[{watermark_index}:v]scale=-1:{max(12, round(height * scale))},format=rgba,"
+                f"[{watermark_index}:v]{logo_scale}format=rgba,"
                 f"colorchannelmixer=aa={opacity:.3f}[wm];"
                 f"[base][wm]overlay=x='{x}':y='{y}':shortest=1{enable}"
                 f"{subtitle_filter},format=yuv420p[vout]"
             )
             cmd += ["-filter_complex", graph, "-map", "[vout]"]
         else:
-            logo_filter = (
-                f",{_text_logo_filter(logo, height)}"
-                if logo.get("enabled") and logo.get("source") in {"text", "icon"} else ""
-            )
-            cmd += ["-vf", f"{base_vf}{subtitle_filter}{logo_filter}{speed_filter},format=yuv420p"]
+            cmd += ["-vf", f"{base_vf}{subtitle_filter}{speed_filter},format=yuv420p"]
         cmd += _encoder_args(use_gpu, crf)
         if audio_index is not None:
             if watermark_index is None:

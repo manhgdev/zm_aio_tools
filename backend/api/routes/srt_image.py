@@ -20,6 +20,7 @@ MEDIA_SUFFIXES = {
     ".jpg", ".jpeg", ".jfif", ".png", ".webp", ".bmp",
     ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v",
 }
+TIMELINE_SUFFIXES = {".txt", ".srt", ".vtt", ".ass", ".ssa", ".csv", ".tsv", ".json", ".lrc"}
 
 
 def _natural_name(path: Path):
@@ -99,6 +100,14 @@ def media_thumb(folder: str = "", index: int = 0):
     raise HTTPException(500, "Không trích được frame")
 
 
+@router.get("/api/srt-image/logo-preview")
+def logo_preview(path: str = ""):
+    target = Path(path).expanduser().resolve()
+    if not target.is_file() or target.suffix.lower() not in {".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp"}:
+        raise HTTPException(404, "Ảnh logo không tồn tại")
+    return FileResponse(target)
+
+
 @router.get("/api/srt-image/jobs")
 def jobs():
     return list_jobs()
@@ -163,7 +172,7 @@ async def create(
             raise HTTPException(400, f"Chưa chọn file {target_name}")
         return None
 
-    timeline_file = copy_input(timeline_path, timeline, "timeline", {".txt", ".srt"})
+    timeline_file = copy_input(timeline_path, timeline, "timeline", TIMELINE_SUFFIXES)
     srt_file = copy_input(srt_path, srt, "subtitles", {".srt"})
     audio_file = copy_input(
         audio_path, audio, "audio", {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"},
