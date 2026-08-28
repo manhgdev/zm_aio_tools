@@ -56,16 +56,37 @@
   color: var(--muted-foreground);
   font-size: 0.85rem;
 }
-.siv-preview-pane video {
-  display: block;
-  background: #000;
-  object-fit: contain;
-  outline: none;
+.siv-output-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  min-height: 240px;
+  background: color-mix(in srgb, var(--surface) 70%, var(--background) 30%);
+  overflow: hidden;
+}
+.siv-output-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   max-width: 100%;
   max-height: 100%;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 2px solid color-mix(in srgb, var(--line) 60%, transparent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+  background: #000;
+}
+.siv-output-frame video {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 220px);
   width: auto;
   height: auto;
-  margin: 0 auto;
+  object-fit: contain;
+  outline: none;
 }
 .siv-workspace {
   background: var(--surface);

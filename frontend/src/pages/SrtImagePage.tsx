@@ -724,13 +724,17 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
             )}
           </div>
           {job?.status === 'done' && job.id ? (
-            <video
-              key={job.id}
-              src={`/api/srt-image/jobs/${job.id}/file`}
-              controls
-              autoPlay
-              preload="auto"
-            />
+            <div className="siv-output-stage">
+              <div className="siv-output-frame">
+                <video
+                  key={job.id}
+                  src={`/api/srt-image/jobs/${job.id}/file`}
+                  controls
+                  autoPlay
+                  preload="auto"
+                />
+              </div>
+            </div>
           ) : (
             <SubtitleLivePreview
               fontFamily={subtitleFontFamily}
