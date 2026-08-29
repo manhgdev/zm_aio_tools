@@ -224,10 +224,9 @@ def public_app_config() -> dict[str, Any]:
         },
         # Bản đóng gói / launcher — file đã trên máy, không cần «Tải xuống»
         "desktop": is_desktop,
-        # The desktop UI uses this to show the real, read-only root before the
-        # user-editable feature subfolder.  Keep output locations discoverable
-        # without hard-coding a specific account's home directory in the web UI.
-        "desktopOutputRoot": str(Path.home() / "Downloads" / "ZM_AIO_TOOL") if is_desktop else "",
+        # Luôn trả về đường dẫn thực trên máy — cả Web App và Desktop App cùng
+        # máy với backend, đều ghi vào ~/Downloads/ZM_AIO_TOOL/.
+        "desktopOutputRoot": str(Path.home() / "Downloads" / "ZM_AIO_TOOL"),
     }
 
 

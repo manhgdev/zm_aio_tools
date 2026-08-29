@@ -68,7 +68,7 @@ export function OutputFolderField({
   const [desktopOutputRoot, setDesktopOutputRoot] = useState('')
   useEffect(() => setMessage(''), [value])
   useEffect(() => {
-    if (!isDesktopApp) return
+    // ponytail: backend always returns desktopOutputRoot (web + desktop same machine)
     let active = true
     void loadDesktopOutputRoot()
       .then((outputRoot) => {
@@ -76,7 +76,7 @@ export function OutputFolderField({
       })
       .catch(() => undefined)
     return () => { active = false }
-  }, [isDesktopApp])
+  }, [])
 
   const webPathPrefix = useMemo(
     () => `/Downloads/ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`,
@@ -94,13 +94,17 @@ export function OutputFolderField({
       : { prefix: normalized.slice(0, separatorIndex + 1), suffix: normalized.slice(separatorIndex + 1) }
   }, [appFolder, desktopOutputRoot, value])
   const webSuffix = useMemo(() => normalizeWebOutputName(value, appFolder), [appFolder, value])
-  const outputPrefix = isDesktopApp ? appPath.prefix : webPathPrefix
+  // Use real local path when backend tells us its output root (web + desktop)
+  const hasLocalRoot = Boolean(desktopOutputRoot)
+  const outputPrefix = (isDesktopApp || hasLocalRoot) ? appPath.prefix : webPathPrefix
   const compactPrefix = useMemo(() => compactOutputPrefix(outputPrefix), [outputPrefix])
-  const outputSuffix = isDesktopApp ? appPath.suffix : webSuffix
+  const outputSuffix = (isDesktopApp || hasLocalRoot) ? appPath.suffix : webSuffix
 
   useEffect(() => {
-    if (!isDesktopApp && webSuffix !== value) onChange(webSuffix)
-  }, [isDesktopApp, onChange, value, webSuffix])
+    // On pure web without a local root, normalise absolute paths out
+    if ((isDesktopApp || hasLocalRoot) && webSuffix !== value) return
+    if (!isDesktopApp && !hasLocalRoot && webSuffix !== value) onChange(webSuffix)
+  }, [isDesktopApp, hasLocalRoot, onChange, value, webSuffix])
 
   function changeOutputSuffix(nextSuffix: string) {
     const suffix = nextSuffix.trimStart()
