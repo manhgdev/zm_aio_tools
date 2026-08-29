@@ -119,10 +119,11 @@ export function OutputFolderField({
   async function chooseOutputFolder() {
     const selected = await onChoose?.()
     if (!isDesktopApp || !selected) return
-    // A picker result is the new locked base path. Keep a trailing separator
-    // so the editable input becomes a child/file name rather than hiding the
-    // final selected folder in the suffix.
-    onChange(`${selected.replace(/[\\/]+$/, '')}/`)
+    const next = `${selected.replace(/[\\/]+$/, '')}/`
+    onChange(next)
+    // ponytail: auto-save on picker select — no need to press Lưu manually
+    await onSave?.()
+    setMessage(t('Đã lưu thư mục.', 'Folder saved.'))
   }
 
   return (

@@ -2257,10 +2257,12 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   isDesktopApp={isDesktopApp}
                   value={settings.outputDir}
                   onChange={(outputDir) =>
+                    setSettings((current) => ({ ...current, outputDir }))
+                  }
+                  onSave={() =>
                     setSettings((current) => {
-                      const next = { ...current, outputDir };
-                      localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
-                      return next;
+                      localStorage.setItem(SETTINGS_KEY, JSON.stringify(current));
+                      return current;
                     })
                   }
                   onChoose={isDesktopApp ? pickOutputFolder : pickWebOutputFolder}
@@ -2268,6 +2270,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   appFolder={`flow/${createKind}`}
                   label={t("3. Thư mục kết quả", "3. Output folder")}
                 />
+
 
 
                 {!isDesktopApp && (
@@ -2328,12 +2331,8 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
             <div className="flow-card-title">
               <b>{t(`Hàng đợi (${jobs.length})`, `Queue (${jobs.length})`)}</b>
               <div className="flow-queue-tools">
-                {jobs.some((job) => job.status === "queued" || job.status === "processing") && (
-                  <button className="flow-text-button" type="button" onClick={cancelAllJobs}>{t("Hủy tất cả", "Cancel all")}</button>
-                )}
-                {jobs.some((job) => job.status === "failed" || job.status === "cancelled") && (
-                  <button className="flow-text-button" type="button" onClick={retryAllJobs}>{t("Chạy lại tất cả", "Retry all")}</button>
-                )}
+                <button className="flow-text-button" type="button" disabled={!jobs.some((job) => job.status === "failed" || job.status === "cancelled")} onClick={retryAllJobs}>{t("Chạy lại tất cả", "Retry all")}</button>
+                <button className="flow-text-button" type="button" disabled={!jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={cancelAllJobs}>{t("Hủy tất cả", "Cancel all")}</button>
                 <button className="flow-text-button is-danger" type="button" disabled={!jobs.length} onClick={deleteAllJobs}>{t("Xóa tất cả", "Delete all")}</button>
               </div>
             </div>
