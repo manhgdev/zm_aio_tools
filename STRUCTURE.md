@@ -15,6 +15,10 @@ frontend/src/
 │  ├─ useProjectSession.ts    Facade appSettings + useSessionRestore (F5 mở lại project)
 │  └─ i18n.tsx / ui.en.json   Hệ thống đa ngôn ngữ (VI/EN) chuẩn hóa qua translate/localize
 ├─ pages/                     Trang cấp cao theo từng chế độ làm việc
+│  ├─ FlowPage.tsx            Tạo video/ảnh AI (Flow) — state, routing, handlers
+│  ├─ FlowSeriesPanel.tsx     Quản lý loạt tập Flow (series/episode/scene)
+│  ├─ SrtImagePage.tsx        Ghép ảnh / video với âm thanh và file SRT
+│  ├─ srtImage.types.ts       Types + hằng số HELP + cachedSettings cho SrtImagePage
 │  ├─ ClonePage.tsx           Upload / khởi tạo Clone Video
 │  ├─ EditorPage.tsx          Container cho LivePreviewEditor
 │  ├─ FilmPage.tsx            Review Phim / Tóm tắt kịch bản & ghép cảnh
@@ -22,16 +26,22 @@ frontend/src/
 │  ├─ RendersPage.tsx         Thư viện quản lý các video đã render
 │  ├─ TtsPage.tsx             Container cho Text to Speech Studio
 │  ├─ VideoCleanerPage.tsx    Làm sạch video (xóa watermark, logo, phụ đề cứng)
-│  ├─ SrtImagePage.tsx        Ghép ảnh / video với âm thanh và file SRT
 │  ├─ SrtExportPage.tsx       Trích xuất, tinh chỉnh và xuất phụ đề SRT
 │  └─ DownloadPage.tsx        Tải video từ URL mạng xã hội đa nền tảng
 ├─ features/                  Modules nghiệp vụ theo tính năng
+│  ├─ configuration/
+│  │  ├─ ConfigModal.tsx         Cấu hình engine / API keys / setup phần cứng & runtime
+│  │  └─ configModal.helpers.ts  Types + constants (PROVIDERS, emptyCloud…) tách ra khỏi modal
 │  ├─ cleaner/                cleaner.api.ts — API tác vụ tẩy watermark/logo
-│  ├─ configuration/          Cấu hình engine / API keys / setup phần cứng & runtime
 │  ├─ download/               Form tải URL + quản lý hàng đợi download
 │  ├─ editor/
 │  │  ├─ LivePreviewEditor.tsx   Timeline + preview (orchestration UI)
 │  │  └─ lib/                    Helper thuần (captionMeasure, coverBox, coverLayout, editorMath, timeline, waveform)
+│  ├─ flow/
+│  │  ├─ flow.types.ts           Tất cả TypeScript types của Flow (FlowJob, FlowAccount, FlowSettings…)
+│  │  ├─ flow.helpers.ts         Constants, helpers thuần & API calls (flowRequest, loadFlowSnapshot…)
+│  │  ├─ flowSeries.helpers.ts   Types + helpers cho FlowSeriesPanel (Series, Episode, Scene, request…)
+│  │  └─ FlowTemplatesPanel.tsx  Panel chọn template prompt
 │  ├─ license/                LicensePage.tsx + license.api.ts — Quản lý kích hoạt bản quyền
 │  ├─ project/                API project, sidebar, types, compound
 │  │  └─ use*.ts                 Hook luồng dài của App: useSegmentEditing, useProjectMedia (bake/rebake),
@@ -40,7 +50,9 @@ frontend/src/
 │  └─ tts/                    TTS Studio UI + CSS
 │     ├─ TtsStudio.tsx           Orchestration + state
 │     ├─ Tts*Panel / TtsIcons    Panel con (input, history, voice) + icon nội bộ
-│     └─ lib/                    Logic thuần (voiceDisplay, srt, download, format)
+│     └─ lib/
+│        ├─ ttsStudioHelpers.tsx  SliderNumber, WAVE_BARS, SECTION_LABELS, STORAGE_KEYS…
+│        └─ voiceDisplay, srt, download, format  (logic thuần)
 └─ shared/                    Thành phần dùng chung toàn ứng dụng
    ├─ api/                    HTTP helper (httpClient.ts)
    ├─ components/             Header, ProgressPopup, Icons, ErrorBoundary, …
@@ -52,7 +64,28 @@ frontend/src/
 ### Quy ước frontend
 
 - `App.tsx`: state/liên kết cấp app (project, status, dub/export/cancel). Luồng dài thuộc feature → hook hoặc file feature.
-- `LivePreviewEditor` / `TtsStudio` / `FilmPage`: panel lớn; logic thuần đặt `features/*/lib/`, không nhét thêm helper vào component khổng lồ nếu có thể tách file.
+- **File page lớn**: logic thuần (types, constants, helpers, API) **phải đặt trong file `*.helpers.ts` hoặc `*.types.ts` cùng thư mục**, không nhét vào đầu component. Ví dụ: `flow.helpers.ts`, `configModal.helpers.ts`, `srtImage.types.ts`.
+- `LivePreviewEditor` / `TtsStudio` / `FilmPage`: panel lớn; logic thuần đặt `features/*/lib/`.
+- API + type theo domain: `project.api.ts`, `project.types.ts`, `cleaner.api.ts`, `studio.api.ts`, `license.api.ts`.
+- Lớp cũ `components/`, `lib/`, `services/` ở root `src/`: không thêm code mới; khi chạm, chuyển dần sang `shared/` hoặc feature nếu diff nhỏ.
+- Không tạo wrapper/placeholder "cho chuẩn cấu trúc".
+- Mọi UI mới phải hỗ trợ song ngữ (VI/EN) qua `localize(locale, vi, en)` hoặc `translate(locale, key)` theo quy tắc trong `AGENTS.md`.
+
+---
+
+## Scripts
+
+```text
+scripts/
+└─ release.sh     Đồng bộ 3 chỗ rồi push: build_app/VERSION + package.json + git tag
+                  Dùng: ./scripts/release.sh 4.2.0
+                        ./scripts/release.sh patch|minor|major
+                  CI sẽ tự tạo asset đúng tên theo tag: ZM_AIO_TOOL_v<version>-macos-arm64.pkg
+```
+
+> **Quy tắc version**: luôn dùng `release.sh` để bump. Không sửa `VERSION` / `package.json` tay rồi tạo tag riêng — sẽ gây lệch tên asset CI.
+
+��ng lồ nếu có thể tách file.
 - API + type theo domain: `project.api.ts`, `project.types.ts`, `cleaner.api.ts`, `studio.api.ts`, `license.api.ts`.
 - Lớp cũ `components/`, `lib/`, `services/` ở root `src/`: không thêm code mới; khi chạm, chuyển dần sang `shared/` hoặc feature nếu diff nhỏ.
 - Không tạo wrapper/placeholder “cho chuẩn cấu trúc”.
