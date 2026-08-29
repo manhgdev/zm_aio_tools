@@ -134,7 +134,9 @@ function settingsWithSelectedModel(settings: FlowSettings, kind: CreateKind, mod
     ...(kind === "image" ? { imageModel: model } : { videoModel: model }),
   };
 }
-const DRAFT_KEY = "zm-flow-veo:draft:v1";
+const DRAFT_VIDEO_KEY = "zm-flow-veo:draft-video:v1";
+const DRAFT_IMAGE_KEY = "zm-flow-veo:draft-image:v1";
+const DRAFT_LEGACY_KEY = "zm-flow-veo:draft:v1";
 const SETTINGS_KEY = "zm-flow-veo:settings:v1";
 const WEB_AUTO_DOWNLOAD_DEFAULT_KEY = "zm-flow-veo:web-auto-download:v1";
 const WEB_OUTPUT_ROOT_KEY = "zm-flow-veo:web-output-root:v1";
@@ -543,10 +545,22 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   const [railOpen, setRailOpen] = useState(
     () => readText(RAIL_KEY, "1") === "1",
   );
-  const [prompt, setPrompt] = useState(() =>
+  const [videoPrompt, setVideoPrompt] = useState(() =>
     readText(
-      DRAFT_KEY,
-      "Tokyo về đêm, phố Shibuya ướt sau cơn mưa, ánh đèn neon phản chiếu trên mặt đường.\n\nBuổi sáng yên bình bên hồ trong rừng thông, sương mù nhẹ trên mặt nước.\n\nThành phố tương lai lúc hoàng hôn, xe bay lướt qua các tòa nhà chọc trời.",
+      DRAFT_VIDEO_KEY,
+      readText(
+        DRAFT_LEGACY_KEY,
+        "Tokyo về đêm, phố Shibuya ướt sau cơn mưa, ánh đèn neon phản chiếu trên mặt đường.\n\nBuổi sáng yên bình bên hồ trong rừng thông, sương mù nhẹ trên mặt nước.\n\nThành phố tương lai lúc hoàng hôn, xe bay lướt qua các tòa nhà chọc trời.",
+      ),
+    ),
+  );
+  const [imagePrompt, setImagePrompt] = useState(() =>
+    readText(
+      DRAFT_IMAGE_KEY,
+      readText(
+        DRAFT_LEGACY_KEY,
+        "Tokyo về đêm, phố Shibuya ướt sau cơn mưa, ánh đèn neon phản chiếu trên mặt đường.\n\nBuổi sáng yên bình bên hồ trong rừng thông, sương mù nhẹ trên mặt nước.\n\nThành phố tương lai lúc hoàng hôn, xe bay lướt qua các tòa nhà chọc trời.",
+      ),
     ),
   );
   const [settings, setSettings] = useState<FlowSettings>(readSettings);
@@ -557,6 +571,14 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   const [createKind, setCreateKind] = useState<CreateKind>(() =>
     flowRoutePanel() === "image" || (!flowRoutePanel() && readText(CREATE_KIND_KEY, "video") === "image") ? "image" : "video",
   );
+  const prompt = createKind === "video" ? videoPrompt : imagePrompt;
+  const setPrompt = (val: string | ((prev: string) => string)) => {
+    if (createKind === "video") {
+      setVideoPrompt(val);
+    } else {
+      setImagePrompt(val);
+    }
+  };
   const [imageMode, setImageMode] = useState<ImageMode>(() => {
     const saved = readText(IMAGE_MODE_KEY, "text");
     return saved === "edit" || saved === "reference" ? saved : "text";
@@ -676,9 +698,14 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
 
   useEffect(() => {
     try {
-      localStorage.setItem(DRAFT_KEY, prompt);
+      localStorage.setItem(DRAFT_VIDEO_KEY, videoPrompt);
     } catch {}
-  }, [prompt]);
+  }, [videoPrompt]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAFT_IMAGE_KEY, imagePrompt);
+    } catch {}
+  }, [imagePrompt]);
   useEffect(() => {
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -965,12 +992,10 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       extension === "csv" || extension === "json" ? extension : "txt",
     );
     const reader = new FileReader();
-    reader.onload = () =>
-      setPrompt((current) =>
-        current.trim()
-          ? `${current.trim()}\n\n${String(reader.result || "").trim()}`
-          : String(reader.result || ""),
-      );
+    reader.onload = () => {
+      setPrompt(String(reader.result || "").trim());
+      if (fileRef.current) fileRef.current.value = "";
+    };
     reader.readAsText(file);
   };
   const pastePrompt = async () => {
