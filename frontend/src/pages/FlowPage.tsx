@@ -10,6 +10,7 @@ import {
   IconDownload,
   IconGear,
   IconPlay,
+  IconRefresh,
   IconVideo,
 } from "@/shared/components/Icons";
 import { BackTitle } from "@/shared/components/BackTitle";
@@ -172,7 +173,9 @@ type BrowserDirectoryHandle = {
   getFileHandle: (name: string, options?: { create?: boolean }) => Promise<BrowserFileHandle>;
   removeEntry: (name: string) => Promise<void>;
   queryPermission?: (descriptor?: { mode: "readwrite" }) => Promise<"granted" | "denied" | "prompt">;
+  requestPermission?: (descriptor?: { mode: "readwrite" }) => Promise<"granted" | "denied" | "prompt">;
 };
+
 type BrowserDirectoryWindow = Window & {
   showDirectoryPicker?: (options?: { mode?: "readwrite" }) => Promise<BrowserDirectoryHandle>;
 };
@@ -566,13 +569,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   });
   const [seriesDraft, setSeriesDraft] = useState<FlowSeriesSceneContext | null>(null);
   const [accounts, setAccounts] = useState<FlowAccount[]>(readAccounts);
+  const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
   const [editingAccount, setEditingAccount] = useState<string | "new" | null>(
     null,
   );
   const [accountDraft, setAccountDraft] = useState({
     label: "",
     email: "",
-    plan: "Pro" as FlowAccount["plan"],
   });
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(sessionStorage.getItem(COLLAPSED_FOLDERS_KEY) || "{}"); } catch { return {}; }
@@ -1009,9 +1012,30 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       return;
     }
     try {
+      if (!isDesktopApp && settings.autoDownload && !webOutputRootRef.current) {
+        try {
+          const cachedHandle = await loadWebOutputRoot(WEB_OUTPUT_ROOT_KEY);
+          if (cachedHandle) {
+            const perm = await cachedHandle.queryPermission?.({ mode: "readwrite" });
+            if (perm === "granted") {
+              webOutputRootRef.current = cachedHandle;
+              setWebOutputRootReady(true);
+            } else if (cachedHandle.requestPermission) {
+              const req = await cachedHandle.requestPermission({ mode: "readwrite" });
+              if (req === "granted") {
+                webOutputRootRef.current = cachedHandle;
+                setWebOutputRootReady(true);
+              }
+            }
+          }
+        } catch {
+          // Fallback to standard download if permission is denied
+        }
+      }
       const effectiveSettings = settings.outputDir.trim()
         ? settings
         : { ...settings, outputDir: defaultFlowOutputFolder() };
+
       if (effectiveSettings !== settings) {
         setSettings(effectiveSettings);
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(effectiveSettings));
@@ -1079,14 +1103,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     }
   };
   const addAccount = () => {
-    setAccountDraft({ label: "", email: "", plan: "Pro" });
+    setAccountDraft({ label: "", email: "" });
     setEditingAccount("new");
   };
   const editAccount = (account: FlowAccount) => {
     setAccountDraft({
       label: account.label,
       email: account.email,
-      plan: account.plan,
     });
     setEditingAccount(account.id);
   };
@@ -1311,8 +1334,31 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       method: "POST",
     }).then((connected) => setAccounts((current) => current.map((item) => item.id === connected.id ? connected : item)))
       .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+  const syncAccount = (account: FlowAccount) => {
+    if (syncingAccountIds.has(account.id)) return;
+    setSyncingAccountIds((s) => new Set(s).add(account.id));
+    void flowRequest<FlowAccount>(`/api/flow/accounts/${account.id}/sync`, { method: "POST" })
+      .then((updated) => setAccounts((current) => current.map((item) => item.id === updated.id ? updated : item)))
+      .catch((error) => toast.error(t("Đồng bộ thất bại", "Sync failed") + ": " + (error instanceof Error ? error.message : String(error))))
+      .finally(() => setSyncingAccountIds((s) => { const next = new Set(s); next.delete(account.id); return next; }));
+  };
+  const syncAllAccounts = () => {
+    const online = accounts.filter((a) => a.status === "online" && a.projectId);
+    if (!online.length) return;
+    setSyncingAccountIds(new Set(online.map((a) => a.id)));
+    void flowRequest<{ accounts: FlowAccount[] }>("/api/flow/accounts/sync", { method: "POST" })
+      .then((data) => { if (data.accounts) setAccounts(normalizeFlowAccounts(data.accounts)); })
+      .catch((error) => toast.error(t("Đồng bộ thất bại", "Sync failed") + ": " + (error instanceof Error ? error.message : String(error))))
+      .finally(() => setSyncingAccountIds(new Set()));
+  };
   const revealOutput = (jobId: string, outputIndex: number) =>
     void flowRequest(`/api/flow/jobs/${jobId}/outputs/${outputIndex}/reveal`, {
+      method: "POST",
+    }).catch((error) =>
+      setApiError(error instanceof Error ? error.message : String(error)),
+    );
+  const openFlowFolder = (outputDir: string, kind: CreateKind = "video") =>
+    void flowRequest(`/api/flow/open-folder?output_dir=${encodeURIComponent(outputDir)}&kind=${encodeURIComponent(kind)}`, {
       method: "POST",
     }).catch((error) =>
       setApiError(error instanceof Error ? error.message : String(error)),
@@ -1369,11 +1415,18 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       webOutputRootRef.current = handle;
       setWebOutputRootReady(true);
       setApiError("");
+      toast.success(t(
+        `Đã cấp quyền lưu tự động vào thư mục máy tính: ${handle.name}`,
+        `Auto-save authorized for computer folder: ${handle.name}`,
+      ));
+      return `/${handle.name}/ZM_AIO_TOOL/flow/${createKind}/`;
     } catch (error) {
       if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
       setApiError(error instanceof Error ? error.message : String(error));
     }
   };
+
+
 
   const clearLogs = () => {
     setConfirmAction({
@@ -1536,13 +1589,26 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                   )}
                 </p>
               </div>
-              <button
-                type="button"
-                className="flow-account-add"
-                onClick={addAccount}
-              >
-                + {t("Thêm tài khoản", "Add account")}
-              </button>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="flow-account-add is-ghost"
+                  title={t("Đồng bộ credits tất cả tài khoản", "Sync credits for all accounts")}
+                  onClick={syncAllAccounts}
+                  disabled={!accounts.some((a) => a.status === "online" && a.projectId)}
+                  style={{ display: "flex", alignItems: "center", gap: "5px" }}
+                >
+                  <IconRefresh size={14} />
+                  {t("Đồng bộ tất cả", "Sync all")}
+                </button>
+                <button
+                  type="button"
+                  className="flow-account-add"
+                  onClick={addAccount}
+                >
+                  + {t("Thêm tài khoản", "Add account")}
+                </button>
+              </div>
             </header>
             {editingAccount && (
               <form
@@ -1593,17 +1659,6 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                     placeholder="name@gmail.com"
                   />
                 </label>
-                <FlowSelect
-                  label={t("Gói tài khoản", "Account plan")}
-                  value={accountDraft.plan}
-                  onChange={(plan) =>
-                    setAccountDraft((current) => ({
-                      ...current,
-                      plan: plan as FlowAccount["plan"],
-                    }))
-                  }
-                  options={["Pro", "Ultra"]}
-                />
                 <footer>
                   <button type="button" onClick={() => setEditingAccount(null)}>
                     {t("Hủy", "Cancel")}
@@ -1635,13 +1690,32 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                           : t("Cần kết nối lại", "Reconnect needed")}
                     </mark>
                   </div>
-                  <h3>
-                    {account.label}
-                    {account.isDefault && (
-                      <small>{t("Mặc định", "Default")}</small>
+                  <div className="flow-account-name-row">
+                    <h3>
+                      {account.label}
+                      {account.isDefault && (
+                        <small>{t("Mặc định", "Default")}</small>
+                      )}
+                    </h3>
+                    {account.status === "online" && account.projectId && (
+                      <button
+                        type="button"
+                        className="flow-account-sync-status-btn"
+                        title={t("Đồng bộ credits", "Sync credits")}
+                        disabled={syncingAccountIds.has(account.id)}
+                        onClick={() => syncAccount(account)}
+                      >
+                        <IconRefresh
+                          size={12}
+                          style={{
+                            animation: syncingAccountIds.has(account.id) ? "spin 1s linear infinite" : "none",
+                          }}
+                        />
+                      </button>
                     )}
-                  </h3>
+                  </div>
                   <p>{account.email}</p>
+
                   <div className="flow-account-credits">
                     <strong>
                       {account.credits != null
@@ -2154,7 +2228,23 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 </div>
               )}
               <div className="flow-output-row">
-                <OutputFolderField isDesktopApp={isDesktopApp} value={settings.outputDir} onChange={(outputDir) => setSettings((current) => ({ ...current, outputDir }))} onChoose={isDesktopApp ? pickOutputFolder : () => void pickWebOutputFolder()} onSave={() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))} defaultPath={t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')} appFolder={`flow/${createKind}`} label={t("3. Thư mục kết quả", "3. Output folder")} />
+                <OutputFolderField
+                  isDesktopApp={isDesktopApp}
+                  value={settings.outputDir}
+                  onChange={(outputDir) =>
+                    setSettings((current) => {
+                      const next = { ...current, outputDir };
+                      localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+                      return next;
+                    })
+                  }
+                  onChoose={isDesktopApp ? pickOutputFolder : pickWebOutputFolder}
+                  defaultPath={t('Ví dụ: du-an-01 hoặc video-01.mp4', 'Example: project-01 or video-01.mp4')}
+                  appFolder={`flow/${createKind}`}
+                  label={t("3. Thư mục kết quả", "3. Output folder")}
+                />
+
+
                 {!isDesktopApp && (
                   <label className="flow-check">
                     <input
@@ -2270,6 +2360,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                           <small>{folderPathText}</small>
                         </div>
                         <div className="flow-queue-folder-actions">
+                          <button className="flow-text-button" type="button" onClick={() => openFlowFolder(group.outputDir, group.kind)} title={t("Mở thư mục trên máy", "Open folder on computer")}>{t("Mở", "Open")}</button>
                           <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
                           <button className="flow-text-button is-warning" type="button" disabled={!group.jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={() => cancelFolderJobs(group.outputDir, group.jobs)}>{t("Hủy", "Cancel")}</button>
                           <button className="flow-text-button is-danger" type="button" onClick={() => deleteFolderJobs(group.outputDir, group.jobs)}>{t("Xóa", "Delete")}</button>
@@ -2384,16 +2475,15 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                               {t("Xem trước", "Preview")}{" "}
                               {job.outputs!.length > 1 ? outputIndex + 1 : ""}
                             </button>
-                            {isDesktopApp ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  revealOutput(job.id, outputIndex)
-                                }
-                              >
-                                {t("Mở thư mục", "Open folder")}
-                              </button>
-                            ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                revealOutput(job.id, outputIndex)
+                              }
+                            >
+                              {t("Mở thư mục", "Open folder")}
+                            </button>
+                            {!isDesktopApp && (
                               <a
                                 href={`/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`}
                                 download
@@ -2402,6 +2492,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                               </a>
                             )}
                           </span>
+
                         ))}
                       </div>
                     ) : null}
@@ -2473,14 +2564,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                           >
                             {t("Xem trước", "Preview")}
                           </button>
-                          {isDesktopApp ? (
-                            <button
-                              type="button"
-                              onClick={() => revealOutput(job.id, outputIndex)}
-                            >
-                              {t("Mở thư mục", "Open folder")}
-                            </button>
-                          ) : (
+                          <button
+                            type="button"
+                            onClick={() => revealOutput(job.id, outputIndex)}
+                          >
+                            {t("Mở thư mục", "Open folder")}
+                          </button>
+                          {!isDesktopApp && (
                             <a
                               href={`/api/flow/jobs/${job.id}/outputs/${outputIndex}?download=1`}
                               download
@@ -2830,16 +2920,15 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 )}
               </div>
               <footer>
-                {isDesktopApp ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      revealOutput(preview.job.id, preview.outputIndex)
-                    }
-                  >
-                    {t("Mở thư mục", "Open folder")}
-                  </button>
-                ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    revealOutput(preview.job.id, preview.outputIndex)
+                  }
+                >
+                  {t("Mở thư mục", "Open folder")}
+                </button>
+                {!isDesktopApp && (
                   <a
                     href={`/api/flow/jobs/${preview.job.id}/outputs/${preview.outputIndex}?download=1`}
                     download

@@ -5,6 +5,7 @@ episode order, maintaining character and continuity across scenes.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -13,6 +14,7 @@ from typing import Any
 
 from . import store
 
+_log = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 4.0   # seconds between job-status checks
 _TERMINAL = {"done", "failed", "cancelled", "action_required"}
@@ -128,34 +130,45 @@ class SeriesRunner:
         with self._guard:
             self._runs[run_id] = run
 
-        artifact = "keyframe" if mode == "keyframes_only" else "video"
-        for episode, scene in scenes_to_run:
-            try:
-                ctx = series_mod.generation_context(series_id, str(episode["id"]), str(scene["id"]), artifact)
-            except Exception:
-                continue
-            job_settings = {
-                **settings,
-                "outputDir": ctx["outputDir"],
-                "count": 1,
-            }
-            if artifact == "keyframe":
-                job_settings["model"] = image_model
-            input_index = int(scene.get("index") or ctx.get("sceneIndex") or 1)
-            jobs = service.enqueue({
-                "prompts": [ctx["prompt"]],
-                "inputIndex": input_index,
-                "kind": "image" if artifact == "keyframe" else "video",
-                "mode": "reference" if ctx.get("sourceFiles") else "text",
-                "accountId": account_id,
-                "settings": job_settings,
-                "sourceFiles": ctx.get("sourceFiles") or [],
-                "seriesContext": ctx,
-            })
-            if jobs:
-                series_mod.register_job(jobs[0])
+        if mode == "full":
+            # Full pipeline: each scene goes keyframe → auto-approve → video sequentially.
+            # Must run in a background thread so the HTTP response returns immediately.
+            threading.Thread(
+                target=self._orchestrate,
+                args=(run, series_id, scenes_to_run, account_id, settings, image_model, auto_approve, mode),
+                daemon=True,
+                name=f"series-run-{run_id}",
+            ).start()
+        else:
+            # keyframes_only / videos_only: queue all jobs at once, parallel gated by concurrency.
+            artifact = "keyframe" if mode == "keyframes_only" else "video"
+            for episode, scene in scenes_to_run:
+                try:
+                    ctx = series_mod.generation_context(series_id, str(episode["id"]), str(scene["id"]), artifact)
+                except Exception:
+                    continue
+                job_settings = {
+                    **settings,
+                    "outputDir": ctx["outputDir"],
+                    "count": 1,
+                }
+                if artifact == "keyframe":
+                    job_settings["model"] = image_model
+                input_index = int(scene.get("index") or ctx.get("sceneIndex") or 1)
+                jobs = service.enqueue({
+                    "prompts": [ctx["prompt"]],
+                    "inputIndex": input_index,
+                    "kind": "image" if artifact == "keyframe" else "video",
+                    "mode": "reference" if ctx.get("sourceFiles") else "text",
+                    "accountId": account_id,
+                    "settings": job_settings,
+                    "sourceFiles": ctx.get("sourceFiles") or [],
+                    "seriesContext": ctx,
+                })
+                if jobs:
+                    series_mod.register_job(jobs[0])
+            run.mark_done()
 
-        run.mark_done()
         return run_id
 
     def _process_scene(
@@ -201,18 +214,26 @@ class SeriesRunner:
                         series_mod.update_scene(series_id, episode_id, scene_id, {"continuityEnabled": False})
                         ctx = series_mod.generation_context(series_id, episode_id, scene_id, "keyframe")
                     img_settings = {**settings, "model": image_model, "count": 1, "outputDir": ctx["outputDir"]}
-                    jobs = service.enqueue({
-                        "prompts": [ctx["prompt"]], "kind": "image",
-                        "mode": "reference" if ctx.get("sourceFiles") else "text",
-                        "accountId": account_id, "settings": img_settings,
-                        "sourceFiles": ctx.get("sourceFiles") or [], "seriesContext": ctx,
-                    })
-                    done_job = self._poll_job(str(jobs[0]["id"]), run)
-                    if run.should_stop():
-                        return
-                    if done_job.get("status") == "cancelled" or run.should_stop():
-                        run.stop()
-                        return
+                    done_job: dict = {}
+                    for _attempt in range(3):  # retry up to 3× for transient 403/reCAPTCHA
+                        jobs = service.enqueue({
+                            "prompts": [ctx["prompt"]], "kind": "image",
+                            "mode": "reference" if ctx.get("sourceFiles") else "text",
+                            "accountId": account_id, "settings": img_settings,
+                            "sourceFiles": ctx.get("sourceFiles") or [], "seriesContext": ctx,
+                        })
+                        done_job = self._poll_job(str(jobs[0]["id"]), run)
+                        if run.should_stop():
+                            return
+                        if done_job.get("status") == "cancelled" or run.should_stop():
+                            run.stop()
+                            return
+                        err = str(done_job.get("error") or "")
+                        if done_job.get("status") == "done" or ("403" not in err and "reCAPTCHA" not in err):
+                            break
+                        # Transient reCAPTCHA — wait for token refresh and retry
+                        import time as _time
+                        _time.sleep(30)
                     if done_job.get("status") != "done":
                         raise RuntimeError(str(done_job.get("error") or "Keyframe job failed"))
                     if auto_approve:
@@ -268,20 +289,34 @@ class SeriesRunner:
                     series_mod.update_scene(series_id, episode_id, scene_id, {"continuityEnabled": False})
                     ctx = series_mod.generation_context(series_id, episode_id, scene_id, "video")
                 vid_settings = {**settings, "count": 1, "outputDir": ctx["outputDir"]}
-                previous = series_mod._previous_scene(series_mod.get_series(series_id) or {}, episode_id, scene_id)
-                if previous and previous.get("videoJobId"):
-                    vid_settings["extendFromJobId"] = str(previous["videoJobId"])
-                jobs = service.enqueue({
-                    "prompts": [ctx["prompt"]], "kind": "video", "mode": "text",
-                    "accountId": account_id, "settings": vid_settings,
-                    "sourceFiles": ctx.get("sourceFiles") or [], "seriesContext": ctx,
-                })
-                done_job = self._poll_job(str(jobs[0]["id"]), run)
-                if run.should_stop():
-                    return
-                if done_job.get("status") == "cancelled" or run.should_stop():
-                    run.stop()
-                    return
+                # ponytail: generation_context already sets sourceFiles=[end_frame] for
+                # continuation. Do NOT set extendFromJobId — that path calls extend_video
+                # via the Flow editor which times out since Google renamed the API endpoint.
+                # Proactive pause: let the browser session settle before the first video
+                # call so reCAPTCHA doesn't trigger immediately (cheaper than a 45 s retry).
+                time.sleep(15)
+                for _vid_attempt in range(3):
+                    jobs = service.enqueue({
+                        "prompts": [ctx["prompt"]], "kind": "video", "mode": "text",
+                        "accountId": account_id, "settings": vid_settings,
+                        "sourceFiles": ctx.get("sourceFiles") or [], "seriesContext": ctx,
+                    })
+                    done_job = self._poll_job(str(jobs[0]["id"]), run)
+                    if run.should_stop():
+                        return
+                    if done_job.get("status") == "cancelled" or run.should_stop():
+                        run.stop()
+                        return
+                    _err = str(done_job.get("error") or "")
+                    if done_job.get("status") == "done" or ("403" not in _err and "reCAPTCHA" not in _err):
+                        break
+                    # Transient reCAPTCHA — reduced from 90 s; proactive 15 s above
+                    # handles most cases so retry wait can be shorter.
+                    _log.warning(
+                        "reCAPTCHA on video generation for %s (attempt %d/3), waiting 45 s…",
+                        scene_id, _vid_attempt + 1,
+                    )
+                    time.sleep(45)
                 if done_job.get("status") != "done":
                     raise RuntimeError(str(done_job.get("error") or "Video job failed"))
 

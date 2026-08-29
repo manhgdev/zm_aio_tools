@@ -139,6 +139,24 @@ def accounts_connect(account_id: str):
         raise HTTPException(404, "Flow account not found") from exc
 
 
+@router.post("/accounts/sync")
+def accounts_sync_all():
+    """Fire-and-forget credit sync for all connected accounts."""
+    return {"accounts": service.sync_all_credits()}
+
+
+@router.post("/accounts/{account_id}/sync")
+async def accounts_sync_one(account_id: str):
+    """Sync credits for a single account using its existing browser profile."""
+    try:
+        return await service.sync_credits_for_account(account_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Flow account not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+
 @router.post("/assets")
 async def asset_upload(files: list[UploadFile] = File(...)):
     if not files or len(files) > 3:
@@ -539,3 +557,18 @@ def jobs_output_reveal(job_id: str, output_index: int):
     else:
         subprocess.Popen(["xdg-open", str(path.parent)])
     return {"ok": True, "path": str(path)}
+
+
+@router.post("/open-folder")
+def flow_open_folder(output_dir: str = "", kind: str = "video"):
+    service = FlowService()
+    dummy_job = {"kind": kind or "video", "settings": {"outputDir": output_dir}}
+    folder = service._output_folder(dummy_job, create=True)
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(folder)])
+    elif sys.platform == "win32":
+        subprocess.Popen(["explorer", str(folder)])
+    else:
+        subprocess.Popen(["xdg-open", str(folder)])
+    return {"ok": True, "path": str(folder)}
+

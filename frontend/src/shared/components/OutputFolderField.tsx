@@ -79,7 +79,7 @@ export function OutputFolderField({
   }, [isDesktopApp])
 
   const webPathPrefix = useMemo(
-    () => `ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`,
+    () => `/Downloads/ZM_AIO_TOOL/${appFolder.replace(/^[/\\]+|[/\\]+$/g, '')}/`,
     [appFolder],
   )
   const appPath = useMemo(() => {

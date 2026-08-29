@@ -349,7 +349,7 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
   }
   useEffect(() => { void refresh().catch((error) => toast.error(String(error.message || error))) }, [])
 
-  // Poll active run every 3s
+  // Poll active run status every 3s
   useEffect(() => {
     if (!activeRun || !selected) return
     if (['done', 'done_with_errors', 'failed', 'cancelled'].includes(activeRun.status)) {
@@ -375,6 +375,18 @@ export default function FlowSeriesPanel({ onOpenScene, onGenerateAnchor, account
         })
     }, 3000)
     return () => window.clearInterval(timer)
+  }, [activeRun?.runId, activeRun?.status, selected?.id])
+
+  // Refresh scene data every 6s while a run is active so keyframe/video status
+  // updates live without needing F5 — ponytail: lightweight GET, stops when run ends
+  useEffect(() => {
+    if (!activeRun || !selected || ['done', 'done_with_errors', 'failed', 'cancelled'].includes(activeRun.status)) return
+    const t2 = window.setInterval(() => {
+      void request<Series>(`/series/${selected.id}`)
+        .then((fresh) => setSelected(normalizeSeries(fresh)))
+        .catch(() => {/* ignore transient errors */})
+    }, 6000)
+    return () => window.clearInterval(t2)
   }, [activeRun?.runId, activeRun?.status, selected?.id])
 
   const create = async () => {

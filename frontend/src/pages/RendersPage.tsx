@@ -40,9 +40,23 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
   const [editingId, setEditingId] = useState<string | null>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [openingId, setOpeningId] = useState<string | null>(null)
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+  const [activeTab, setActiveTab] = useState<'all' | 'video' | 'image' | 'audio' | 'srt'>('all')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => { setPage(1); setSelectedIds(new Set()) }, [activeTab])
+
+  const filteredItems = items.filter(item => activeTab === 'all' || item.type === activeTab || (!item.type && activeTab === 'video'))
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
-  const pageItems = items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const pageItems = filteredItems.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+
+  function getThumbIcon(type?: string) {
+    if (type === 'image') return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    if (type === 'audio') return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+    if (type === 'srt') return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    return <IconFilm size={32} />
+  }
+
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -107,6 +121,47 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
     }
   }
 
+  async function deleteSelected() {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(t(`Xóa ${selectedIds.size} mục đã chọn? Thao tác này không thể hoàn tác.`, `Delete ${selectedIds.size} selected items? This action cannot be undone.`))) return
+    setLoading(true)
+    try {
+      await api.deleteRendersBatch(Array.from(selectedIds))
+      toast.success(t('Đã xóa các mục được chọn.', 'Deleted selected items.'))
+      setSelectedIds(new Set())
+      await load()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t('Không thể xóa các mục đã chọn', 'Could not delete selected items')
+      setError(msg)
+      toast.error(msg)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function deleteAll() {
+    const count = filteredItems.length
+    if (count === 0) return
+    const msg = activeTab === 'all'
+      ? t(`Xóa toàn bộ ${count} file đã render? Thao tác này không thể hoàn tác.`, `Delete all ${count} rendered media? This action cannot be undone.`)
+      : t(`Xóa toàn bộ ${count} file trong mục “${activeTab}”? Thao tác này không thể hoàn tác.`, `Delete all ${count} items in “${activeTab}”? This action cannot be undone.`)
+    if (!window.confirm(msg)) return
+    setLoading(true)
+    try {
+      const idsToDelete = filteredItems.map(item => item.renderId)
+      await api.deleteRendersBatch(idsToDelete, false, activeTab)
+      toast.success(t('Đã xóa toàn bộ media.', 'Deleted all media.'))
+      setSelectedIds(new Set())
+      await load()
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : t('Không thể xóa toàn bộ media', 'Could not delete all media')
+      setError(errMsg)
+      toast.error(errMsg)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function editRender(item: RenderedVideo) {
     setOpeningId(item.renderId)
     setError('')
@@ -123,27 +178,62 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
       <header className="renders-head">
         <div>
           <BackTitle onBack={onBack}>{t('List render', 'Render list')}</BackTitle>
-          <p>{items.length
-            ? t(`${items.length} media · mới nhất trước`, `${items.length} media · newest first`)
+          <p>{filteredItems.length
+            ? t(`${filteredItems.length} media · mới nhất trước`, `${filteredItems.length} media · newest first`)
             : t('Tất cả media xuất từ Clone, Review và công cụ sẽ xuất hiện tại đây.', 'All media exported from Clone, Review, and tools will appear here.')}</p>
         </div>
-        <button type="button" className="renders-refresh" onClick={() => void load()} disabled={loading}>
-          <IconRefresh size={16} /> Làm mới
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {selectedIds.size > 0 && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', background: 'var(--border, #e2e8f0)', padding: '6px 12px', borderRadius: '8px' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 650, color: 'var(--ink, #172033)' }}>{t(`Đã chọn ${selectedIds.size}`, `Selected ${selectedIds.size}`)}</span>
+              <button type="button" onClick={() => setSelectedIds(new Set())} style={{ background: 'none', border: 'none', color: 'var(--muted-foreground, #64748b)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>{t('Bỏ chọn', 'Deselect')}</button>
+              <button type="button" onClick={() => setSelectedIds(new Set(filteredItems.map(i => i.renderId)))} style={{ background: 'none', border: 'none', color: 'var(--primary, #2684d9)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>{t('Chọn tất cả', 'Select all')}</button>
+              <button type="button" onClick={() => void deleteSelected()} style={{ background: '#ef4444', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.8rem', padding: '4px 10px', borderRadius: '6px', fontWeight: 650, marginLeft: '4px' }}>{t('Xóa đã chọn', 'Delete selected')}</button>
+            </div>
+          )}
+          <div className="drawing-preview-tabs" style={{ margin: 0 }}>
+            <button type="button" className={activeTab === 'all' ? 'is-active' : ''} onClick={() => setActiveTab('all')}>{t('Tất cả', 'All')}</button>
+            <button type="button" className={activeTab === 'video' ? 'is-active' : ''} onClick={() => setActiveTab('video')}>{t('Video', 'Video')}</button>
+            <button type="button" className={activeTab === 'image' ? 'is-active' : ''} onClick={() => setActiveTab('image')}>{t('Ảnh', 'Image')}</button>
+            <button type="button" className={activeTab === 'audio' ? 'is-active' : ''} onClick={() => setActiveTab('audio')}>{t('Âm thanh', 'Audio')}</button>
+            <button type="button" className={activeTab === 'srt' ? 'is-active' : ''} onClick={() => setActiveTab('srt')}>{t('Phụ đề', 'Subtitles')}</button>
+          </div>
+          {filteredItems.length > 0 && selectedIds.size === 0 && (
+            <button
+              type="button"
+              className="renders-delete-all"
+              onClick={() => void deleteAll()}
+              disabled={loading}
+              title={t('Xóa toàn bộ media trong danh sách này', 'Delete all media in this list')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              {t('Xóa toàn bộ', 'Delete all')}
+            </button>
+          )}
+          <button type="button" className="renders-refresh" onClick={() => void load()} disabled={loading}>
+            <IconRefresh size={16} /> {t('Làm mới', 'Refresh')}
+          </button>
+        </div>
       </header>
 
       {error && <div className="renders-alert">{error} <button type="button" onClick={() => void load()}>Thử lại</button></div>}
       {loading ? (
         <div className="renders-state">Đang tải danh sách…</div>
-      ) : items.length === 0 ? (
+      ) : filteredItems.length === 0 ? (
         <div className="renders-state renders-empty"><IconFilm size={36} /><strong>{t('Chưa có media đã render', 'No rendered media yet')}</strong><span>{t('Xuất media từ Clone, Review hoặc công cụ để xem tại đây.', 'Export media from Clone, Review, or a tool to see it here.')}</span></div>
       ) : (
         <section className="renders-grid" aria-label={t('Danh sách media đã render', 'Rendered media list')}>
           {pageItems.map((item) => (
-            <article className="render-card" key={item.renderId}>
+            <article className={`render-card ${selectedIds.has(item.renderId) ? 'is-selected' : ''}`} key={item.renderId}>
+              <input type="checkbox" className="render-select-cb" checked={selectedIds.has(item.renderId)} onChange={(e) => {
+                const s = new Set(selectedIds)
+                if (e.target.checked) s.add(item.renderId)
+                else s.delete(item.renderId)
+                setSelectedIds(s)
+              }} aria-label="Chọn item" />
               <button type="button" className="render-thumb" onClick={() => setViewing(item)} aria-label={`Xem video ${item.renderId}`}>
                 <img src={item.thumbnailUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true }} />
-                <span className="render-thumb-fallback"><IconFilm size={32} /></span>
+                <span className="render-thumb-fallback">{getThumbIcon(item.type)}</span>
                 <span className="render-play">▶</span>
                 <time>{durationLabel(item.duration)}</time>
               </button>
@@ -197,7 +287,7 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
         </section>
       )}
 
-      {!loading && items.length > PAGE_SIZE && (
+      {!loading && filteredItems.length > PAGE_SIZE && (
         <nav className="renders-pagination" aria-label="Phân trang video đã render">
           <button type="button" disabled={safePage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Trước</button>
           <span>Trang {safePage}/{totalPages}</span>
@@ -209,7 +299,10 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
         <div className="render-view-backdrop" role="presentation">
           <div className="render-view" role="dialog" aria-modal="true" aria-label={`Xem render ${viewing.projectId}`} onMouseDown={(event) => event.stopPropagation()}>
             <div><strong>{renderName(viewing)}</strong><button type="button" onClick={() => setViewing(null)}>Đóng</button></div>
-            <video src={viewing.videoUrl} controls autoPlay playsInline />
+            {(!viewing.type || viewing.type === 'video') && <video src={viewing.videoUrl} controls autoPlay playsInline />}
+            {viewing.type === 'image' && <img src={viewing.videoUrl} alt={renderName(viewing)} style={{ width: '100%', height: 'auto', maxHeight: '70vh', objectFit: 'contain' }} />}
+            {viewing.type === 'audio' && <div style={{ padding: '40px 20px', background: '#000', borderRadius: '10px', display: 'flex', justifyContent: 'center' }}><audio src={viewing.videoUrl} controls autoPlay /></div>}
+            {viewing.type === 'srt' && <div style={{ padding: '40px', background: '#000', borderRadius: '10px', display: 'flex', justifyContent: 'center' }}><a href={viewing.downloadUrl} download style={{ padding: '10px 20px', background: '#2684d9', color: '#fff', borderRadius: '8px', textDecoration: 'none' }}>Tải xuống phụ đề</a></div>}
           </div>
         </div>
       )}

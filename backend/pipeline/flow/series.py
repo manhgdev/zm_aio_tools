@@ -422,8 +422,13 @@ def generation_context(series_id: str, episode_id: str, scene_id: str, artifact:
         str(prompt_override or scene.get("promptOverride") or "").strip(),
     ]
     if continuation:
+        # For continuation videos: character appearance, world, and style come from
+        # the visual start frame (endFrame). Including the full bible causes Veo to
+        # regenerate the character from text, which overrides the visual reference
+        # and creates drift across scenes.
+        # ponytail: only pass the action; image carries everything else.
         prompt_parts = [
-            "Continue the exact preceding video. Do not restart, repeat, or change the camera, character, world, or visual style.",
+            "Continue the exact preceding video. Keep identical character appearance, world, lighting, and camera from the start frame.",
             str(scene.get("prompt") or "").strip(),
             str(prompt_override or scene.get("promptOverride") or "").strip(),
         ]

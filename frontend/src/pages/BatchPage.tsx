@@ -470,7 +470,7 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
                 <option value="overwrite">{t('Ghi đè', 'Overwrite')}</option>
               </select>
             </div>
-            <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? async () => (await studioApi.pickFolder()).path || undefined : undefined} onSave={() => { localStorage.setItem(BATCH_OUTPUT_DIR_LS, outputDir); toast.success(t('Đã lưu thư mục xuất thành công!', 'Output directory saved successfully!')) }} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder={tab === 'review' ? 'review' : 'clone'} label={t('Thư mục xuất', 'Output folder')} />
+            <OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={(value) => { setOutputDir(value); localStorage.setItem(BATCH_OUTPUT_DIR_LS, value) }} onChoose={isDesktopApp ? async () => (await studioApi.pickFolder()).path || undefined : undefined} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder={tab === 'review' ? 'review' : 'clone'} label={t('Thư mục xuất', 'Output folder')} />
           </section>
           {tab === 'review' ? (
             <div className="rv-page rv-embed">

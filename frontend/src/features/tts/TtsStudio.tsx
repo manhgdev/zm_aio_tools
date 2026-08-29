@@ -1995,15 +1995,14 @@ export default function TtsStudio({
               <OutputFolderField
                 isDesktopApp={isDesktopApp}
                 value={outputDir}
-                onChange={setOutputDir}
+                onChange={(value) => {
+                  setOutputDir(value)
+                  localStorage.setItem(OUTPUT_DIR_LS_KEY, value)
+                }}
                 onChoose={isDesktopApp ? async () => {
                   const result = await studioApi.pickFolder()
                   return result.path || undefined
                 } : undefined}
-                onSave={() => {
-                  localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDir)
-                  toast.success(t('Đã lưu thư mục xuất thành công!', 'Output directory saved successfully!'))
-                }}
                 defaultPath={t('Ví dụ: du-an-01 hoặc giong-doc.mp3', 'Example: project-01 or narration.mp3')}
                 appFolder="text-to-speech"
                 label={t('Thư mục đầu ra', 'Output folder')}

@@ -463,16 +463,18 @@ def cancel(job_id: str) -> bool:
 
 
 def update_options(job_id: str, options: dict[str, Any]) -> dict[str, Any] | None:
-    """Edit a queued drawing job before its renderer starts."""
+    """Edit a drawing job and requeue it if it was finished/errored/cancelled."""
     with _LOCK:
         job = _JOBS.get(job_id)
         if not job:
             return None
-        if job.get("status") != "queued":
-            raise RuntimeError("Only queued drawing jobs can be edited")
+        if job.get("status") == "processing":
+            raise RuntimeError("Cannot edit a currently processing drawing job")
         job["options"] = dict(options)
+        job["status"] = "queued"
         job["step"] = "queued"
         job["progress"] = 0
+        job["error"] = None
         return dict(job)
 
 

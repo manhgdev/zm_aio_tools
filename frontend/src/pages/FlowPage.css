@@ -157,7 +157,7 @@
 }
 .flow-create-grid {
   display: grid;
-  grid-template-columns: minmax(300px, 0.76fr) minmax(530px, 1.24fr);
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1fr);
   gap: 14px;
 }
 .flow-card {
@@ -377,18 +377,12 @@
   font-size: 0.79rem;
 }
 .flow-output-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   margin-top: 15px;
   padding-top: 13px;
   border-top: 1px solid var(--line);
-}
-.flow-output-row > label:first-child {
-  grid-column: 1 / -1;
-  width: 100%;
-  margin-bottom: 2px;
 }
 .flow-output-picker {
   display: grid;
@@ -1556,6 +1550,28 @@
   justify-content: space-between;
   align-items: center;
 }
+/* Second row: account name + default badge on left, sync icon on right */
+.flow-account-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.flow-account-sync-status-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+  color: #158447;
+}
+.flow-account-sync-status-btn:hover:not(:disabled) { opacity: 0.9; }
+.flow-account-sync-status-btn:disabled { opacity: 0.75; cursor: default; }
+
 .flow-account-head > span,
 .flow-account-grid mark,
 .flow-account-grid h3 small {
@@ -1651,6 +1667,30 @@
   font-weight: 700;
   white-space: nowrap;
 }
+/* Compact icon-only sync button in card footer */
+.flow-account-sync-footer-btn {
+  min-width: unset !important;
+  width: 34px;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+.flow-account-sync-footer-btn:hover:not(:disabled) { opacity: 1; }
+.flow-account-sync-footer-btn:disabled { opacity: 0.8; cursor: default; }
+/* Ghost variant for secondary header actions */
+.flow-account-add.is-ghost {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 40%, transparent);
+}
+.flow-account-add.is-ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.flow-account-add.is-ghost:disabled { opacity: 0.4; }
+
 .flow-account-note,
 .flow-empty-panel {
   display: flex;
@@ -1844,3 +1884,6 @@
 .flow-series-breadcrumb { grid-column:1 / -1; display:flex; align-items:center; gap:10px; padding:10px 13px; border:1px solid #b9dce9; border-radius:10px; background:#f2fbff; color:#176f99; font-size:13px; }
 .flow-series-breadcrumb small { color:#607486; flex:1; }
 .flow-series-breadcrumb button { min-height:30px; font-size:12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.flow-account-sync-btn:hover:not(:disabled) { opacity: 1 !important; }
+

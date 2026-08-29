@@ -19,4 +19,4 @@
 .output-folder-row button svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .output-folder-hint { min-height: 1.2em; color: var(--muted-foreground, #64748b); font-size: .7rem; font-weight: 500; line-height: 1.4; }
 @media (max-width: 480px) { .output-folder-row { grid-template-columns: minmax(0, 1fr) auto; } .output-folder-combined { grid-column: 1 / -1; } .output-folder-prefix { max-width:60%; } }
-@container (max-width: 780px) { .output-folder-prefix { direction:ltr; max-width:46%; } .output-folder-prefix-full { display:none; } .output-folder-prefix-short { display:block; } }
+@container (max-width: 480px) { .output-folder-prefix { max-width:46%; } .output-folder-prefix-full { display:none; } .output-folder-prefix-short { display:block; } }

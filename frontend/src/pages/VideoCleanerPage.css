@@ -277,14 +277,71 @@
 
 .vc-btn-link { border: 0; background: none; color: var(--primary); padding: 0; min-height: auto; font-size: .78rem; text-decoration: none; }
 .vc-btn-link:hover { text-decoration: underline; }
-.vc-result-action { min-height: 25px; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--primary, #3b82f6) 28%, var(--border, #e2e8f0)); border-radius: 6px; background: color-mix(in srgb, var(--primary, #3b82f6) 7%, var(--card, #fff)); color: var(--primary, #3b82f6); font: 700 .66rem/1 inherit; cursor: pointer; white-space: nowrap; }
-.vc-result-action:hover { border-color: var(--primary, #3b82f6); background: var(--primary, #3b82f6); color: #fff; }
-.vc-result-action.danger { border-color: color-mix(in srgb, #dc2626 35%, var(--border, #e2e8f0)); background: #fff0f2; color: #b91c1c; }
-.vc-result-action.danger:hover { border-color: #b91c1c; background: #b91c1c; color: #fff; }
-.vc-result-action:focus-visible, .vc-log-action:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary, #3b82f6) 55%, #fff); outline-offset: 2px; }
+.vc-result-action {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--primary, #3b82f6) 22%, var(--border, #e2e8f0));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary, #3b82f6) 5%, #fff);
+  color: var(--primary, #3b82f6);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: all 120ms ease;
+}
+.vc-result-action:hover {
+  border-color: var(--primary, #3b82f6);
+  background: var(--primary, #3b82f6);
+  color: #fff;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+.vc-result-action.danger {
+  border-color: color-mix(in srgb, #dc2626 22%, var(--border, #e2e8f0));
+  background: color-mix(in srgb, #dc2626 5%, #fff);
+  color: #c93646;
+}
+.vc-result-action.danger:hover {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
+}
+.vc-result-action:focus-visible, .vc-log-action:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary, #3b82f6) 55%, #fff); outline-offset: 1px; }
 
 /* ── Dark mode ── */
 :root.dark .vc-page, .dark .vc-page { background: var(--background); }
+:root.dark .vc-result-action,
+.dark .vc-result-action {
+  border-color: color-mix(in srgb, var(--primary, #3b82f6) 35%, var(--border, #334155));
+  background: color-mix(in srgb, var(--primary, #3b82f6) 12%, var(--surface, #1e293b));
+  color: color-mix(in srgb, var(--primary, #3b82f6) 85%, #fff);
+}
+:root.dark .vc-result-action:hover,
+.dark .vc-result-action:hover {
+  background: var(--primary, #3b82f6);
+  color: #fff;
+  border-color: var(--primary, #3b82f6);
+}
+:root.dark .vc-result-action.danger,
+.dark .vc-result-action.danger {
+  border-color: color-mix(in srgb, #ef4444 35%, var(--border, #334155));
+  background: color-mix(in srgb, #ef4444 12%, var(--surface, #1e293b));
+  color: #f87171;
+}
+:root.dark .vc-result-action.danger:hover,
+.dark .vc-result-action.danger:hover {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
 :root.dark .vc-tip, .dark .vc-tip { background: color-mix(in srgb, #166534 12%, var(--card)); border-color: color-mix(in srgb, #16a34a 20%, var(--border)); color: #86efac; }
 :root.dark .vc-badge, .dark .vc-badge { background: color-mix(in srgb, var(--border) 50%, var(--card)); }
 :root.dark .vc-dropzone, .dark .vc-dropzone { background: var(--card); }

@@ -5,6 +5,9 @@
 .renders-refresh, .render-actions button, .render-actions a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; border: 1px solid var(--line); border-radius: 7px; padding: 0 11px; background: var(--surface); color: var(--ink); font: inherit; font-size: .8rem; text-decoration: none; cursor: pointer; }
 .renders-refresh:hover, .render-actions button:hover, .render-actions a:hover { border-color: var(--primary); color: var(--primary); }
 .renders-refresh:disabled { opacity: .55; cursor: default; }
+.renders-delete-all { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; border: 1px solid color-mix(in srgb, #dc2626 30%, var(--line)); border-radius: 7px; padding: 0 11px; background: color-mix(in srgb, #dc2626 6%, var(--surface)); color: #dc2626; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; transition: all 120ms ease; }
+.renders-delete-all:hover:not(:disabled) { border-color: #dc2626; background: #dc2626; color: #fff; }
+.renders-delete-all:disabled { opacity: .5; cursor: default; }
 .renders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 20px; max-width: 1400px; margin: auto; }
 .render-card { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 4px 18px rgba(0,0,0,.045); }
 .render-thumb { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 16/9; padding: 0; overflow: hidden; border: 0; background: var(--accent); color: var(--muted-foreground); cursor: pointer; }
@@ -39,3 +42,29 @@
 .render-view button { border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
 .render-view video { display: block; width: 100%; max-height: 76vh; background: #000; }
 @media (max-width: 620px) { .renders-page { padding: 20px 14px 36px; } .renders-head { align-items: center; } .renders-grid { grid-template-columns: 1fr; } .renders-refresh { font-size: 0; width: 38px; padding: 0; } }
+
+/* Multi-select */
+.render-card { position: relative; }
+.render-select-cb {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: var(--primary, #2684d9);
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.5);
+  border-radius: 4px;
+}
+.render-card.is-selected {
+  outline: 2px solid var(--primary, #2684d9);
+  border-color: var(--primary, #2684d9);
+}
+.render-card.is-selected .render-thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(38, 132, 217, 0.15);
+  pointer-events: none;
+}

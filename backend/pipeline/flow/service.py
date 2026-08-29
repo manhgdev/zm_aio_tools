@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
+try:
+    from flow._models import GenerationMode as _GenerationMode
+except Exception:  # ponytail: graceful if flow lib version lacks this
+    _GenerationMode = None
 import shutil
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from pipeline.core.config import PUBLIC_DATA
 from pipeline.core.output_paths import safe_output_part, selected_or_default
@@ -29,6 +36,25 @@ _VIDEO_UI_MODELS = {
     "Omni Flash", "Veo 3.1 - Lite", "Veo 3.1 - Fast",
     "Veo 3.1 - Quality", "Veo 3.1 - Lite [Lower Priority]",
 }
+
+
+def _detect_plan(credit_info: Any) -> str | None:
+    """Map Flow's Credits object to 'Pro' or 'Ultra'.
+
+    Google Flow exposes ``userPaygateTier`` (e.g. PAYGATE_TIER_ONE/TWO)
+    and ``sku`` (e.g. labs_pro_monthly, labs_ultra_monthly).  We try both
+    fields so the detection stays robust across API versions.
+    Returns None when we cannot determine the tier (caller keeps existing).
+    """
+    tier = str(getattr(credit_info, "tier", "") or "").lower()
+    sku  = str(getattr(credit_info, "sku",  "") or "").lower()
+    combined = tier + " " + sku
+    if "ultra" in combined or "tier_two" in combined or "tier_2" in combined:
+        return "Ultra"
+    if "pro" in combined or "tier_one" in combined or "tier_1" in combined:
+        return "Pro"
+    return None
+
 
 
 def _job_concurrency(settings: dict[str, Any]) -> int:
@@ -314,6 +340,61 @@ class FlowService:
         threading.Thread(target=lambda: asyncio.run(self._login(account_id)), daemon=True, name=f"flow-login-{account_id}").start()
         return store.get_row("accounts", account_id) or account
 
+    async def sync_credits_for_account(self, account_id: str) -> dict[str, Any]:
+        """Fetch fresh credits from Google Flow using the existing browser profile.
+
+        Uses a headless Chrome session with the already-saved login profile — no
+        interactive sign-in needed.  Returns the updated account row.
+        """
+        account = store.get_row("accounts", account_id)
+        if not account:
+            raise KeyError(account_id)
+        project_id = str(account.get("projectId") or "")
+        if account.get("status") != "online" or not project_id:
+            raise RuntimeError("FLOW_LOGIN_REQUIRED: account must be connected before syncing credits")
+        from flow._api import FlowAPI
+        from .browser import BrowserManager
+        browser = BrowserManager(headless=True, profile_dir=store.profile_dir(account_id))
+        try:
+            await browser.start()
+            api = FlowAPI(browser, project_id=project_id)
+            credit_info = await api.get_credits()
+            patch: dict[str, Any] = {
+                "credits": int(credit_info.credits),
+                "creditsSyncedAt": time.time(),
+                "updatedAt": time.time(),
+            }
+            detected_plan = _detect_plan(credit_info)
+            if detected_plan:
+                patch["plan"] = detected_plan
+            store.patch_row("accounts", account_id, patch)
+        finally:
+            try:
+                await browser.stop()
+            except Exception:
+                pass
+        return store.get_row("accounts", account_id) or account
+
+
+    def sync_all_credits(self) -> list[dict[str, Any]]:
+        """Fire-and-forget credit sync for every online account.
+
+        Spawns one background thread per online account and returns immediately
+        with the current (pre-sync) account list.  The frontend's normal polling
+        will pick up the updated balances on the next GET /accounts or /jobs.
+        """
+        online = [a for a in self.accounts() if a.get("status") == "online" and a.get("projectId")]
+        for account in online:
+            account_id = account["id"]
+            threading.Thread(
+                target=lambda aid=account_id: asyncio.run(self.sync_credits_for_account(aid)),
+                daemon=True,
+                name=f"flow-sync-{account_id}",
+            ).start()
+        return self.accounts()
+
+
+
     async def _login(self, account_id: str) -> None:
         try:
             from .browser import BrowserManager, FLOW_BASE_URL
@@ -344,16 +425,28 @@ class FlowService:
             email = await page.evaluate("() => window.__NEXT_DATA__?.props?.pageProps?.session?.user?.email || ''")
             credits = None
             credits_synced_at = None
+            detected_plan = None
             try:
                 from flow._api import FlowAPI
                 credit_info = await FlowAPI(browser, project_id=project_id).get_credits()
                 credits = int(credit_info.credits)
                 credits_synced_at = time.time()
+                detected_plan = _detect_plan(credit_info)
+                _log.info("Plan detected on connect: %s (tier=%s sku=%s)",
+                          detected_plan, getattr(credit_info, 'tier', ''), getattr(credit_info, 'sku', ''))
             except Exception:
                 pass
             await browser.stop()
-            store.patch_row("accounts", account_id, {"status": "online", "projectId": project_id, "email": email or (store.get_row("accounts", account_id) or {}).get("email", ""), "credits": credits, "creditsSyncedAt": credits_synced_at, "updatedAt": time.time(), "error": None})
-            self._log("success", "account_connected", account_id=account_id, details={"projectId": project_id, "credits": credits})
+            patch: dict[str, Any] = {
+                "status": "online", "projectId": project_id,
+                "email": email or (store.get_row("accounts", account_id) or {}).get("email", ""),
+                "credits": credits, "creditsSyncedAt": credits_synced_at,
+                "updatedAt": time.time(), "error": None,
+            }
+            if detected_plan:
+                patch["plan"] = detected_plan
+            store.patch_row("accounts", account_id, patch)
+            self._log("success", "account_connected", account_id=account_id, details={"projectId": project_id, "credits": credits, "plan": detected_plan})
         except Exception as exc:
             store.patch_row("accounts", account_id, {"status": "reconnect", "error": str(exc), "updatedAt": time.time()})
             self._log("error", "account_connect_failed", account_id=account_id, message=str(exc))
@@ -491,60 +584,123 @@ class FlowService:
             if not selected:
                 raise RuntimeError(f"FLOW_MODEL_UNAVAILABLE: {model}")
 
-    async def _prepare_ui_model(self, page, kind: str, model: str) -> None:
+    async def _prepare_ui_model(self, page, kind: str, model: str, *, ui=None) -> None:  # noqa: C901
         """Select a current Flow UI model for models without a stable REST key.
 
         Strategy:
-        1. Ensure settings panel is open (click the x1–x4 pill if tabs not visible).
-        2. Switch to the correct mode tab (Image / Video).
-        3. Click the model family selector and pick the right option.
+        1. Ensure settings panel is open — delegate to ui.open_settings_panel() when
+           available (uses JS, immune to React render timing), else fall back to the
+           custom Playwright-based pill-click with 3 retries.
+        2. Switch to the correct mode tab — delegate to ui.switch_mode() when available.
+        3. Click the model family selector and pick the right option (always custom,
+           since the library does not expose a model-family chooser).
         """
         await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=15_000)
 
-        # Step 1: Make sure settings panel is open (tabs visible)
-        mode_pattern = re.compile(r"Image|Hình ảnh", re.I) if kind == "image" else re.compile(r"Video", re.I)
-
-        async def _visible_mode_tab():
-            for index in range(await page.locator('[role="tab"]').filter(has_text=mode_pattern).count()):
-                candidate = page.locator('[role="tab"]').filter(has_text=mode_pattern).nth(index)
-                if await candidate.is_visible():
-                    return candidate
-            return None
-
-        mode_tab = await _visible_mode_tab()
-        if mode_tab is None:
-            # Panel not open — find and click the generation settings pill (x1–x4 count label)
-            pills = page.locator('button[aria-haspopup="menu"]')
-            trigger = None
-            for index in range(await pills.count() - 1, -1, -1):
-                candidate = pills.nth(index)
-                text = (await candidate.inner_text()).strip()
-                if await candidate.is_visible() and re.search(r"\bx[1-4]\b", text):
-                    trigger = candidate
-                    break
-            if trigger is None:
-                # Last chance: just click the last visible menu pill
-                for index in range(await pills.count() - 1, -1, -1):
-                    candidate = pills.nth(index)
-                    if await candidate.is_visible():
-                        trigger = candidate
-                        break
-            if trigger is None:
-                raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
-            await trigger.click()
-            await asyncio.sleep(0.7)
-            mode_tab = await _visible_mode_tab()
-
-        if mode_tab is None:
-            raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
-
-        # Step 2: Switch to Image / Video mode tab
-        if await mode_tab.get_attribute("aria-selected") != "true":
-            await mode_tab.click()
-            await asyncio.sleep(0.6)
-
-        # Step 3: Find and click model selector for this family
         family = re.compile(r"Nano Banana|Imagen", re.I) if kind == "image" else re.compile(r"Omni|Veo", re.I)
+
+        # ------------------------------------------------------------------
+        # Steps 1 + 2: open settings panel and switch mode
+        # ------------------------------------------------------------------
+        # NOTE: The library's open_settings_panel / switch_mode use JS .click()
+        # which does NOT trigger React synthetic events reliably. In the current
+        # Flow UI the pill click only opens the settings panel (not a media picker)
+        # when the prompt textarea is already focused AND a Playwright click is used.
+        # We therefore always use the direct Playwright approach below.
+        if False:  # keep block to preserve diff context; ui-library path retired 2026-08-29
+            pass
+        else:
+            mode_pattern = (
+                re.compile(r"Image|H\u00ecnh \u1ea3nh", re.I) if kind == "image"
+                else re.compile(r"Video", re.I)
+            )
+
+            async def _visible_mode_tab():
+                loc = page.locator('[role="tab"]').filter(has_text=mode_pattern)
+                for index in range(await loc.count()):
+                    candidate = loc.nth(index)
+                    if await candidate.is_visible():
+                        return candidate
+                return None
+
+            async def _model_pill_already_visible() -> bool:
+                loc = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
+                for index in range(await loc.count()):
+                    if await loc.nth(index).is_visible():
+                        return True
+                return False
+
+            mode_tab = await _visible_mode_tab()
+            if mode_tab is None:
+                for attempt in range(3):
+                    try:
+                        await page.keyboard.press("Escape")
+                        await asyncio.sleep(0.2)
+                    except Exception:
+                        pass
+
+                    # Critical: focus the prompt textarea before clicking the settings
+                    # pill.  In the current Flow UI the pill only opens the mode/model/
+                    # aspect panel when the prompt input already has focus; otherwise it
+                    # opens the reference-image media picker.
+                    try:
+                        ed = page.locator("div[contenteditable]").first
+                        if await ed.count() > 0:
+                            await ed.click()
+                            await asyncio.sleep(0.4)
+                    except Exception:
+                        pass
+
+                    pills = page.locator('button[aria-haspopup="menu"]')
+                    trigger = None
+                    for index in range(await pills.count() - 1, -1, -1):
+                        candidate = pills.nth(index)
+                        text = (await candidate.inner_text()).strip()
+                        # New pill format: 'Video · 720p · 8scrop_16_9x1' — x1 is
+                        # preceded by a digit so \bx[1-4]\b never fires; use x[1-4]\b.
+                        if await candidate.is_visible() and re.search(r"x[1-4]\b", text):
+                            trigger = candidate
+                            break
+                    if trigger is None:
+                        for index in range(await pills.count() - 1, -1, -1):
+                            candidate = pills.nth(index)
+                            if await candidate.is_visible():
+                                trigger = candidate
+                                break
+                    if trigger is None:
+                        raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
+                    await trigger.click()
+                    await asyncio.sleep(1.2)
+                    mode_tab = await _visible_mode_tab()
+                    if mode_tab is not None:
+                        break
+                    all_tabs = page.locator('[role="tab"]')
+                    tab_texts: list[str] = []
+                    for idx in range(min(10, await all_tabs.count())):
+                        try:
+                            tab_texts.append((await all_tabs.nth(idx).inner_text()).strip())
+                        except Exception:
+                            pass
+                    _log.warning(
+                        "_prepare_ui_model attempt %d: no %s tab visible; tabs=%s",
+                        attempt + 1, kind, tab_texts,
+                    )
+
+            if mode_tab is None:
+                if await _model_pill_already_visible():
+                    _log.info(
+                        "_prepare_ui_model: %s tab not found but model pill present — skipping",
+                        kind,
+                    )
+                else:
+                    raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
+            elif await mode_tab.get_attribute("aria-selected") != "true":
+                await mode_tab.click()
+                await asyncio.sleep(0.6)
+
+        # ------------------------------------------------------------------
+        # Step 3: find and click model family selector, pick the right option
+        # ------------------------------------------------------------------
         selectors = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
         selector = None
         for index in range(await selectors.count() - 1, -1, -1):
@@ -567,13 +723,13 @@ class FlowService:
                     selected = True
                     break
             if not selected:
-                # Collect visible choices for diagnostic
                 visible_texts = []
                 for index in range(await choices.count()):
                     choice = choices.nth(index)
                     if await choice.is_visible():
                         visible_texts.append((await choice.inner_text()).strip())
                 raise RuntimeError(f"FLOW_MODEL_UNAVAILABLE: {model} — available: {visible_texts}")
+
 
     async def _prepare_ui_format(self, page, ratio: str, duration: str | None = None) -> None:
         """Select current numeric Flow tabs and verify the requested format.
@@ -610,7 +766,8 @@ class FlowService:
                 text = (await candidate.inner_text()).strip()
                 if (
                     await candidate.is_visible()
-                    and re.search(r"\bx[1-4]\b", text)
+                    # New pill: 'Video · 720p · 8scrop_16_9x1' — use x[1-4]\b
+                    and re.search(r"x[1-4]\b", text)
                     and await candidate.get_attribute("role") != "tab"
                 ):
                     trigger = candidate
@@ -730,7 +887,7 @@ class FlowService:
                 ratio = str(settings.get("ratio") or "16:9")
                 page = await browser.page()
                 await client._ensure_project_page(page)
-                await self._prepare_ui_model(page, "video", model)
+                await self._prepare_ui_model(page, "video", model, ui=client._ui)
                 await self._prepare_ui_format(page, ratio, str(settings.get("duration") or "8"))
                 project_data = await api.get_project_data()
                 baseline_ids = {
@@ -740,8 +897,18 @@ class FlowService:
                 }
                 async def ready(*_args, **_kwargs):
                     return True
+                # If we have a start image, switch to FRAME_TO_VIDEO NOW while the
+                # settings panel is still open from _prepare_ui_model above.
+                # switch_mode.open_settings_panel will see the panel as already open
+                # and skip the unreliable JS click; it then Playwright-clicks the
+                # "Frames" tab which does trigger React events correctly.
+                # This must happen BEFORE the no-ops below so generate_video does not
+                # re-attempt the switch and inadvertently close the panel.
+                if source:
+                    from flow._models import GenerationMode
+                    await client._ui.switch_mode(page, GenerationMode.FRAME_TO_VIDEO)
                 client._ui.open_settings_panel = ready
-                client._ui.switch_mode = ready
+                client._ui.switch_mode = ready   # already done (or not needed for text mode)
                 client._ui.set_aspect_ratio = ready
                 extend_from = store.get_row("jobs", str(settings.get("extendFromJobId") or ""))
                 if extend_from and (extend_from.get("mediaIds") or []):
@@ -794,7 +961,7 @@ class FlowService:
                 sources = job.get("sourceFiles") or []
                 page = await browser.page()
                 await client._ensure_project_page(page)
-                await self._prepare_ui_model(page, "image", model)
+                await self._prepare_ui_model(page, "image", model, ui=client._ui)
                 await self._prepare_ui_format(page, str(settings.get("ratio") or "16:9"))
                 for source in sources:
                     await client._ui.upload_image(page, source)

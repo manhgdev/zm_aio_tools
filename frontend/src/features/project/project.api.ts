@@ -83,6 +83,13 @@ export const api = {
   deleteRender: (renderId: string) =>
     fetchJson<{ ok: boolean }>(`${base}/renders/${renderId}`, { method: 'DELETE' }),
 
+  deleteRendersBatch: (renderIds: string[] = [], all = false, mediaType = 'all') =>
+    fetchJson<{ ok: boolean; deletedCount: number; deletedIds?: string[] }>(`${base}/renders/delete-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ renderIds, all, mediaType }),
+    }),
+
   hardware: () => fetchJson<HardwareInfo>(`${base}/hardware`, undefined, 40_000),
   hardwareUsage: () => fetchJson<import('./project.types').HardwareUsage>(`${base}/hardware/usage`, undefined, 5_000),
 

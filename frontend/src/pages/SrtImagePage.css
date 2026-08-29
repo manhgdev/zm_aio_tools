@@ -817,18 +817,24 @@
 }
 .siv-input.siv-output-path > span {
   flex: 0 1 auto;
-  max-width: 58%;
-  padding-right: 5px;
+  max-width: 68%;
+  padding: 0 6px 0 8px;
   color: var(--muted-foreground);
   border-right: 1px solid var(--line);
+  font-size: 0.74rem;
+  direction: rtl;
+  text-align: left;
+  user-select: text;
 }
 .siv-input.siv-output-path > input {
-  flex: 1 1 120px;
+  flex: 1 1 80px;
+  min-width: 40px;
   font-weight: 500;
 }
 .siv-input.siv-output-path > b {
   flex: 0 0 auto;
 }
+
 .siv-page .siv-settings > label {
   grid-template-columns: auto minmax(0, 1fr);
   column-gap: 10px;

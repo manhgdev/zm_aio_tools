@@ -436,6 +436,7 @@ export type JobStatus = {
 }
 
 export type RenderedVideo = {
+  type?: 'video' | 'image' | 'audio' | 'srt' | 'other'
   renderId: string
   projectId: string
   canEdit?: boolean

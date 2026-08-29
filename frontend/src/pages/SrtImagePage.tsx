@@ -516,13 +516,13 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
             <div className="siv-form">
               <div className="siv-row">
                 <label>Thư mục media <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('media') }}>i</span></label>
-                <div className="siv-input"><span>{mediaFolder || 'Chưa chọn thư mục ảnh/video'}</span></div>
+                <div className="siv-input"><input type="text" value={mediaFolder} onChange={(e) => setMediaFolder(e.target.value)} placeholder={t('Dán hoặc nhập đường dẫn thư mục...', 'Paste or type folder path...')} spellCheck={false} /></div>
                 <button onClick={chooseMediaFolder}>Chọn</button>
                 <button onClick={() => { setMediaFolder(''); toast.success(t('Đã xóa thư mục media.', 'Media folder cleared.')) }} disabled={!mediaFolder}>Xóa</button>
               </div>
               <div className="siv-row">
                 <label>File audio <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('audio') }}>i</span></label>
-                <div className="siv-input"><span title={audioPath}>{audioPath || 'Không dùng audio'}</span></div>
+                <div className="siv-input"><input type="text" value={audioPath} onChange={(e) => setAudioPath(e.target.value)} placeholder={t('Dán hoặc nhập đường dẫn file audio...', 'Paste or type audio file path...')} spellCheck={false} /></div>
                 <button onClick={() => chooseInputFile('audio')}>Chọn</button>
                 <button onClick={() => { setAudioPath(''); toast.success(t('Đã xóa file audio.', 'Audio file cleared.')) }} disabled={!audioPath}>Xóa</button>
               </div>
@@ -536,7 +536,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
                       placeholder={t('Dán nội dung timeline (ví dụ: 001_[00:00:00.00-00:00:08.50] hoặc [00:00 - 00:05] hoặc nội dung file SRT, VTT, CSV, JSON…)', 'Paste timeline content (e.g. 001_[00:00:00.00-00:00:08.50] or [00:00 - 00:05] or SRT, VTT, CSV, JSON text…)')}
                       onChange={(event) => setTimelineText(event.target.value)}
                     />
-                  : <div className="siv-input"><span title={timelinePath}>{timelinePath || t('Không dùng timeline · ghép tuần tự', 'No timeline · merge sequentially')}</span></div>}
+                  : <div className="siv-input"><input type="text" value={timelinePath} onChange={(e) => setTimelinePath(e.target.value)} placeholder={t('Dán hoặc nhập đường dẫn timeline...', 'Paste or type timeline file path...')} spellCheck={false} /></div>}
                 <div className="siv-row-actions" role="group" aria-label={t('Nguồn timeline', 'Timeline source')}>
                   <div className="siv-source-switch">
                     <button
@@ -561,7 +561,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
               </div>
               <div className="siv-row">
                 <label>File phụ đề <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('subtitles') }}>i</span></label>
-                <div className="siv-input"><span title={srtPath}>{srtPath || 'Chưa chọn phụ đề SRT'}</span></div>
+                <div className="siv-input"><input type="text" value={srtPath} onChange={(e) => setSrtPath(e.target.value)} placeholder={t('Dán hoặc nhập đường dẫn file SRT...', 'Paste or type SRT file path...')} spellCheck={false} /></div>
                 <button onClick={() => chooseInputFile('srt')}>Chọn</button>
                 <button onClick={() => { setSrtPath(''); toast.success(t('Đã xóa file phụ đề SRT.', 'SRT subtitle file cleared.')) }} disabled={!srtPath}>Xóa</button>
               </div>

@@ -413,7 +413,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                   </div>
                 </div>
               )}
-              <div style={{ marginTop: 14 }}><OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={setOutputDir} onChoose={isDesktopApp ? () => pickOutputDir().catch((error) => alert(error instanceof Error ? error.message : String(error))) : undefined} onSave={() => localStorage.setItem(LS_VC_OUTPUT_DIR, outputDir)} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder="cleaner" /></div>
+              <div style={{ marginTop: 14 }}><OutputFolderField isDesktopApp={isDesktopApp} value={outputDir} onChange={(value) => { setOutputDir(value); localStorage.setItem(LS_VC_OUTPUT_DIR, value) }} onChoose={isDesktopApp ? () => pickOutputDir().catch((error) => alert(error instanceof Error ? error.message : String(error))) : undefined} defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')} appFolder="cleaner" /></div>
             </div>
 
             {/* Card 2 — Phương pháp */}
@@ -598,7 +598,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                           <td>{job.outputSize ? formatBytes(job.outputSize) : '—'}</td>
                           <td>
                             {job.status === 'done' ? (
-                              <div style={{ display: 'flex', gap: '10px' }}>
+                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'nowrap' }}>
                                 <button className="vc-result-action" type="button" title={t('Xem trước file kết quả', 'Preview output file')} onClick={() => setPreviewJobId(job.id)}>{t('Xem', 'Preview')}</button>
                                 {isDesktopApp ? <button className="vc-result-action" type="button" title={t('Mở thư mục chứa file trên máy tính', 'Open the output folder')} onClick={async () => {
                                   try {
@@ -610,7 +610,7 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
                                 <button className="vc-result-action danger" type="button" onClick={() => void deleteJob(job.id)}>{t('Xóa', 'Delete')}</button>
                               </div>
                             ) : ACTIVE_STATES.has(job.status) ? (
-                              <div style={{ display: 'flex', gap: '10px' }}>
+                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'nowrap' }}>
                                 <button className="vc-result-action danger" type="button" onClick={async () => {
                                   try {
                                     await cleanerApi.cancel(job.id)
