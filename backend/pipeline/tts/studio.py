@@ -324,29 +324,41 @@ def synth_text_job(
         )
         total_chunks = len(chunks)
         set_job_progress(job_id, 0, total_chunks, f"Bắt đầu tạo {total_chunks} câu…")
+        import concurrent.futures
+        engine_type = _engine_of(voice)
+        from pipeline.core.accel import tts_local_workers
+        from pipeline.core.resources import adaptive_workers
+
+        is_local = engine_type in ("vieneu", "zmai", "clone", "system")
+        if is_local:
+            max_workers = tts_local_workers(None, tasks=total_chunks)
+        else:
+            max_workers = adaptive_workers(None, kind="network", cap=24, tasks=total_chunks)
+
         part_paths: list[Path] = []
-        part_durs: list[float] = []
-        for i, chunk in enumerate(chunks):
+        for i in range(total_chunks):
+            part_paths.append(job_dir / f"part_{i:03d}.wav")
+
+        def _process_chunk(i: int, chunk: str, part: Path):
             if _is_cancelled(job_id):
-                raise RuntimeError("Job đã hủy")
-            set_job_progress(job_id, i, total_chunks, f"Đang tạo câu {i + 1}/{total_chunks}…")
-            part = job_dir / f"part_{i:03d}.wav"
+                return
             tts_segment(
-                chunk,
-                voice,
-                part,
-                None,
-                "none",
-                lang=lang,
-                speed=speed,
-                volume=volume,
-                pitch=pitch,
-                style=style,
+                chunk, voice, part, None, "none",
+                lang=lang, speed=speed, volume=volume, pitch=pitch, style=style,
                 cancel_check=lambda: _is_cancelled(job_id),
             )
-            part_paths.append(part)
-            part_durs.append(ffprobe_duration(part))
-            set_job_progress(job_id, i + 1, total_chunks, f"Đã hoàn thành {i + 1}/{total_chunks} câu…")
+
+        completed = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_process_chunk, i, chunks[i], part_paths[i]): i for i in range(total_chunks)}
+            for future in concurrent.futures.as_completed(futures):
+                if _is_cancelled(job_id):
+                    raise RuntimeError("Job đã hủy")
+                future.result()
+                completed += 1
+                set_job_progress(job_id, completed, total_chunks, f"Đã hoàn thành {completed}/{total_chunks} câu…")
+
+        part_durs: list[float] = [ffprobe_duration(p) for p in part_paths]
         set_job_progress(job_id, total_chunks, total_chunks, "Đang ghép nối âm thanh và tạo phụ đề…")
         gap = max(0, int(gap_ms)) / 1000.0
         # CapCut: cue ngắn (~42 ký tự), timeline ∝ audio từng part
@@ -475,31 +487,49 @@ def synth_srt_job(
             set_job_context(job_id)
         except Exception:
             pass
+            
+        import concurrent.futures
+        engine_type = _engine_of(voice)
+        from pipeline.core.accel import tts_local_workers
+        from pipeline.core.resources import adaptive_workers
+
+        is_local = engine_type in ("vieneu", "zmai", "clone", "system")
+        if is_local:
+            max_workers = tts_local_workers(None, tasks=total_cues)
+        else:
+            max_workers = adaptive_workers(None, kind="network", cap=24, tasks=total_cues)
+        
         match = effective_match if effective_match in ("none", "natural", "stretch", "preferVideo") else "stretch"
-        for i, cue in enumerate(cues):
+        use_match = "none" if match in ("none", "preferVideo") else match
+        
+        for i in range(total_cues):
+            part_paths.append(job_dir / f"cue_{i:03d}.wav")
+            
+        def _process_cue(i: int, cue: dict, part: Path):
             if _is_cancelled(job_id):
-                raise RuntimeError("Job đã hủy")
-            set_job_progress(job_id, i, total_cues, f"Đang tạo đoạn SRT {i + 1}/{total_cues}…")
+                return
             text = str(cue.get("text") or "").strip() or "…"
             slot = max(0.15, float(cue["end"]) - float(cue["start"]))
-            part = job_dir / f"cue_{i:03d}.wav"
-            # Safe match: natural ≤1.25×, stretch capped in audio_utils
-            use_match = "none" if match in ("none", "preferVideo") else match
             target = slot if use_match != "none" else None
             tts_segment(
-                text,
-                voice,
-                part,
-                target,
-                use_match,
-                lang=lang,
-                speed=speed,
-                volume=volume,
-                pitch=pitch,
-                style=style,
+                text, voice, part, target, use_match,
+                lang=lang, speed=speed, volume=volume, pitch=pitch, style=style,
                 cancel_check=lambda: _is_cancelled(job_id),
             )
-            part_paths.append(part)
+
+        completed = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_process_cue, i, cues[i], part_paths[i]): i for i in range(total_cues)}
+            for future in concurrent.futures.as_completed(futures):
+                if _is_cancelled(job_id):
+                    raise RuntimeError("Job đã hủy")
+                future.result()
+                completed += 1
+                set_job_progress(job_id, completed, total_cues, f"Đã hoàn thành {completed}/{total_cues} đoạn SRT…")
+
+        for i, cue in enumerate(cues):
+            part = part_paths[i]
+            text = str(cue.get("text") or "").strip() or "…"
             dur = float(ffprobe_duration(part) or 0.15)
             # Giữ nguyên text + timestamp SRT gốc (không tách CapCut)
             src_start = float(cue["start"])
@@ -523,7 +553,6 @@ def synth_srt_job(
                     "_srcEnd": src_end,
                 }
             )
-            set_job_progress(job_id, i + 1, total_cues, f"Đã hoàn thành {i + 1}/{total_cues} đoạn SRT…")
         set_job_progress(job_id, total_cues, total_cues, "Đang xuất file âm thanh và phụ đề SRT…")
         wav = job_dir / "audio.wav"
         if keep_timeline:
