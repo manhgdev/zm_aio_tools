@@ -1400,12 +1400,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     }).catch((error) =>
       setApiError(error instanceof Error ? error.message : String(error)),
     );
-  const openFlowFolder = (outputDir: string, kind: CreateKind = "video") =>
-    void flowRequest(`/api/flow/open-folder?output_dir=${encodeURIComponent(outputDir)}&kind=${encodeURIComponent(kind)}`, {
-      method: "POST",
-    }).catch((error) =>
-      setApiError(error instanceof Error ? error.message : String(error)),
-    );
+
   const pickOutputFolder = async (): Promise<string | undefined> => {
     try {
       const result = await flowRequest<{ path?: string }>(
