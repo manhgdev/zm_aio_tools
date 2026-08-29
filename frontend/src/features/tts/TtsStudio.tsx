@@ -778,6 +778,12 @@ export default function TtsStudio({
       setBusyProgress(100)
       setBusyCustomMessage('Đã hoàn thành!')
       applyJobUrls(res)
+      const resAny = res as { publishError?: string; publishedDir?: string }
+      if (resAny.publishError) {
+        toast.error(t(`Lỗi xuất kết quả: ${resAny.publishError}`, `Output error: ${resAny.publishError}`))
+      } else if (resAny.publishedDir) {
+        toast.success(t(`Đã lưu vào: ${resAny.publishedDir}`, `Saved to: ${resAny.publishedDir}`))
+      }
       // Cùng giọng + chữ + setting → server trả cache, không thêm lịch sử mới
       if (!(res as { cached?: boolean }).cached) await loadHistory()
       setTimeout(() => audioRef.current?.play().catch(() => {}), 80)

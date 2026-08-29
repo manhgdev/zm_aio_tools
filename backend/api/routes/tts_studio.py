@@ -132,8 +132,10 @@ def api_tts_studio_synth(body: StudioSynthIn):
                 result["publishedDir"] = str(
                     publish_job_outputs(str(jid), body.outputDir, body.outputFormat)
                 )
-            except Exception:
-                pass
+            except Exception as pub_err:
+                import logging
+                logging.getLogger(__name__).warning("publish_job_outputs failed: %s", pub_err)
+                result["publishError"] = str(pub_err)
         return result
     except Exception as e:
         raise HTTPException(500, str(e)) from e
