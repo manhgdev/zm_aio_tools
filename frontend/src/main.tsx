@@ -1,6 +1,6 @@
 import { Component, type ReactNode, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import App from './App'
+import App from './app/App'
 import './index.css'
 
 // WKWebView may omit the usual "Mac OS X" token. Check every platform hint so

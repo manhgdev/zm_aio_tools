@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { cn } from '@/lib/cn'
+import { cn } from '@/shared/lib/cn'
+
 import { localize, useLocale } from '@/app/i18n'
 import { copyText } from '@/shared/lib/clipboard'
 
