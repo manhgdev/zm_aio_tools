@@ -9,6 +9,7 @@ import { AudioSlider, CaptionModePicker, ReviewLangFields, ReviewLeftPanel, Revi
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import { IconArrowRight, IconGear } from '@/shared/components/Icons'
+import { MediaPreviewModal } from '@/shared/components/MediaPreviewModal'
 import { DEFAULT_REVIEW_SETTINGS, STYLE_TO_PIPE, type ReviewSettings } from '@/features/studio/reviewSettings'
 import './StudioPages.css'
 import './FilmPage.css'
@@ -413,7 +414,15 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
         </section>
       </> : tab === 'drawing' ? <>
         <section className="studio-card drawing-batch-setup">
-          <div className="drawing-batch-title">{editingDrawingJobId && <div><h2>{t('Sửa job Vẽ tay', 'Edit Drawing job')}</h2><p>{t('Chỉnh cấu hình rồi lưu trước khi job bắt đầu.', 'Update settings and save before this job starts.')}</p></div>}<span>{editingDrawingJobId ? t('Đang sửa', 'Editing') : t(`${drawingJobs.length} job`, `${drawingJobs.length} jobs`)}</span></div>
+          {editingDrawingJobId ? (
+            <div className="drawing-batch-title">
+              <div>
+                <h2>{t('Sửa job Vẽ tay', 'Edit Drawing job')}</h2>
+                <p>{t('Chỉnh cấu hình rồi lưu trước khi job bắt đầu.', 'Update settings and save before this job starts.')}</p>
+              </div>
+              <span>{t('Đang sửa', 'Editing')}</span>
+            </div>
+          ) : null}
           <input ref={drawingInputRef} type="file" className="drawing-visually-hidden" multiple accept="image/jpeg,image/png,image/webp,image/bmp" onChange={(event) => { const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith('image/')); event.currentTarget.value = ''; void enqueueDrawingFiles(files) }} />
           <div className="drawing-batch-controls">
             <button type="button" className="drawing-upload-action" onClick={() => drawingInputRef.current?.click()}>{t('＋ Thêm ảnh', '+ Add images')}</button>
@@ -567,8 +576,132 @@ export default function BatchPage({ onBack, onOpenEditor, onOpenReviewProjects }
         {!tabJobs.length ? <p className="muted">{t('Chưa có job.', 'No jobs yet.')}</p> : null}
       </section>
       </>}
-      {drawingPreview ? <div className="drawing-preview-modal" role="presentation" onMouseDown={() => setDrawingPreview(null)}><section role="dialog" aria-modal="true" aria-labelledby="drawing-preview-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="drawing-preview-title">{drawingPreview.filename}</h2><p>{drawingPreview.status === 'done' ? t('Video vẽ tay đã xuất', 'Rendered drawing video') : t('Ảnh nguồn của job đang chọn', 'Source image for the selected job')}</p></div><button type="button" onClick={() => setDrawingPreview(null)} aria-label={t('Đóng xem trước', 'Close preview')}>×</button></header>{drawingPreview.status === 'done' ? <video controls autoPlay src={`/api/drawing/jobs/${drawingPreview.id}/output`} /> : <img src={`/api/drawing/jobs/${drawingPreview.id}/input`} alt={drawingPreview.filename} />}</section></div> : null}
-      {queuePreview ? <div className="drawing-preview-modal" role="presentation" onMouseDown={() => setQueuePreview(null)}><section role="dialog" aria-modal="true" aria-labelledby="queue-preview-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="queue-preview-title">{queuePreview.source.split(/[/\\]/).pop()}</h2><p>{queuePreview.type === 'review' ? t('Video Review đã xuất', 'Rendered Review video') : t('Video Clone đã xuất', 'Rendered Clone video')}</p></div><button type="button" onClick={() => setQueuePreview(null)} aria-label={t('Đóng xem trước', 'Close preview')}>×</button></header><video controls autoPlay src={studioApi.fileUrl(queuePreview.id)} /></section></div> : null}
+      <MediaPreviewModal
+        open={Boolean(drawingPreview)}
+        onClose={() => setDrawingPreview(null)}
+        item={
+          drawingPreview
+            ? {
+                id: drawingPreview.id,
+                title: drawingPreview.filename,
+                subtitle:
+                  drawingPreview.status === 'done'
+                    ? t('Video vẽ tay đã xuất', 'Rendered drawing video')
+                    : t('Ảnh nguồn của job đang chọn', 'Source image for the selected job'),
+                src:
+                  drawingPreview.status === 'done'
+                    ? `/api/drawing/jobs/${drawingPreview.id}/output`
+                    : `/api/drawing/jobs/${drawingPreview.id}/input`,
+                downloadUrl:
+                  drawingPreview.status === 'done'
+                    ? `/api/drawing/jobs/${drawingPreview.id}/output`
+                    : undefined,
+                downloadFilename: `${drawingPreview.filename.replace(/\.[^.]+$/, '')}_drawn.mp4`,
+                type: drawingPreview.status === 'done' ? 'video' : 'image',
+              }
+            : null
+        }
+        totalCount={drawingJobs.length}
+        currentIndex={drawingPreview ? drawingJobs.findIndex((j) => j.id === drawingPreview.id) : -1}
+        onPrevious={() => {
+          if (!drawingPreview || drawingJobs.length <= 1) return
+          const idx = drawingJobs.findIndex((j) => j.id === drawingPreview.id)
+          if (idx >= 0) {
+            const prev = (idx - 1 + drawingJobs.length) % drawingJobs.length
+            setDrawingPreview(drawingJobs[prev])
+          }
+        }}
+        onNext={() => {
+          if (!drawingPreview || drawingJobs.length <= 1) return
+          const idx = drawingJobs.findIndex((j) => j.id === drawingPreview.id)
+          if (idx >= 0) {
+            const next = (idx + 1) % drawingJobs.length
+            setDrawingPreview(drawingJobs[next])
+          }
+        }}
+        onReveal={
+          isDesktopApp && drawingPreview && drawingPreview.status === 'done'
+            ? async () => {
+                await fetch(`/api/drawing/jobs/${drawingPreview.id}/reveal`, { method: 'POST' })
+              }
+            : undefined
+        }
+        onDelete={
+          drawingPreview
+            ? async () => {
+                const targetId = drawingPreview.id
+                if (drawingJobs.length > 1) {
+                  const idx = drawingJobs.findIndex((j) => j.id === targetId)
+                  const next = (idx + 1) % drawingJobs.length
+                  setDrawingPreview(drawingJobs[next])
+                } else {
+                  setDrawingPreview(null)
+                }
+                await deleteDrawingJob(targetId)
+              }
+            : undefined
+        }
+      />
+
+      <MediaPreviewModal
+        open={Boolean(queuePreview)}
+        onClose={() => setQueuePreview(null)}
+        item={
+          queuePreview
+            ? {
+                id: queuePreview.id,
+                title: queuePreview.source.split(/[/\\]/).pop() || queuePreview.id,
+                subtitle:
+                  queuePreview.type === 'review'
+                    ? t('Video Review đã xuất', 'Rendered Review video')
+                    : t('Video Clone đã xuất', 'Rendered Clone video'),
+                src: studioApi.fileUrl(queuePreview.id),
+                downloadUrl: studioApi.fileUrl(queuePreview.id, { download: true }),
+                type: 'video',
+              }
+            : null
+        }
+        totalCount={jobs.length}
+        currentIndex={queuePreview ? jobs.findIndex((j) => j.id === queuePreview.id) : -1}
+        onPrevious={() => {
+          if (!queuePreview || jobs.length <= 1) return
+          const idx = jobs.findIndex((j) => j.id === queuePreview.id)
+          if (idx >= 0) {
+            const prev = (idx - 1 + jobs.length) % jobs.length
+            setQueuePreview(jobs[prev])
+          }
+        }}
+        onNext={() => {
+          if (!queuePreview || jobs.length <= 1) return
+          const idx = jobs.findIndex((j) => j.id === queuePreview.id)
+          if (idx >= 0) {
+            const next = (idx + 1) % jobs.length
+            setQueuePreview(jobs[next])
+          }
+        }}
+        onReveal={
+          isDesktopApp && queuePreview
+            ? async () => {
+                await studioApi.revealJob(queuePreview.id)
+              }
+            : undefined
+        }
+        onDelete={
+          queuePreview
+            ? async () => {
+                const targetId = queuePreview.id
+                if (jobs.length > 1) {
+                  const idx = jobs.findIndex((j) => j.id === targetId)
+                  const next = (idx + 1) % jobs.length
+                  setQueuePreview(jobs[next])
+                } else {
+                  setQueuePreview(null)
+                }
+                await deleteQueueJob(targetId)
+              }
+            : undefined
+        }
+      />
     </div>
   )
 }

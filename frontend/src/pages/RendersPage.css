@@ -36,11 +36,6 @@
 .renders-pagination button { min-width: 72px; min-height: 34px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .renders-pagination button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .renders-pagination button:disabled { opacity: .45; cursor: default; }
-.render-view-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.72); }
-.render-view { width: min(1000px, 94vw); overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 20px 70px rgba(0,0,0,.4); }
-.render-view > div { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 11px 14px; }
-.render-view button { border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
-.render-view video { display: block; width: 100%; max-height: 76vh; background: #000; }
 @media (max-width: 620px) { .renders-page { padding: 20px 14px 36px; } .renders-head { align-items: center; } .renders-grid { grid-template-columns: 1fr; } .renders-refresh { font-size: 0; width: 38px; padding: 0; } }
 
 /* Multi-select */

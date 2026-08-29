@@ -3,6 +3,7 @@ import { api } from '@/features/project/project.api'
 import type { RenderedVideo } from '@/features/project/project.types'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { IconDownload, IconFilm, IconRefresh } from '@/shared/components/Icons'
+import { MediaPreviewModal } from '@/shared/components/MediaPreviewModal'
 import { localize, useLocale } from '@/app/i18n'
 import { toast } from 'sonner'
 import './RendersPage.css'
@@ -50,13 +51,19 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
   const safePage = Math.min(page, totalPages)
   const pageItems = filteredItems.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
 
+  const currentViewingIndex = viewing ? filteredItems.findIndex((i) => i.renderId === viewing.renderId) : -1
+  const moveViewing = useCallback((delta: number) => {
+    if (filteredItems.length <= 1 || currentViewingIndex < 0) return
+    const nextIdx = (currentViewingIndex + delta + filteredItems.length) % filteredItems.length
+    setViewing(filteredItems[nextIdx])
+  }, [filteredItems, currentViewingIndex])
+
   function getThumbIcon(type?: string) {
     if (type === 'image') return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
     if (type === 'audio') return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
     if (type === 'srt') return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
     return <IconFilm size={32} />
   }
-
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -76,10 +83,14 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
   useEffect(() => { void load() }, [load])
   useEffect(() => {
     if (!viewing) return
-    const close = (event: KeyboardEvent) => event.key === 'Escape' && setViewing(null)
-    window.addEventListener('keydown', close)
-    return () => window.removeEventListener('keydown', close)
-  }, [viewing])
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setViewing(null)
+      if (event.key === 'ArrowLeft') moveViewing(-1)
+      if (event.key === 'ArrowRight') moveViewing(1)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [viewing, moveViewing])
 
   async function reveal(renderId: string) {
     try {
@@ -295,17 +306,58 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
         </nav>
       )}
 
-      {viewing && (
-        <div className="render-view-backdrop" role="presentation">
-          <div className="render-view" role="dialog" aria-modal="true" aria-label={`Xem render ${viewing.projectId}`} onMouseDown={(event) => event.stopPropagation()}>
-            <div><strong>{renderName(viewing)}</strong><button type="button" onClick={() => setViewing(null)}>Đóng</button></div>
-            {(!viewing.type || viewing.type === 'video') && <video src={viewing.videoUrl} controls autoPlay playsInline />}
-            {viewing.type === 'image' && <img src={viewing.videoUrl} alt={renderName(viewing)} style={{ width: '100%', height: 'auto', maxHeight: '70vh', objectFit: 'contain' }} />}
-            {viewing.type === 'audio' && <div style={{ padding: '40px 20px', background: '#000', borderRadius: '10px', display: 'flex', justifyContent: 'center' }}><audio src={viewing.videoUrl} controls autoPlay /></div>}
-            {viewing.type === 'srt' && <div style={{ padding: '40px', background: '#000', borderRadius: '10px', display: 'flex', justifyContent: 'center' }}><a href={viewing.downloadUrl} download style={{ padding: '10px 20px', background: '#2684d9', color: '#fff', borderRadius: '8px', textDecoration: 'none' }}>Tải xuống phụ đề</a></div>}
-          </div>
-        </div>
-      )}
+      <MediaPreviewModal
+        open={Boolean(viewing)}
+        onClose={() => setViewing(null)}
+        item={
+          viewing
+            ? {
+                id: viewing.renderId,
+                title: renderName(viewing),
+                subtitle: [
+                  new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(viewing.createdAt)),
+                  viewing.width && viewing.height ? `${viewing.width}×${viewing.height}` : '',
+                  viewing.sizeBytes ? sizeLabel(viewing.sizeBytes) : '',
+                  viewing.duration ? durationLabel(viewing.duration) : '',
+                ].filter(Boolean).join(' · '),
+                src: viewing.videoUrl,
+                downloadUrl: viewing.downloadUrl || viewing.videoUrl,
+                downloadFilename: viewing.name
+                  ? `${viewing.name}.${viewing.type === 'image' ? 'png' : viewing.type === 'audio' ? 'mp3' : viewing.type === 'srt' ? 'srt' : 'mp4'}`
+                  : `media-${viewing.renderId}`,
+                type: viewing.type || 'video',
+              }
+            : null
+        }
+        totalCount={filteredItems.length}
+        currentIndex={currentViewingIndex}
+        onPrevious={() => moveViewing(-1)}
+        onNext={() => moveViewing(1)}
+        onReveal={canReveal && viewing ? () => void reveal(viewing.renderId) : undefined}
+        onEdit={
+          viewing && viewing.canEdit !== false && viewing.projectId && viewing.projectId !== 'srt'
+            ? () => {
+                const target = viewing
+                setViewing(null)
+                void editRender(target)
+              }
+            : undefined
+        }
+        editLabel={openingId === viewing?.renderId ? t('Đang mở…', 'Opening…') : t('Sửa dự án', 'Edit project')}
+        onDelete={
+          viewing
+            ? async () => {
+                const toDelete = viewing
+                if (filteredItems.length > 1) {
+                  moveViewing(1)
+                } else {
+                  setViewing(null)
+                }
+                await deleteRender(toDelete)
+              }
+            : undefined
+        }
+      />
     </main>
   )
 }

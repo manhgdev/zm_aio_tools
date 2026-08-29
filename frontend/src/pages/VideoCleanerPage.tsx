@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, useEffect, type DragEvent } from 'react'
 import { localize, useLocale } from '@/app/i18n'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
+import { MediaPreviewModal } from '@/shared/components/MediaPreviewModal'
 import { copyText } from '@/shared/lib/clipboard'
 import { toast } from 'sonner'
 import './VideoCleanerPage.css'
@@ -682,24 +683,73 @@ export default function VideoCleanerPage({ onBack }: { onBack: () => void }) {
       </div>
       
       {/* Video Preview Modal */}
-      {previewJobId && (
-        <div className="vc-modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ position: 'relative', width: '80%', maxWidth: '1000px', backgroundColor: '#000', borderRadius: 8, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
-            <video 
-              src={`/api/cleaner/jobs/${previewJobId}/file`} 
-              controls 
-              autoPlay 
-              style={{ width: '100%', maxHeight: '80vh', display: 'block' }} 
-            />
-            <button 
-              onClick={() => setPreviewJobId(null)}
-              style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(0,0,0,0.5)', color: '#fff', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, lineHeight: '32px', textAlign: 'center' }}
-            >
-              &times;
-            </button>
-          </div>
-        </div>
-      )}
+      {(() => {
+        const previewJob = jobs.find((j) => j.id === previewJobId)
+        const doneJobs = jobs.filter((j) => j.status === 'done')
+        const currentIdx = doneJobs.findIndex((j) => j.id === previewJobId)
+
+        return (
+          <MediaPreviewModal
+            open={Boolean(previewJobId && previewJob)}
+            onClose={() => setPreviewJobId(null)}
+            item={
+              previewJob
+                ? {
+                    id: previewJob.id,
+                    title: previewJob.filename,
+                    subtitle: [
+                      methodLabel(previewJob.method, t),
+                      previewJob.outputSize ? formatBytes(previewJob.outputSize) : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' · '),
+                    src: `/api/cleaner/jobs/${previewJob.id}/file`,
+                    downloadUrl: `/api/cleaner/jobs/${previewJob.id}/file`,
+                    downloadFilename: previewJob.filename.replace(/\.[^.]+$/, '_cleaned.mp4'),
+                    type: 'video',
+                  }
+                : null
+            }
+            totalCount={doneJobs.length}
+            currentIndex={currentIdx}
+            onPrevious={() => {
+              if (doneJobs.length <= 1 || currentIdx < 0) return
+              const prevIdx = (currentIdx - 1 + doneJobs.length) % doneJobs.length
+              setPreviewJobId(doneJobs[prevIdx].id)
+            }}
+            onNext={() => {
+              if (doneJobs.length <= 1 || currentIdx < 0) return
+              const nextIdx = (currentIdx + 1) % doneJobs.length
+              setPreviewJobId(doneJobs[nextIdx].id)
+            }}
+            onReveal={
+              isDesktopApp && previewJob
+                ? async () => {
+                    try {
+                      await cleanerApi.reveal(previewJob.id)
+                    } catch (e: any) {
+                      toast.error(t(`Lỗi mở file: ${e.message}`, `Could not open file: ${e.message}`))
+                    }
+                  }
+                : undefined
+            }
+            onDelete={
+              previewJob
+                ? async () => {
+                    const targetId = previewJob.id
+                    if (doneJobs.length > 1) {
+                      const nextIdx = (currentIdx + 1) % doneJobs.length
+                      setPreviewJobId(doneJobs[nextIdx].id)
+                    } else {
+                      setPreviewJobId(null)
+                    }
+                    await deleteJob(targetId)
+                  }
+                : undefined
+            }
+          />
+        )
+      })()}
     </div>
   )
 }
