@@ -1012,13 +1012,14 @@ class FlowService:
         settings = job.get("settings") or {}
         selected = Path(str(settings.get("outputDir") or "results")).expanduser()
         kind = safe_output_part(job.get("kind") or "video", "video")
+        flow_tab = f"flow-{kind}"  # → ~/Downloads/ZM_AIO_TOOL/flow/video/ or .../flow/image/
         series_context = job.get("seriesContext") or {}
         if series_context:
-            root = selected_or_default("flow", "")
-            series_root = root / "series" / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series") / kind
+            root = selected_or_default(flow_tab, "")
+            series_root = root / "series" / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series")
             folder = series_root / "anchors" if series_context.get("artifact") == "anchor" else series_root / f"tap-{int(series_context.get('episodeIndex') or 1):02d}"
         elif selected.is_absolute():
-            flow_root = selected_or_default("flow", "")
+            flow_root = selected_or_default(flow_tab, "")
             try:
                 relative = selected.relative_to(flow_root)
             except ValueError:
@@ -1027,13 +1028,14 @@ class FlowService:
                 parts = list(relative.parts)
                 if parts and parts[0] in {"image", "video"}:
                     parts = parts[1:]
-                folder = flow_root / kind / safe_output_part(parts[-1] if parts else "results", "results")
+                folder = flow_root / safe_output_part(parts[-1] if parts else "results", "results")
         else:
-            root = selected_or_default("flow", "")
-            folder = root / kind / safe_output_part(selected, "results")
+            root = selected_or_default(flow_tab, "")
+            folder = root / safe_output_part(selected, "results")
         if create:
             folder.mkdir(parents=True, exist_ok=True)
         return folder
+
 
     def _display_output_folder(self, job: dict[str, Any]) -> Path:
         """Return the real worker destination shown in the queue UI."""
