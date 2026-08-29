@@ -43,14 +43,15 @@ import {
   IconPlay,
   IconUsers,
 } from './TtsIcons'
-import './TtsStudio.css'
+import {
+  SliderNumber, WAVE_BARS,
+  FULL_DASHBOARD, COMING_SOON, SECTION_LABELS, sectionFromUrl,
+  FAVORITE_LS_KEY, OUTPUT_DIR_LS_KEY, TTS_TEXT_LS_KEY,
+  TTS_SRT_LS_KEY, TTS_INPUT_MODE_LS_KEY, TTS_ACTIVE_JOB_LS_KEY,
+  TTS_URL_SECTIONS,
+} from './lib/ttsStudioHelpers'
 
-const FAVORITE_LS_KEY = 'video-clone:tts-voice-favorites'
-const OUTPUT_DIR_LS_KEY = 'video-clone:tts-output-dir.v1'
-const TTS_TEXT_LS_KEY = 'video-clone:tts-text:v1'
-const TTS_SRT_LS_KEY = 'video-clone:tts-srt:v1'
-const TTS_INPUT_MODE_LS_KEY = 'video-clone:tts-input-mode:v1'
-const TTS_ACTIVE_JOB_LS_KEY = 'video-clone:tts-active-job:v1'
+import './TtsStudio.css'
 
 type Props = {
   voices: Voice[]
@@ -60,87 +61,6 @@ type Props = {
   /** Mobile drawer — controlled từ Header ☰ */
   sideOpen?: boolean
   onSideOpenChange?: (open: boolean) => void
-}
-
-function SliderNumber({
-  value,
-  min,
-  max,
-  step,
-  label,
-  onChange,
-}: {
-  value: number
-  min: number
-  max: number
-  step: number
-  label: string
-  onChange: (value: number) => void
-}) {
-  const [draft, setDraft] = useState(String(value))
-  useEffect(() => setDraft(String(value)), [value])
-
-  function commit() {
-    const parsed = Number(draft.replace(',', '.'))
-    if (!Number.isFinite(parsed)) {
-      setDraft(String(value))
-      return
-    }
-    const next = Math.min(max, Math.max(min, parsed))
-    setDraft(String(next))
-    onChange(next)
-  }
-
-  return (
-    <input
-      className="tts-slider-number"
-      type="number"
-      min={min}
-      max={max}
-      step={step}
-      value={draft}
-      aria-label={label}
-      onFocus={(event) => event.currentTarget.select()}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
-    />
-  )
-}
-
-const WAVE_BARS = Array.from({ length: 180 }, (_, i) => {
-  const t = i / 180
-  const taper = 0.5 + Math.sin(Math.PI * Math.min(1, t * 1.15)) * 0.5
-  return 3 + (Math.abs(Math.sin(t * 43)) * 12 + Math.abs(Math.cos(t * 91)) * 5) * taper
-})
-
-/** Full dashboard (1–7): Tổng quan + Tạo giọng nói */
-const FULL_DASHBOARD = new Set(['overview', 'make'])
-/** Chưa làm / UI tạm → “Sắp ra mắt…” */
-const COMING_SOON = new Set(['engines', 'audio', 'match', 'advanced'])
-
-const SECTION_LABELS: Record<string, string> = {
-  overview: 'Tổng quan',
-  input: 'Nhập văn bản',
-  srt: 'Nhập SRT / Phụ đề',
-  make: 'Tạo giọng nói',
-  history: 'Lịch sử tạo',
-  voice: 'Danh sách giọng',
-  clone: 'Clone giọng nói',
-  engines: 'TTS Engines',
-  audio: 'Cấu hình âm thanh',
-  match: 'Khớp thời lượng',
-  advanced: 'Tùy chọn nâng cao',
-}
-
-const TTS_URL_SECTIONS = new Set([
-  'overview', 'history', 'voice', 'clone', 'engines', 'audio', 'match', 'advanced',
-])
-
-function sectionFromUrl(): string {
-  if (typeof window === 'undefined') return 'overview'
-  const section = new URLSearchParams(window.location.search).get('tab') || ''
-  return TTS_URL_SECTIONS.has(section) ? section : 'overview'
 }
 
 export default function TtsStudio({
