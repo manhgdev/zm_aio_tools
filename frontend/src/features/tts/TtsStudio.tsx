@@ -189,6 +189,8 @@ export default function TtsStudio({
   const [autoSplit, setAutoSplit] = useState(saved.autoSplit)
   const [outputFormat, setOutputFormat] = useState<TtsOutputFormat>(saved.outputFormat)
   const [outputDir, setOutputDir] = useState(() => localStorage.getItem(OUTPUT_DIR_LS_KEY) || '')
+  const outputDirRef = useRef(outputDir)
+  useEffect(() => { outputDirRef.current = outputDir }, [outputDir])
   useEffect(() => {
     if (isDesktopApp || !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir.trim())) return
     try {
@@ -2001,9 +2003,9 @@ export default function TtsStudio({
               <OutputFolderField
                 isDesktopApp={isDesktopApp}
                 value={outputDir}
-                onChange={(value) => {
-                  setOutputDir(value)
-                  localStorage.setItem(OUTPUT_DIR_LS_KEY, value)
+                onChange={(value) => setOutputDir(value)}
+                onSave={() => {
+                  try { localStorage.setItem(OUTPUT_DIR_LS_KEY, outputDirRef.current) } catch { /* ignore */ }
                 }}
                 onChoose={isDesktopApp ? async () => {
                   const result = await studioApi.pickFolder()
@@ -2014,6 +2016,7 @@ export default function TtsStudio({
                 label={t('Thư mục đầu ra', 'Output folder')}
                 disabled={busy}
               />
+
             </div>
           </section>
           </DashPanel>
