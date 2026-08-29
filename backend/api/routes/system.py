@@ -186,27 +186,164 @@ def _download_update(asset: dict[str, Any], updates: Path, version: str) -> Path
 def _windows_update_script(updates: Path) -> Path:
     script = updates / "apply-update.ps1"
     script.write_text(
-        "param([int]$AppPid,[string]$Zip,[string]$Target,[string]$Exe)\n"
-        "$ErrorActionPreference = 'Stop'\n"
-        "Wait-Process -Id $AppPid -ErrorAction SilentlyContinue\n"
-        "$parent = Split-Path $Target -Parent\n"
-        "$stamp = Get-Date -Format 'yyyyMMddHHmmss'\n"
-        "$next = Join-Path $parent ((Split-Path $Target -Leaf) + '.new-' + $stamp)\n"
-        "$backup = Join-Path $parent ((Split-Path $Target -Leaf) + '.old-' + $stamp)\n"
-        "Remove-Item $next -Recurse -Force -ErrorAction SilentlyContinue\n"
-        "Expand-Archive -Path $Zip -DestinationPath $next -Force\n"
-        "if (-not (Test-Path (Join-Path $next 'ZM AIO TOOL.exe'))) { throw 'Gói cập nhật thiếu ZM AIO TOOL.exe' }\n"
-        "$versions = Get-ChildItem $next -Filter VERSION -Recurse -File\n"
-        "if (-not $versions) { throw 'Gói cập nhật thiếu VERSION' }\n"
-        "try {\n"
-        "  Move-Item -LiteralPath $Target -Destination $backup\n"
-        "  Move-Item -LiteralPath $next -Destination $Target\n"
-        "} catch {\n"
-        "  if ((Test-Path $backup) -and -not (Test-Path $Target)) { Move-Item -LiteralPath $backup -Destination $Target }\n"
-        "  throw\n"
-        "}\n"
-        "Start-Process -FilePath $Exe\n"
-        "Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue\n",
+        """# ZM AIO TOOL Windows Auto-Updater (PowerShell 5.1+ compatible)
+param(
+    [int]$AppPid,
+    [string]$Zip,
+    [string]$Target,
+    [string]$Exe
+)
+
+$ErrorActionPreference = 'Stop'
+$Zip = $Zip.Trim().Trim('"')
+$Target = $Target.Trim().Trim('"').TrimEnd('\\', '/')
+$Exe = $Exe.Trim().Trim('"')
+$LogFile = Join-Path (Split-Path $Zip -Parent) "update.log"
+
+function Log($msg) {
+    $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "[$time] $msg" | Out-File -FilePath $LogFile -Append -Encoding utf8
+}
+
+Log "=== Bat dau cap nhat ZM AIO TOOL ==="
+Log "AppPid: $AppPid"
+Log "Zip: $Zip"
+Log "Target: $Target"
+Log "Exe: $Exe"
+
+try {
+    # 1. Cho process goi cap nhat thoat
+    if ($AppPid -gt 0) {
+        Log "Cho process $AppPid thoat..."
+        Wait-Process -Id $AppPid -Timeout 10 -ErrorAction SilentlyContinue
+    }
+
+    # 2. Dong tat ca cac process ZM AIO TOOL con lai dang chay tu Target
+    $exeName = [System.IO.Path]::GetFileName($Exe)
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($Exe)
+    Log "Kiem tra process $baseName trong $Target..."
+    for ($i = 0; $i -lt 10; $i++) {
+        $procs = Get-Process -Name "$baseName" -ErrorAction SilentlyContinue | Where-Object {
+            try {
+                $_.Path -and $_.Path.StartsWith($Target, [System.StringComparison]::OrdinalIgnoreCase)
+            } catch { $true }
+        }
+        if (-not $procs) { break }
+        Log "Dang dong $($procs.Count) process..."
+        $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+    }
+
+    Start-Sleep -Milliseconds 800
+
+    # 3. Giai nen goi cap nhat
+    $parent = Split-Path $Target -Parent
+    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $next = Join-Path $parent ((Split-Path $Target -Leaf) + '.new-' + $stamp)
+    $backup = Join-Path $parent ((Split-Path $Target -Leaf) + '.old-' + $stamp)
+
+    Log "Giai nen vao $next..."
+    if (Test-Path $next) { Remove-Item -LiteralPath $next -Recurse -Force -ErrorAction SilentlyContinue }
+    
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($Zip, $next)
+    } catch {
+        Log "ExtractToDirectory fallback: $_"
+        Expand-Archive -LiteralPath $Zip -DestinationPath $next -Force
+    }
+
+    # Tim thu muc goc chua EXE (ho tro ca zip phang va zip co folder con)
+    $sourceDir = $next
+    if (-not (Test-Path (Join-Path $sourceDir $exeName))) {
+        $sub = Get-ChildItem -LiteralPath $next -Directory | Where-Object { Test-Path (Join-Path $_.FullName $exeName) } | Select-Object -First 1
+        if ($sub) {
+            $sourceDir = $sub.FullName
+            Log "Tim thay sourceDir o thu muc con: $sourceDir"
+        }
+    }
+
+    if (-not (Test-Path (Join-Path $sourceDir $exeName))) {
+        throw "Goi cap nhat khong hop le: Thieu $exeName trong ban giai nen."
+    }
+
+    # Go MOTW (Zone.Identifier) khoi tat ca cac file moi
+    Log "Go Zone.Identifier..."
+    Get-ChildItem -LiteralPath $sourceDir -Recurse -File | ForEach-Object {
+        Unblock-File -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+    }
+
+    # 4. Thay the thu muc ung dung
+    Log "Thay the $Target bang $sourceDir..."
+    $replaced = $false
+
+    # Cach 1: Robocopy de mirror truc tiep (hoat dong ngay ca khi Explorer dang xem thu muc)
+    try {
+        if (-not (Test-Path $Target)) { New-Item -ItemType Directory -Path $Target -Force | Out-Null }
+        $robo = Start-Process -FilePath "robocopy.exe" -ArgumentList @("`"$sourceDir`"", "`"$Target`"", "/MIR", "/R:10", "/W:1", "/NP", "/NFL", "/NDL", "/NJH", "/NJS") -PassThru -Wait -NoNewWindow
+        if ($robo.ExitCode -lt 8) {
+            $replaced = $true
+            Log "Robocopy thanh cong voi ExitCode $($robo.ExitCode)."
+        } else {
+            Log "Robocopy tra ve ExitCode $($robo.ExitCode), chuyen fallback."
+        }
+    } catch {
+        Log "Robocopy exception: $_"
+    }
+
+    # Cach 2: Fallback Move-Item neu Robocopy khong co san
+    if (-not $replaced) {
+        for ($attempt = 1; $attempt -le 10; $attempt++) {
+            try {
+                if (Test-Path $Target) {
+                    Move-Item -LiteralPath $Target -Destination $backup -Force -ErrorAction Stop
+                }
+                Move-Item -LiteralPath $sourceDir -Destination $Target -Force -ErrorAction Stop
+                $replaced = $true
+                Log "Move-Item thanh cong o lan $attempt."
+                break
+            } catch {
+                Log "Move-Item lan $attempt chua duoc: $_"
+                if ((Test-Path $backup) -and (-not (Test-Path $Target))) {
+                    Move-Item -LiteralPath $backup -Destination $Target -Force -ErrorAction SilentlyContinue
+                }
+                Start-Sleep -Milliseconds 600
+            }
+        }
+    }
+
+    if (-not $replaced) {
+        throw "Khong the thay the thu muc $Target. Vui long kiem tra quyen truy cap."
+    }
+
+    # Unblock file trong Target sau khi mirror
+    Get-ChildItem -LiteralPath $Target -Recurse -File | ForEach-Object {
+        Unblock-File -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+    }
+
+    # Don dep thu muc tam
+    if (Test-Path $next) { Remove-Item -LiteralPath $next -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $backup) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue }
+
+    # 5. Khoi dong lai ung dung
+    $newExe = Join-Path $Target $exeName
+    if (-not (Test-Path $newExe)) {
+        $newExe = $Exe
+    }
+    Log "Khoi dong lai ung dung: $newExe"
+    Start-Sleep -Seconds 1
+    Start-Process -FilePath $newExe
+
+    Log "=== Cap nhat thanh cong! ==="
+} catch {
+    $err = $_.Exception.Message
+    Log "LOI CAP NHAT: $err"
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show("Khong the hoan tat cap nhat ZM AIO TOOL:`n$err`n`nLog chi tiet tai:`n$LogFile", "Loi cap nhat ZM AIO TOOL", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    } catch {}
+}
+""",
         encoding="utf-8",
     )
     return script
@@ -721,14 +858,19 @@ def api_update_apply():
         subprocess.Popen(["open", str(package)])
         _set_update_state(phase="complete", message="Đã mở macOS Installer để cập nhật")
         return {"ok": True, "message": "Đã mở macOS Installer để cập nhật"}
-    if sys.platform != "win32":
-        raise HTTPException(400, "Nền tảng này chưa hỗ trợ cập nhật")
-    target = Path(sys.executable).resolve().parent
+    target_str = str(Path(sys.executable).resolve().parent).rstrip("\\/")
+    package_str = str(package).rstrip("\\/")
+    exe_str = str(Path(sys.executable).resolve()).rstrip("\\/")
     script = _windows_update_script(package.parent)
+    powershell_exe = shutil.which("powershell.exe") or os.path.join(
+        os.environ.get("SystemRoot", "C:\\Windows"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
+    )
+    # CREATE_NO_WINDOW (0x08000000) | CREATE_NEW_PROCESS_GROUP (0x00000200) | DETACHED_PROCESS (0x00000008)
+    detached_flags = 0x08000000 | 0x00000200 | 0x00000008
     subprocess.Popen([
-        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-        "-AppPid", str(os.getpid()), "-Zip", str(package), "-Target", str(target), "-Exe", str(sys.executable),
-    ], creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+        powershell_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+        "-AppPid", str(os.getpid()), "-Zip", package_str, "-Target", target_str, "-Exe", exe_str,
+    ], creationflags=detached_flags)
     _set_update_state(phase="applying", message="Đang cài và khởi động lại ứng dụng…")
     threading.Timer(0.8, lambda: os._exit(0)).start()
     return {"ok": True, "message": "Đang cài và khởi động lại ứng dụng…"}

@@ -228,7 +228,7 @@ export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
                     onClick={() => copyPrompt(tpl)}
                     title={t('Sao chép Prompt Hệ Thống để dán vào ChatGPT / Claude', 'Copy System Prompt to paste into ChatGPT / Claude')}
                   >
-                    📋 {t('Sao chép Prompt Hệ Thống', 'Copy System Prompt')}
+                    📋 {t('Sao chép', 'Copy')}
                   </button>
                   <button
                     type="button"
@@ -236,7 +236,7 @@ export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
                     onClick={() => handleDownload(tpl)}
                     title={t(`Tải file ${tpl.filename}`, `Download ${tpl.filename}`)}
                   >
-                    <IconDownload size={14} /> {t('Tải về (.txt)', 'Download (.txt)')}
+                    <IconDownload size={14} /> {t('Tải về', 'Download')}
                   </button>
                 </div>
               </footer>
@@ -352,14 +352,14 @@ export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
                   className="flow-template-btn flow-template-btn--copy"
                   onClick={() => copyPrompt(previewTemplate)}
                 >
-                  📋 {t('Sao chép Prompt Hệ Thống', 'Copy System Prompt')}
+                  📋 {t('Sao chép', 'Copy')}
                 </button>
                 <button
                   type="button"
                   className="flow-template-btn"
                   onClick={() => handleDownload(previewTemplate)}
                 >
-                  <IconDownload size={14} /> {t('Tải về file (.txt)', 'Download (.txt)')}
+                  <IconDownload size={14} /> {t('Tải về (.txt)', 'Download (.txt)')}
                 </button>
                 <button
                   type="button"
