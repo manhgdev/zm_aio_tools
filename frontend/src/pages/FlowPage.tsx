@@ -1242,7 +1242,25 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
           toast.error(msg);
         }),
     });
-  };
+  }, [jobs, t]);
+  const retryAllJobs = useCallback(async () => {
+    const retryable = jobs.filter((job) => job.status === "failed" || job.status === "cancelled");
+    if (!retryable.length) return;
+    setConfirmAction({
+      message: t(`Chạy lại ${retryable.length} job đã lỗi/hủy?`, `Retry ${retryable.length} failed/cancelled jobs?`),
+      confirmLabel: t("Chạy lại tất cả", "Retry all"),
+      run: async () => {
+        try {
+          await Promise.all(retryable.map((job) => flowRequest(`/api/flow/jobs/${job.id}/retry`, { method: "POST" })));
+          const data = await flowRequest<{ jobs: Array<Record<string, unknown>> }>("/api/flow/jobs");
+          setJobs(normalizeFlowJobs(data.jobs, accounts));
+          toast.success(t(`Đã đưa ${retryable.length} job vào hàng đợi chạy lại.`, `Queued ${retryable.length} jobs for retry.`));
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    });
+  }, [jobs, t, accounts]);
   const deleteAllJobs = () => {
     if (!jobs.length) return;
     setConfirmAction({
