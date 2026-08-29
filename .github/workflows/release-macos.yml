@@ -39,6 +39,14 @@ jobs:
           which ffmpeg
           ffmpeg -version | head -n 1
 
+      - name: Write version from tag
+        run: |
+          TAG="${GITHUB_REF_NAME:-}"
+          VERSION="${TAG#v}"
+          if [ -z "$VERSION" ]; then VERSION="$(cat build_app/VERSION 2>/dev/null || echo '0.0.0')"; fi
+          echo "$VERSION" > build_app/VERSION
+          echo "Building version: $VERSION"
+
       - name: Build macOS app
         env:
           ONEFILE: '0'

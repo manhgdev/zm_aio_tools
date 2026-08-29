@@ -39,9 +39,19 @@ jobs:
             'C:\ProgramData\chocolatey\bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           }
 
+      - name: Write version from tag
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = if ($tag) { $tag -replace '^v', '' } else { Get-Content build_app/VERSION -ErrorAction SilentlyContinue }
+          if (-not $version) { $version = '0.0.0' }
+          Set-Content -Path build_app/VERSION -Value $version.Trim()
+          Write-Host "Building version: $version"
+
       - name: Build EXE
         shell: pwsh
         run: npm run build:app
+
 
       - name: Create release package
         id: package
