@@ -1224,7 +1224,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       }),
     });
   };
-  const cancelAllJobs = () => {
+  const cancelAllJobs = useCallback(() => {
     const activeCount = jobs.filter((job) => job.status === "queued" || job.status === "processing").length;
     if (!activeCount) return;
     setConfirmAction({
@@ -2328,7 +2328,12 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
             <div className="flow-card-title">
               <b>{t(`Hàng đợi (${jobs.length})`, `Queue (${jobs.length})`)}</b>
               <div className="flow-queue-tools">
-                <button className="flow-text-button" type="button" disabled={!jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={cancelAllJobs}>{t("Hủy tất cả", "Cancel all")}</button>
+                {jobs.some((job) => job.status === "queued" || job.status === "processing") && (
+                  <button className="flow-text-button" type="button" onClick={cancelAllJobs}>{t("Hủy tất cả", "Cancel all")}</button>
+                )}
+                {jobs.some((job) => job.status === "failed" || job.status === "cancelled") && (
+                  <button className="flow-text-button" type="button" onClick={retryAllJobs}>{t("Chạy lại tất cả", "Retry all")}</button>
+                )}
                 <button className="flow-text-button is-danger" type="button" disabled={!jobs.length} onClick={deleteAllJobs}>{t("Xóa tất cả", "Delete all")}</button>
               </div>
             </div>
@@ -2385,7 +2390,6 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                           <small>{folderPathText}</small>
                         </div>
                         <div className="flow-queue-folder-actions">
-                          <button className="flow-text-button" type="button" onClick={() => openFlowFolder(group.outputDir, group.kind)} title={t("Mở thư mục trên máy", "Open folder on computer")}>{t("Mở", "Open")}</button>
                           <button className="flow-text-button" type="button" onClick={() => openSrtImageWithFlowFolder(queueFolderLabel(group.kind, group.outputDir, group.outputFolder, group.displayOutputFolder))}>{t("Ghép", "Merge")}</button>
                           <button className="flow-text-button is-warning" type="button" disabled={!group.jobs.some((job) => job.status === "queued" || job.status === "processing")} onClick={() => cancelFolderJobs(group.outputDir, group.jobs)}>{t("Hủy", "Cancel")}</button>
                           <button className="flow-text-button is-danger" type="button" onClick={() => deleteFolderJobs(group.outputDir, group.jobs)}>{t("Xóa", "Delete")}</button>

@@ -46,7 +46,7 @@ export function loadAppMode(): AppMode {
   // URL được ưu tiên để link trực tiếp (đặc biệt /download-video) luôn đúng.
   if (typeof window !== 'undefined') {
     const fromPath = appModeFromPath(window.location.pathname)
-    if (fromPath) return fromPath
+    if (fromPath && window.location.pathname !== '/') return fromPath
   }
   try {
     return parseAppMode(localStorage.getItem(APP_MODE_LS))
