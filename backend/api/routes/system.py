@@ -187,6 +187,11 @@ def _download_update(asset: dict[str, Any], updates: Path, version: str) -> Path
     return target
 
 
+def _win_versioned_folder(exe_path: Path) -> bool:
+    """True khi EXE nằm trong folder ZM_AIO_TOOL_vX.Y.Z-windows-* (portable versioned layout)."""
+    return bool(re.match(r"ZM_AIO_TOOL_v\d", exe_path.parent.name, re.I))
+
+
 def _windows_update_script(updates: Path) -> Path:
     script = updates / "apply-update.ps1"
     script.write_text(
@@ -195,25 +200,30 @@ param(
     [int]$AppPid,
     [string]$Zip,
     [string]$Target,
-    [string]$Exe
+    [string]$Exe,
+    [string]$OldTarget
 )
 
 $ErrorActionPreference = 'Stop'
-$Zip = $Zip.Trim().Trim('"')
-$Target = $Target.Trim().Trim('"').TrimEnd('\\', '/')
-$Exe = $Exe.Trim().Trim('"')
-$LogFile = Join-Path (Split-Path $Zip -Parent) "update.log"
+$Zip       = $Zip.Trim().Trim('"')
+$Target    = $Target.Trim().Trim('"').TrimEnd('\\', '/')
+$Exe       = $Exe.Trim().Trim('"')
+$OldTarget = $OldTarget.Trim().Trim('"').TrimEnd('\\', '/')
+$LogFile   = Join-Path (Split-Path $Zip -Parent) "update.log"
+# Mode: 'versioned' = giai nen vao folder moi; 'overwrite' = ghi de tai cho
+$Mode = if ($OldTarget -and $OldTarget -ne $Target) { 'versioned' } else { 'overwrite' }
 
 function Log($msg) {
     $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "[$time] $msg" | Out-File -FilePath $LogFile -Append -Encoding utf8
 }
 
-Log "=== Bat dau cap nhat ZM AIO TOOL ==="
-Log "AppPid: $AppPid"
-Log "Zip: $Zip"
-Log "Target: $Target"
-Log "Exe: $Exe"
+Log "=== Bat dau cap nhat ZM AIO TOOL (mode=$Mode) ==="
+Log "AppPid:    $AppPid"
+Log "Zip:       $Zip"
+Log "Target:    $Target"
+Log "OldTarget: $OldTarget"
+Log "Exe:       $Exe"
 
 try {
     # 1. Cho process goi cap nhat thoat
@@ -222,150 +232,151 @@ try {
         Wait-Process -Id $AppPid -Timeout 10 -ErrorAction SilentlyContinue
     }
 
-    # 2. Dong tat ca cac process ZM AIO TOOL con lai dang chay tu Target
-    $exeName = [System.IO.Path]::GetFileName($Exe)
+    # 2. Dong cac process dang chay tu thu muc cu
+    $killDir = if ($Mode -eq 'versioned') { $OldTarget } else { $Target }
+    $exeName  = [System.IO.Path]::GetFileName($Exe)
     $baseName = [System.IO.Path]::GetFileNameWithoutExtension($Exe)
-    Log "Kiem tra process $baseName trong $Target..."
+    Log "Dong process $baseName trong $killDir..."
     for ($i = 0; $i -lt 10; $i++) {
         $procs = Get-Process -Name "$baseName" -ErrorAction SilentlyContinue | Where-Object {
-            try {
-                $_.Path -and $_.Path.StartsWith($Target, [System.StringComparison]::OrdinalIgnoreCase)
-            } catch { $true }
+            try { $_.Path -and $_.Path.StartsWith($killDir, [System.StringComparison]::OrdinalIgnoreCase) } catch { $true }
         }
         if (-not $procs) { break }
         Log "Dang dong $($procs.Count) process..."
         $procs | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 500
     }
-
     Start-Sleep -Milliseconds 800
 
-    # 3. Giai nen goi cap nhat
-    # Giai nen vao _update\extracted\ (cung thu muc chua zip) — tranh can quyen ghi ra thu muc cha
+    # 3. Giai nen zip vao thu muc temp (trong cung thu muc chua zip)
     $updateDir = Split-Path $Zip -Parent
-    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
-    $next = Join-Path $updateDir ('extracted-' + $stamp)
-    $backup = Join-Path $updateDir ('backup-' + $stamp)
-
-    Log "Giai nen vao $next..."
-    if (Test-Path $next) { Remove-Item -LiteralPath $next -Recurse -Force -ErrorAction SilentlyContinue }
-    
+    $stamp     = Get-Date -Format 'yyyyMMddHHmmss'
+    $tmpDir    = Join-Path $updateDir ('extracted-' + $stamp)
+    Log "Giai nen vao temp: $tmpDir"
+    if (Test-Path $tmpDir) { Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
     try {
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($Zip, $next)
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($Zip, $tmpDir)
     } catch {
         Log "ExtractToDirectory fallback: $_"
-        Expand-Archive -LiteralPath $Zip -DestinationPath $next -Force
+        Expand-Archive -LiteralPath $Zip -DestinationPath $tmpDir -Force
     }
 
-    # Tim thu muc goc chua EXE (ho tro ca zip phang va zip co folder con)
-    $sourceDir = $next
+    # Tim thu muc goc chua EXE (zip phang hoac zip co subfolder)
+    $sourceDir = $tmpDir
     if (-not (Test-Path (Join-Path $sourceDir $exeName))) {
-        $sub = Get-ChildItem -LiteralPath $next -Directory | Where-Object { Test-Path (Join-Path $_.FullName $exeName) } | Select-Object -First 1
-        if ($sub) {
-            $sourceDir = $sub.FullName
-            Log "Tim thay sourceDir o thu muc con: $sourceDir"
-        }
+        $sub = Get-ChildItem -LiteralPath $tmpDir -Directory | Where-Object { Test-Path (Join-Path $_.FullName $exeName) } | Select-Object -First 1
+        if ($sub) { $sourceDir = $sub.FullName; Log "sourceDir trong subfolder: $sourceDir" }
     }
-
     if (-not (Test-Path (Join-Path $sourceDir $exeName))) {
         throw "Goi cap nhat khong hop le: Thieu $exeName trong ban giai nen."
     }
 
-    # Go MOTW (Zone.Identifier) khoi tat ca cac file moi
-    Log "Go Zone.Identifier..."
+    # Go Zone.Identifier (MOTW) khoi tat ca file moi
     Get-ChildItem -LiteralPath $sourceDir -Recurse -File | ForEach-Object {
         Unblock-File -LiteralPath $_.FullName -ErrorAction SilentlyContinue
     }
+    Log "Da go Zone.Identifier."
 
-    # 4. Thay the thu muc ung dung
-    Log "Thay the $Target bang $sourceDir..."
+    # 4. Chuyen file vao $Target
     $replaced = $false
 
-    # Cach 1: Robocopy de mirror truc tiep (hoat dong ngay ca khi Explorer dang xem thu muc)
-    try {
-        if (-not (Test-Path $Target)) { New-Item -ItemType Directory -Path $Target -Force | Out-Null }
-        $robo = Start-Process -FilePath "robocopy.exe" -ArgumentList @("`"$sourceDir`"", "`"$Target`"", "/MIR", "/R:10", "/W:1", "/NP", "/NFL", "/NDL", "/NJH", "/NJS") -PassThru -Wait -NoNewWindow
-        if ($robo.ExitCode -lt 8) {
-            $replaced = $true
-            Log "Robocopy thanh cong voi ExitCode $($robo.ExitCode)."
-        } else {
-            Log "Robocopy tra ve ExitCode $($robo.ExitCode), chuyen fallback."
-        }
-    } catch {
-        Log "Robocopy exception: $_"
-    }
-
-    # Cach 2: Fallback Move-Item neu Robocopy khong co san
-    if (-not $replaced) {
-        for ($attempt = 1; $attempt -le 10; $attempt++) {
+    if ($Mode -eq 'versioned') {
+        # Versioned: $Target la folder moi chua ton tai — Move truc tiep
+        if (Test-Path $Target) { Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue }
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
             try {
-                if (Test-Path $Target) {
-                    Move-Item -LiteralPath $Target -Destination $backup -Force -ErrorAction Stop
-                }
                 Move-Item -LiteralPath $sourceDir -Destination $Target -Force -ErrorAction Stop
                 $replaced = $true
-                Log "Move-Item thanh cong o lan $attempt."
+                Log "Move-Item versioned thanh cong o lan $attempt: $Target"
                 break
             } catch {
-                Log "Move-Item lan $attempt chua duoc: $_"
-                if ((Test-Path $backup) -and (-not (Test-Path $Target))) {
-                    Move-Item -LiteralPath $backup -Destination $Target -Force -ErrorAction SilentlyContinue
-                }
+                Log "Move-Item versioned lan $attempt: $_"
                 Start-Sleep -Milliseconds 600
             }
         }
+    } else {
+        # Overwrite: Robocopy mirror vao folder hien tai
+        try {
+            if (-not (Test-Path $Target)) { New-Item -ItemType Directory -Path $Target -Force | Out-Null }
+            $robo = Start-Process robocopy.exe -ArgumentList @("`"$sourceDir`"", "`"$Target`"", '/MIR', '/R:10', '/W:1', '/NP', '/NFL', '/NDL', '/NJH', '/NJS') -PassThru -Wait -NoNewWindow
+            if ($robo.ExitCode -lt 8) {
+                $replaced = $true
+                Log "Robocopy ExitCode=$($robo.ExitCode)"
+            } else {
+                Log "Robocopy ExitCode=$($robo.ExitCode) — fallback Move"
+            }
+        } catch { Log "Robocopy exception: $_" }
+
+        if (-not $replaced) {
+            $bak = Join-Path $updateDir ('backup-' + $stamp)
+            for ($attempt = 1; $attempt -le 10; $attempt++) {
+                try {
+                    if (Test-Path $Target) { Move-Item -LiteralPath $Target -Destination $bak -Force -ErrorAction Stop }
+                    Move-Item -LiteralPath $sourceDir -Destination $Target -Force -ErrorAction Stop
+                    $replaced = $true
+                    Log "Move-Item overwrite thanh cong o lan $attempt."
+                    break
+                } catch {
+                    Log "Move-Item overwrite lan $attempt: $_"
+                    if ((Test-Path $bak) -and (-not (Test-Path $Target))) {
+                        Move-Item -LiteralPath $bak -Destination $Target -Force -ErrorAction SilentlyContinue
+                    }
+                    Start-Sleep -Milliseconds 600
+                }
+            }
+            if (Test-Path $bak) { Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue }
+        }
     }
 
-    if (-not $replaced) {
-        throw "Khong the thay the thu muc $Target. Vui long kiem tra quyen truy cap."
-    }
+    if (-not $replaced) { throw "Khong the cap nhat vao $Target." }
 
-    # Unblock file trong Target sau khi mirror
+    # Unblock file trong Target
     Get-ChildItem -LiteralPath $Target -Recurse -File | ForEach-Object {
         Unblock-File -LiteralPath $_.FullName -ErrorAction SilentlyContinue
     }
 
-    # Don dep thu muc tam
-    if (Test-Path $next) { Remove-Item -LiteralPath $next -Recurse -Force -ErrorAction SilentlyContinue }
-    if (Test-Path $backup) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue }
+    # Don dep temp
+    if (Test-Path $tmpDir) { Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
 
-    # 5. Khoi dong lai ung dung
-    # Tim EXE theo ten chinh xac, fallback sang bat ky .exe nao trong Target
+    # 5. Khoi dong lai ung dung tu Target moi
     $newExe = Join-Path $Target $exeName
     if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {
-        # Neu EXE khong co trong Target (user doi ten, v.v.) thi tim bat ky .exe nao
         $fallbackExe = Get-ChildItem -LiteralPath $Target -Filter '*.exe' -File | Select-Object -First 1
-        if ($fallbackExe) {
-            $newExe = $fallbackExe.FullName
-            Log "Ten EXE goc khong tim thay, dung fallback: $newExe"
-        } elseif (Test-Path -LiteralPath $Exe -PathType Leaf) {
-            $newExe = $Exe
-            Log "Dung duong dan EXE goc: $newExe"
-        } else {
-            Log "CANH BAO: Khong tim thay EXE de chay lai. Mo thu muc ung dung..."
-            Start-Process -FilePath "explorer.exe" -ArgumentList "`"$Target`""
+        if ($fallbackExe) { $newExe = $fallbackExe.FullName; Log "Fallback EXE: $newExe" }
+        else {
+            Log "CANH BAO: Khong tim thay EXE, mo thu muc $Target"
+            Start-Process explorer.exe -ArgumentList "`"$Target`""
             Log "=== Da cap nhat (can chay thu cong) ==="
         }
     }
     if (Test-Path -LiteralPath $newExe -PathType Leaf) {
-        Log "Khoi dong lai ung dung: $newExe"
+        Log "Launch: $newExe"
         Start-Sleep -Seconds 1
         Start-Process -FilePath "$newExe"
         Log "=== Cap nhat thanh cong! ==="
     }
+
+    # 6. Versioned: xoa folder cu sau khi da launch thanh cong
+    if ($Mode -eq 'versioned' -and $OldTarget -and (Test-Path $OldTarget)) {
+        Start-Sleep -Seconds 2
+        Remove-Item -LiteralPath $OldTarget -Recurse -Force -ErrorAction SilentlyContinue
+        Log "Da xoa folder cu: $OldTarget"
+    }
+
 } catch {
     $err = $_.Exception.Message
     Log "LOI CAP NHAT: $err"
     try {
         Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.MessageBox]::Show("Khong the hoan tat cap nhat ZM AIO TOOL:`n$err`n`nLog chi tiet tai:`n$LogFile", "Loi cap nhat ZM AIO TOOL", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        [System.Windows.Forms.MessageBox]::Show("Cap nhat that bai:`n$err`n`nLog: $LogFile", "Loi cap nhat ZM AIO TOOL", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     } catch {}
 }
 """,
         encoding="utf-8",
     )
     return script
+
 
 
 def _start_checks_warm() -> None:
@@ -843,10 +854,15 @@ def api_update_install():
             if not asset or _version_key(tag) <= _version_key(_desktop_version()):
                 _set_update_state(phase="complete", progress=100, message="Đã là phiên bản mới nhất")
                 return
-            # Windows portable: tải vào _update/ cạnh EXE (cùng ổ đĩa → dễ Robocopy, dễ debug)
-            # Mac / dev server: dùng AppData/updates như cũ
+            # Detect versioned-folder layout: EXE nằm trong ZM_AIO_TOOL_vX.Y.Z-windows-* ?
+            # Versioned: tải zip vào thư mục cha (grandparent của EXE)
+            # Flat: tải vào _update/ cạnh EXE
             if sys.platform == "win32" and getattr(sys, "frozen", False):
-                updates = Path(sys.executable).resolve().parent / "_update"
+                exe_dir = Path(sys.executable).resolve().parent
+                if _win_versioned_folder(Path(sys.executable)):
+                    updates = exe_dir.parent  # D:\tool\
+                else:
+                    updates = exe_dir / "_update"
             else:
                 updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
             updates.mkdir(parents=True, exist_ok=True)
@@ -882,19 +898,35 @@ def api_update_apply():
         subprocess.Popen(["open", str(package)])
         _set_update_state(phase="complete", message="Đã mở macOS Installer để cập nhật")
         return {"ok": True, "message": "Đã mở macOS Installer để cập nhật"}
-    target_str = str(Path(sys.executable).resolve().parent).rstrip("\\/")
-    package_str = str(package).rstrip("\\/")
-    exe_str = str(Path(sys.executable).resolve()).rstrip("\\/")
+
+    exe_path = Path(sys.executable).resolve()
+    exe_dir = exe_path.parent
+    if _win_versioned_folder(exe_path):
+        # Versioned: Target = folder mới cạnh folder cũ; OldTarget = folder cũ
+        asset_stem = package.stem  # ZM_AIO_TOOL_v4.3.1-windows-x64
+        target_str = str(exe_dir.parent / asset_stem)
+        old_target_str = str(exe_dir)
+    else:
+        # Flat: Target = thư mục hiện tại (overwrite)
+        target_str = str(exe_dir)
+        old_target_str = ""
+
+    package_str = str(package)
+    exe_str = str(exe_path)
     script = _windows_update_script(package.parent)
     powershell_exe = shutil.which("powershell.exe") or os.path.join(
         os.environ.get("SystemRoot", "C:\\Windows"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
     )
-    # CREATE_NO_WINDOW (0x08000000) | CREATE_NEW_PROCESS_GROUP (0x00000200) | DETACHED_PROCESS (0x00000008)
+    # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
     detached_flags = 0x08000000 | 0x00000200 | 0x00000008
     subprocess.Popen(
         [
             powershell_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-            "-AppPid", str(os.getpid()), "-Zip", package_str, "-Target", target_str, "-Exe", exe_str,
+            "-AppPid", str(os.getpid()),
+            "-Zip", package_str,
+            "-Target", target_str,
+            "-Exe", exe_str,
+            "-OldTarget", old_target_str,
         ],
         creationflags=detached_flags,
         stdin=subprocess.DEVNULL,
