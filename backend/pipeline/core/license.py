@@ -1,6 +1,8 @@
 """ZM Tool license check and local activation state."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import threading
 import time
@@ -15,10 +17,31 @@ API_BASE = "https://api.zm.io.vn/key"
 APP_PATH = "zm_tool"
 LICENSE_FILE = DATA / "license.json"
 _CACHE_SECONDS = 30 * 60.0
+# Offline cache tối đa 72h: sau đó phải verify lại với server dù server có down.
+_OFFLINE_MAX_SECONDS = 72 * 3600.0
 _cache_lock = threading.Lock()
 _request_lock = threading.Lock()
 _cache_at = 0.0
 _cache: dict[str, Any] | None = None
+
+# ponytail: HMAC key để phát hiện license.json bị sửa tay.
+# Không phải crypto-grade secret — chỉ ngăn sửa JSON naively.
+_SIG_KEY = b"zm-tool-license-integrity-2025"
+
+
+def _sign(payload: dict[str, Any]) -> str:
+    """Tính HMAC-SHA256 của canonical JSON để phát hiện tamper."""
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hmac.new(_SIG_KEY, canonical.encode(), hashlib.sha256).hexdigest()
+
+
+def _verify_sig(data: dict[str, Any]) -> bool:
+    sig = data.pop("_sig", None)
+    if not sig:
+        return False
+    expected = _sign(data)
+    data["_sig"] = sig  # restore
+    return hmac.compare_digest(sig, expected)
 
 
 def _preload_cache_from_disk() -> None:
@@ -26,8 +49,15 @@ def _preload_cache_from_disk() -> None:
     global _cache, _cache_at
     try:
         data = json.loads((DATA / "license.json").read_text(encoding="utf-8"))
+        # Kiểm signature trước khi tin tưởng disk cache
+        if not _verify_sig(dict(data)):
+            return
         lv = data.get("last_valid")
         if isinstance(lv, dict) and lv.get("valid"):
+            # Kiểm TTL: offline cache không dùng quá _OFFLINE_MAX_SECONDS
+            saved_at = float(lv.get("saved_at") or 0)
+            if saved_at > 0 and time.time() - saved_at > _OFFLINE_MAX_SECONDS:
+                return  # cache quá cũ, không load
             _cache = dict(lv)
             # TTL ngắn hơn (15 phút) để sớm verify lại với server
             _cache_at = time.monotonic() - _CACHE_SECONDS / 2
@@ -53,12 +83,36 @@ def _read_key() -> str:
 
 
 def _read_last_valid() -> dict[str, Any] | None:
-    """Return last known-valid status from disk (used when API server is down)."""
+    """Return last known-valid status from disk (used when API server is down).
+
+    Reject nếu:
+    - Không có HMAC signature (bị sửa tay)
+    - Đã quá _OFFLINE_MAX_SECONDS kể từ lần verify thực tế cuối
+    - key expiresAt đã qua
+    """
     try:
         data = json.loads(LICENSE_FILE.read_text(encoding="utf-8"))
+        # Verify signature
+        if not _verify_sig(dict(data)):
+            return None
         lv = data.get("last_valid")
-        if isinstance(lv, dict) and lv.get("valid"):
-            return lv
+        if not isinstance(lv, dict) or not lv.get("valid"):
+            return None
+        # Kiểm TTL offline
+        saved_at = float(lv.get("saved_at") or 0)
+        if saved_at > 0 and time.time() - saved_at > _OFFLINE_MAX_SECONDS:
+            return None
+        # Kiểm expiresAt nếu có (key hết hạn thì không dùng offline cache)
+        expires_at = lv.get("expiresAt")
+        if expires_at:
+            try:
+                import datetime
+                exp = datetime.datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+                if exp.timestamp() < time.time():
+                    return None
+            except Exception:
+                pass
+        return lv
     except (OSError, ValueError, TypeError):
         pass
     return None
@@ -68,7 +122,9 @@ def _save_key(key: str, last_valid: dict[str, Any] | None = None) -> None:
     ensure_data_dirs()
     payload: dict[str, Any] = {"key": key}
     if last_valid:
-        payload["last_valid"] = last_valid
+        # Ghi timestamp để tính tuổi offline cache
+        lv_with_ts = {**last_valid, "saved_at": time.time()}
+        payload["last_valid"] = lv_with_ts
     else:
         # Preserve existing last_valid if already saved
         try:
@@ -77,6 +133,8 @@ def _save_key(key: str, last_valid: dict[str, Any] | None = None) -> None:
                 payload["last_valid"] = existing["last_valid"]
         except (OSError, ValueError, TypeError):
             pass
+    # Ký payload trước khi lưu
+    payload["_sig"] = _sign({k: v for k, v in payload.items() if k != "_sig"})
     tmp = Path(f"{LICENSE_FILE}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     tmp.replace(LICENSE_FILE)
