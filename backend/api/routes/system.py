@@ -891,10 +891,16 @@ def api_update_apply():
     )
     # CREATE_NO_WINDOW (0x08000000) | CREATE_NEW_PROCESS_GROUP (0x00000200) | DETACHED_PROCESS (0x00000008)
     detached_flags = 0x08000000 | 0x00000200 | 0x00000008
-    subprocess.Popen([
-        powershell_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-        "-AppPid", str(os.getpid()), "-Zip", package_str, "-Target", target_str, "-Exe", exe_str,
-    ], creationflags=detached_flags)
+    subprocess.Popen(
+        [
+            powershell_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+            "-AppPid", str(os.getpid()), "-Zip", package_str, "-Target", target_str, "-Exe", exe_str,
+        ],
+        creationflags=detached_flags,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     _set_update_state(phase="applying", message="Đang cài và khởi động lại ứng dụng…")
     threading.Timer(3.0, lambda: os._exit(0)).start()
     return {"ok": True, "message": "Đang cài và khởi động lại ứng dụng…"}
