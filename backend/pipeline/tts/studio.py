@@ -816,9 +816,13 @@ def ensure_mp3(job_id: str) -> Path:
 def publish_job_outputs(job_id: str, output_dir: str = "", output_format: str = "wav48") -> Path:
     """Publish one TTS job into a stable user-selected root/job-id folder under ZM_AIO_TOOL/text-to-speech."""
     target = item_output_folder(selected_or_default("tts", output_dir), job_id)
-    source_srt = _job_dir(job_id) / "subs.srt"
+    job_dir = _job_dir(job_id)
+    source_srt = job_dir / "subs.srt"
     if source_srt.is_file():
         shutil.copy2(source_srt, target / "subtitles.srt")
+    source_srt_original = job_dir / "source.srt"
+    if source_srt_original.is_file():
+        shutil.copy2(source_srt_original, target / "source.srt")
 
     wav_file = ensure_wav(job_id)
     mp3_file = ensure_mp3(job_id)
@@ -840,7 +844,36 @@ def publish_job_outputs(job_id: str, output_dir: str = "", output_format: str = 
             )
         except (OSError, subprocess.SubprocessError):
             pass
+    bundle = ensure_zip(job_id)
+    if bundle.is_file():
+        shutil.copy2(bundle, target / "bundle.zip")
+    meta_path = job_dir / "meta.json"
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["publishedDir"] = str(target)
+            meta["outputDir"] = str(target.parent)
+            _write_meta(job_dir, meta)
+        except (OSError, ValueError, TypeError):
+            pass
     return target
+
+
+def published_job_output_dir(job_id: str) -> Path:
+    """Return the persisted user-selected output folder, publishing legacy jobs once."""
+    job_dir = _job_dir(job_id)
+    meta_path = job_dir / "meta.json"
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            saved = str(meta.get("publishedDir") or "").strip()
+            if saved:
+                target = Path(saved).expanduser()
+                target.mkdir(parents=True, exist_ok=True)
+                return target
+        except (OSError, ValueError, TypeError):
+            pass
+    return publish_job_outputs(job_id)
 
 
 def ensure_zip(job_id: str, srt_style: str = "hard") -> Path:

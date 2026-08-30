@@ -36,5 +36,32 @@ def test_tts_desktop_reveal_resolves_requested_artifact(monkeypatch, tmp_path):
     wav = tmp_path / "audio.wav"
     wav.write_bytes(b"wav")
     monkeypatch.setattr(studio, "ensure_wav", lambda _: wav)
+    monkeypatch.setattr(studio, "published_job_output_dir", lambda _: tmp_path)
 
     assert _tts_job_artifact("job-1", "wav") == wav
+
+
+def test_publish_tts_keeps_srt_and_bundle_in_selected_output(monkeypatch, tmp_path):
+    job_dir = tmp_path / "backend-job"
+    job_dir.mkdir()
+    (job_dir / "audio.wav").write_bytes(b"wav")
+    (job_dir / "audio.mp3").write_bytes(b"mp3")
+    (job_dir / "subs.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nXin chào\n", encoding="utf-8")
+    (job_dir / "meta.json").write_text("{}", encoding="utf-8")
+    selected = tmp_path / "selected"
+    target = selected / "job-1"
+    target.mkdir(parents=True)
+    bundle = job_dir / "bundle.zip"
+    bundle.write_bytes(b"zip")
+
+    monkeypatch.setattr(studio, "_job_dir", lambda _: job_dir)
+    monkeypatch.setattr(studio, "selected_or_default", lambda *_: selected)
+    monkeypatch.setattr(studio, "item_output_folder", lambda *_: target)
+    monkeypatch.setattr(studio, "ensure_wav", lambda _: job_dir / "audio.wav")
+    monkeypatch.setattr(studio, "ensure_mp3", lambda _: job_dir / "audio.mp3")
+    monkeypatch.setattr(studio, "ensure_zip", lambda *_args, **_kwargs: bundle)
+
+    assert studio.publish_job_outputs("job-1") == target
+    assert (target / "subtitles.srt").is_file()
+    assert (target / "bundle.zip").is_file()
+    assert studio.published_job_output_dir("job-1") == target

@@ -171,12 +171,9 @@ def _tts_job_artifact(job_id: str, kind: str, style: str = "hard") -> Path:
     from pipeline.tts.studio import ensure_mp3, ensure_wav, ensure_zip, rebuild_srt
 
     try:
-        from pipeline.tts.studio import publish_job_outputs
-        from pipeline.core.output_paths import item_output_folder, selected_or_default
+        from pipeline.tts.studio import published_job_output_dir
 
-        published_dir = item_output_folder(selected_or_default("tts"), job_id)
-        if not published_dir.is_dir():
-            published_dir = publish_job_outputs(job_id)
+        published_dir = published_job_output_dir(job_id)
 
         if kind == "wav":
             target = published_dir / "audio.wav"
@@ -191,12 +188,15 @@ def _tts_job_artifact(job_id: str, kind: str, style: str = "hard") -> Path:
         if style not in SRT_STYLES:
             raise HTTPException(400, f"style phải là một trong: {', '.join(SRT_STYLES)}")
         if kind == "srt":
-            target = published_dir / "subtitles.srt"
-            if target.is_file() and style == "hard":
-                return target
-            return rebuild_srt(job_id, style)
+            target = published_dir / ("subtitles.srt" if style == "hard" else f"subtitles_{style}.srt")
+            if not target.is_file():
+                shutil.copy2(rebuild_srt(job_id, style), target)
+            return target
         if kind == "zip":
-            return ensure_zip(job_id, srt_style=style)
+            target = published_dir / ("bundle.zip" if style == "hard" else f"bundle_{style}.zip")
+            if not target.is_file():
+                shutil.copy2(ensure_zip(job_id, srt_style=style), target)
+            return target
     except Exception:
         pass
 
