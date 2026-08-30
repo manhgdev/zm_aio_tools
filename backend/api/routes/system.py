@@ -196,21 +196,22 @@ def _windows_update_script(updates: Path) -> Path:
     script = updates / "apply-update.ps1"
     script.write_text(
         """# ZM AIO TOOL Windows Auto-Updater (PowerShell 5.1+ compatible)
-param(
-    [int]$AppPid,
-    [string]$Zip,
-    [string]$Target,
-    [string]$Exe,
-    [string]$OldTarget
-)
+# Params duoc doc tu update-params.json cung thu muc voi script
+# (tranh quoting issues khi truyen qua command line)
+param([string]$ParamsFile)
 
 $ErrorActionPreference = 'Stop'
-$Zip       = $Zip.Trim().Trim('"')
-$Target    = $Target.Trim().Trim('"').TrimEnd('\\', '/')
-$Exe       = $Exe.Trim().Trim('"')
-$OldTarget = $OldTarget.Trim().Trim('"').TrimEnd('\\', '/')
-$LogFile   = Join-Path (Split-Path $Zip -Parent) "update.log"
-# Mode: 'versioned' = giai nen vao folder moi; 'overwrite' = ghi de tai cho
+
+# Doc params tu JSON
+$paramsPath = if ($ParamsFile) { $ParamsFile } else { Join-Path $PSScriptRoot 'update-params.json' }
+$p         = Get-Content -LiteralPath $paramsPath -Raw | ConvertFrom-Json
+$AppPid    = [int]$p.AppPid
+$Zip       = [string]$p.Zip
+$Target    = [string]$p.Target
+$Exe       = [string]$p.Exe
+$OldTarget = [string]$p.OldTarget
+
+$LogFile = Join-Path (Split-Path $Zip -Parent) 'update.log'
 $Mode = if ($OldTarget -and $OldTarget -ne $Target) { 'versioned' } else { 'overwrite' }
 
 function Log($msg) {
@@ -917,21 +918,42 @@ def api_update_apply():
     powershell_exe = shutil.which("powershell.exe") or os.path.join(
         os.environ.get("SystemRoot", "C:\\Windows"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
     )
-    # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
-    detached_flags = 0x08000000 | 0x00000200 | 0x00000008
+    # Ghi params ra JSON — tranh quoting nightmare khi pass qua command line
+    import json as _json
+    params_file = package.parent / "update-params.json"
+    params_file.write_text(
+        _json.dumps({
+            "AppPid": os.getpid(),
+            "Zip": str(package),
+            "Target": target_str,
+            "Exe": exe_str,
+            "OldTarget": old_target_str,
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # VBScript launcher: WScript.Shell.Run voi hidden=True, wait=False
+    # Day la cach chuan nhat tren Windows de spawn hidden detached process.
+    # Truc tiep launch PowerShell voi DETACHED_PROCESS flags khong reliable.
+    ps_path = str(script)
+    vbs_content = (
+        'Set sh = CreateObject("WScript.Shell")\n'
+        'cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass'
+        ' -WindowStyle Hidden -File " & Chr(34) & "' + ps_path.replace('"', '') + '" & Chr(34)\n'
+        'sh.Run cmd, 0, False\n'
+    )
+    vbs_file = package.parent / "run-update.vbs"
+    vbs_file.write_text(vbs_content, encoding="utf-8")
+
+    wscript_exe = os.path.join(
+        os.environ.get("SystemRoot", "C:\\Windows"), "System32", "wscript.exe"
+    )
     subprocess.Popen(
-        [
-            powershell_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-            "-AppPid", str(os.getpid()),
-            "-Zip", package_str,
-            "-Target", target_str,
-            "-Exe", exe_str,
-            "-OldTarget", old_target_str,
-        ],
-        creationflags=detached_flags,
+        [wscript_exe, str(vbs_file)],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        close_fds=True,
     )
     _set_update_state(phase="applying", message="Đang cài và khởi động lại ứng dụng…")
     threading.Timer(3.0, lambda: os._exit(0)).start()
