@@ -926,6 +926,7 @@ class FlowService:
                         job["prompt"], model=model,
                         aspect="portrait" if ratio == "9:16" else "landscape",
                         count=max(1, min(4, int(settings.get("count", 1)))), start_image=source,
+                        timeout_s=300,
                     )
                 media_ids = [item.media_name for item in remote]
                 if not media_ids:
@@ -973,6 +974,7 @@ class FlowService:
                 images = await client.generate_image(
                     job["prompt"], aspect={"9:16": "portrait", "1:1": "square"}.get(settings.get("ratio"), "landscape"),
                     count=max(1, min(4, int(settings.get("count", 1)))), reference_images=sources or None,
+                    timeout_s=300,
                 )
                 media_ids = [image.media_name for image in images]
                 self._log("success", "generation_submitted", job_id=job_id, account_id=account["id"], details={"model": settings.get("model"), "mediaIds": media_ids})
