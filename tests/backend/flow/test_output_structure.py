@@ -10,6 +10,36 @@ service_module = importlib.import_module("pipeline.flow.service")
 output_paths_module = importlib.import_module("pipeline.core.output_paths")
 
 
+def test_flow_settings_pill_retries_with_force_click_when_plain_click_does_not_open_panel():
+    """Windows DPI can ignore a normal click even though the pill is visible."""
+    state = {"open": False}
+
+    class Tab:
+        async def is_visible(self):
+            return state["open"]
+
+    class Tabs:
+        async def count(self):
+            return 1
+
+        def nth(self, _index):
+            return Tab()
+
+    class Pill:
+        def __init__(self):
+            self.clicks: list[bool] = []
+
+        async def click(self, *, force=False):
+            self.clicks.append(force)
+            if force:
+                state["open"] = True
+
+    pill = Pill()
+
+    assert asyncio.run(service_module._click_settings_pill(pill, Tabs())) is True
+    assert pill.clicks == [False, True]
+
+
 def test_flow_desktop_browser_uses_installed_chrome_not_playwright_download():
     browser = importlib.import_module("pipeline.flow.browser")
     source = Path(browser.__file__).read_text(encoding="utf-8")

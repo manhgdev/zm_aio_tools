@@ -85,6 +85,22 @@ def _match_model_choice(requested: str, text: str) -> bool:
     return False
 
 
+async def _click_settings_pill(pill, tabs) -> bool:
+    """Open Flow settings, retrying with a forced click for Windows DPI."""
+    for force in (False, True):
+        try:
+            await pill.click(force=force)
+        except Exception:
+            if force:
+                return False
+            continue
+        await asyncio.sleep(.35)
+        for index in range(await tabs.count()):
+            if await tabs.nth(index).is_visible():
+                return True
+    return False
+
+
 class FlowService:
     def __init__(self) -> None:
         self._account_active: dict[str, int] = {}
@@ -709,7 +725,12 @@ class FlowService:
                         attempt + 1,
                     )
                 else:
-                    await trigger.click()
+                    opened = await _click_settings_pill(trigger, page.locator('[role="tab"]'))
+                    if not opened:
+                        _log.warning(
+                            "_prepare_ui_model attempt %d: settings pill did not open panel",
+                            attempt + 1,
+                        )
                 await asyncio.sleep(1.2)
                 mode_tab = await _visible_mode_tab()
                 if mode_tab is not None:
