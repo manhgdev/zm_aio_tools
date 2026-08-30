@@ -566,7 +566,7 @@ class FlowService:
         for index in range(await model_pills.count() - 1, -1, -1):
             candidate = model_pills.nth(index)
             label = (await candidate.inner_text()).strip()
-            if await candidate.is_visible() and re.search(r"\bx[1-4]\b", label):
+            if await candidate.is_visible() and re.search(r"x[1-4]\b", label):
                 visible_pill = candidate
                 break
         if visible_pill is None:
@@ -639,82 +639,19 @@ class FlowService:
                 else re.compile(r"Video", re.I)
             )
 
-            async def _settings_panel_open() -> bool:
-                """Check nếu settings panel đang mở (có role=tab visible)."""
-                count = await page.evaluate("""
-                    () => document.querySelectorAll('[role=tab]').length
-                """)
-                return int(count or 0) > 0
-
             async def _visible_mode_tab():
                 loc = page.locator('[role="tab"]').filter(has_text=mode_pattern)
                 for index in range(await loc.count()):
                     candidate = loc.nth(index)
                     if await candidate.is_visible():
                         return candidate
-                # fallback: DOM query không phụ thuộc Playwright visibility
-                texts = mode_pattern.pattern.split("|")
-                for text in texts:
-                    result = await page.evaluate(f"""
-                        () => {{
-                            const tabs = [...document.querySelectorAll('[role=tab]')];
-                            const t = tabs.find(t => t.textContent.includes('{text}'));
-                            return t ? t.textContent.trim() : null;
-                        }}
-                    """)
-                    if result:
-                        # Trả về locator DOM thay vì None để có thể click
-                        return page.locator('[role="tab"]').filter(has_text=text).first
                 return None
 
             async def _model_pill_already_visible() -> bool:
-                # Kiểm qua JS để tránh DPI visibility bug trên Windows
-                family_texts = ["Nano Banana", "Imagen", "Omni", "Veo"]
-                for text in family_texts:
-                    found = await page.evaluate(f"""
-                        () => {{
-                            const btns = [...document.querySelectorAll('button')];
-                            return btns.some(b => b.textContent.includes('{text}'));
-                        }}
-                    """)
-                    if found:
+                loc = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
+                for index in range(await loc.count()):
+                    if await loc.nth(index).is_visible():
                         return True
-                return False
-
-            async def _open_settings_panel_js() -> bool:
-                """Mở settings panel bằng JS evaluate() — không bị DPI bug.
-                Theo cách flow-py: thử click theo text keywords, sau đó theo x1/x2 pattern.
-                """
-                # Thử theo keyword text (flow-py pattern)
-                pill_texts = ["Nano Banana", "Veo", "Imagen", "\U0001f34c", "Video", "Image",
-                              "Hình", "Photo", "720", "1080"]
-                for text in pill_texts:
-                    clicked = await page.evaluate(f"""
-                        () => {{
-                            const btns = [...document.querySelectorAll('button')];
-                            const b = btns.find(btn => btn.textContent.includes('{text}'));
-                            if (b) {{ b.click(); return true; }}
-                            return false;
-                        }}
-                    """)
-                    if clicked:
-                        await asyncio.sleep(0.8)
-                        if await _settings_panel_open():
-                            return True
-                # Thử theo x1/x2/x3/x4 pattern
-                clicked = await page.evaluate("""
-                    () => {
-                        const btns = [...document.querySelectorAll('button')];
-                        const pill = btns.find(b => /x[1-4]/.test(b.textContent.trim()));
-                        if (pill) { pill.click(); return pill.textContent.trim(); }
-                        return null;
-                    }
-                """)
-                if clicked:
-                    await asyncio.sleep(0.8)
-                    if await _settings_panel_open():
-                        return True
-                _log.warning("_open_settings_panel_js: no pill found")
                 return False
 
             mode_tab = await _visible_mode_tab()
@@ -726,25 +663,63 @@ class FlowService:
                     except Exception:
                         pass
 
-                    # Focus textarea trước khi click pill (Flow UI yêu cầu focus để mở settings)
+                    # Critical: focus the prompt textarea before clicking the settings
+                    # pill.  In the current Flow UI the pill only opens the mode/model/
+                    # aspect panel when the prompt input already has focus; otherwise it
+                    # opens the reference-image media picker.
                     try:
-                        focused = await page.evaluate("""
-                            () => {
-                                const eds = [...document.querySelectorAll('div[contenteditable]')];
-                                const ed = eds.find(e => e.offsetWidth > 0 && e.offsetHeight > 0
-                                                    && e.getBoundingClientRect().y > 50);
-                                if (ed) { ed.focus(); ed.click(); return true; }
-                                return false;
-                            }
-                        """)
-                        if focused:
+                        ed = page.locator("div[contenteditable]").first
+                        if await ed.count() > 0:
+                            await ed.click()
                             await asyncio.sleep(0.4)
                     except Exception:
                         pass
 
-                    # Mở settings panel qua JS (không bị DPI visibility bug)
-                    opened = await _open_settings_panel_js()
-                    await asyncio.sleep(1.0)
+                    pills = page.locator('button[aria-haspopup="menu"]')
+                    trigger = None
+                    # 1. Pill với x1/x2/x3/x4 (video mode)
+                    for index in range(await pills.count() - 1, -1, -1):
+                        candidate = pills.nth(index)
+                        text = (await candidate.inner_text()).strip()
+                        if await candidate.is_visible() and re.search(r"x[1-4]\b", text):
+                            trigger = candidate
+                            break
+                    # 2. Pill có text chứa Image/Video/Hình ảnh/Imagen (image mode localized)
+                    if trigger is None:
+                        img_kw = re.compile(r"Image|Hình|Imagen|Photo", re.I)
+                        for index in range(await pills.count() - 1, -1, -1):
+                            candidate = pills.nth(index)
+                            if await candidate.is_visible() and img_kw.search((await candidate.inner_text()).strip()):
+                                trigger = candidate
+                                break
+                    # 3. Bất kỳ pill visible nào (aria-haspopup="menu")
+                    if trigger is None:
+                        for index in range(await pills.count() - 1, -1, -1):
+                            candidate = pills.nth(index)
+                            if await candidate.is_visible():
+                                trigger = candidate
+                                break
+                    # 4. Fallback rộng hơn: bất kỳ button visible nào chứa keyword settings
+                    if trigger is None:
+                        gen_kw = re.compile(r"Image|Video|Hình|Imagen|Photo|Model|720|1080|Settings", re.I)
+                        all_btns = page.locator("button")
+                        for index in range(await all_btns.count() - 1, -1, -1):
+                            candidate = all_btns.nth(index)
+                            try:
+                                if await candidate.is_visible() and gen_kw.search((await candidate.inner_text()).strip()):
+                                    trigger = candidate
+                                    break
+                            except Exception:
+                                pass
+                    if trigger is None:
+                        _log.warning(
+                            "_prepare_ui_model attempt %d: no settings pill found (Windows layout?) — skipping open",
+                            attempt + 1,
+                        )
+                        # Không raise: thử xem mode_tab có xuất hiện tự nhiên không
+                    else:
+                        await trigger.click()
+                    await asyncio.sleep(1.2)
                     mode_tab = await _visible_mode_tab()
                     if mode_tab is not None:
                         break
@@ -757,8 +732,8 @@ class FlowService:
                         except Exception:
                             pass
                     _log.warning(
-                        "_prepare_ui_model attempt %d: no %s tab visible; opened=%s tabs=%s",
-                        attempt + 1, kind, opened, tab_texts,
+                        "_prepare_ui_model attempt %d: no %s tab visible; tabs=%s",
+                        attempt + 1, kind, tab_texts,
                     )
 
             if mode_tab is None:
@@ -770,17 +745,8 @@ class FlowService:
                 else:
                     raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
             elif await mode_tab.get_attribute("aria-selected") != "true":
-                # Click qua JS để tránh DPI issues
-                await page.evaluate(f"""
-                    () => {{
-                        const tabs = [...document.querySelectorAll('[role=tab]')];
-                        const t = tabs.find(t => t.getAttribute('aria-selected') !== 'true'
-                                            && t.textContent.includes('{kind.capitalize()}'));
-                        if (t) t.click();
-                    }}
-                """)
+                await mode_tab.click()
                 await asyncio.sleep(0.6)
-
 
         # ------------------------------------------------------------------
         # Step 3: find and click model family selector, pick the right option
