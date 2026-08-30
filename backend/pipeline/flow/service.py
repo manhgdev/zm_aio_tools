@@ -552,7 +552,7 @@ class FlowService:
             raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
         await visible_pill.click()
         tabs = page.locator('[role="tab"]')
-        await tabs.first.wait_for(state="visible", timeout=5_000)
+        await tabs.first.wait_for(state="visible", timeout=10_000)
         video_tab = tabs.filter(has_text="Video").first
         if await video_tab.count() == 0:
             raise RuntimeError("FLOW_UI_CHANGED: Video mode tab was not found")
