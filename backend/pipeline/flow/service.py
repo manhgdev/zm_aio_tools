@@ -772,31 +772,47 @@ class FlowService:
                     return candidate
             return None
 
-        ratio_label = ratio if ratio in {"16:9", "9:16", "1:1"} else "16:9"
+        ratio_label = ratio if ratio in {"16:9", "9:16", "1:1", "4:3", "3:4"} else "16:9"
         ratio_tab = None
         for attempt in range(4):
             ratio_tab = await visible_tab(ratio_label)
             if ratio_tab is not None:
                 break
             # Model selection can leave a transient menu open or close the
-            # settings popover. Close the transient layer, then reopen the
-            # summary pill whose text always contains x1..x4.
+            # settings popover. Focus textarea (so pill opens settings not media picker),
+            # then reopen via pill click.
             if attempt:
                 await page.keyboard.press("Escape")
                 await asyncio.sleep(0.2)
-            buttons = page.locator("button")
+            # Focus textarea trước khi click pill
+            try:
+                ed = page.locator("div[contenteditable]").first
+                if await ed.count() > 0:
+                    await ed.click()
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
             trigger = None
+            # 1. Pill x[1-4] (matches "x1" và "crop_16_9x1")
+            buttons = page.locator("button")
             for index in range(await buttons.count() - 1, -1, -1):
                 candidate = buttons.nth(index)
                 text = (await candidate.inner_text()).strip()
                 if (
                     await candidate.is_visible()
-                    # New pill: 'Video · 720p · 8scrop_16_9x1' — use x[1-4]\b
                     and re.search(r"x[1-4]\b", text)
                     and await candidate.get_attribute("role") != "tab"
                 ):
                     trigger = candidate
                     break
+            # 2. Fallback: bất kỳ pill aria-haspopup visible
+            if trigger is None:
+                pills = page.locator('button[aria-haspopup="menu"]')
+                for index in range(await pills.count() - 1, -1, -1):
+                    candidate = pills.nth(index)
+                    if await candidate.is_visible():
+                        trigger = candidate
+                        break
             if trigger is not None:
                 await trigger.click()
             await asyncio.sleep(0.75)
@@ -807,6 +823,7 @@ class FlowService:
             await asyncio.sleep(0.3)
         if await ratio_tab.get_attribute("aria-selected") != "true":
             raise RuntimeError(f"FLOW_SETTING_MISMATCH: aspect ratio {ratio_label} was not selected")
+
 
         if duration is None:
             return
