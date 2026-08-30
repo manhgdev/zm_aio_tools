@@ -554,24 +554,57 @@ class FlowService:
         )
         return target
 
-    async def _prepare_video_mode(self, page, model: str) -> None:
-        """Open Flow's live settings popover and verify Video mode.
+    async def _open_settings_panel(self, page) -> bool:
+        """Mở Flow settings panel — language/locale independent.
 
-        flow-py's JavaScript click can race the localized Agent UI and leave
-        Image mode selected. Use trusted Playwright clicks against the controls
-        observed in the current account instead.
+        Theo google-flow-mcp: dùng icon button <i>tune</i> hoặc <i>settings_2</i>
+        thay vì tìm pill x1/x2 (vốn phụ thuộc text format thay đổi theo phiên bản).
+        Settings đã mở khi có ≥ 2 [role=tablist] visible.
         """
-        model_pills = page.locator('button[aria-haspopup="menu"]')
-        visible_pill = None
-        for index in range(await model_pills.count() - 1, -1, -1):
-            candidate = model_pills.nth(index)
+        # Kiểm nếu settings đã mở
+        if await page.locator('[role="tablist"]').count() >= 2:
+            return True
+
+        # Cách 1: icon button tune/settings_2 (google-flow-mcp approach — language-independent)
+        for icon_text in ("tune", "settings_2"):
+            tune_btn = page.locator("button").filter(
+                has=page.locator("i", has_text=re.compile(f"^{icon_text}$"))
+            ).last
+            if await tune_btn.count() > 0 and await tune_btn.is_visible():
+                await tune_btn.click()
+                await asyncio.sleep(0.5)
+                if await page.locator('[role="tablist"]').count() >= 2:
+                    return True
+
+        # Cách 2: pill x[1-4] (format mới: crop_16_9x1; format cũ: x1 standalone)
+        pills = page.locator('button[aria-haspopup="menu"]')
+        for index in range(await pills.count() - 1, -1, -1):
+            candidate = pills.nth(index)
             label = (await candidate.inner_text()).strip()
             if await candidate.is_visible() and re.search(r"x[1-4]\b", label):
-                visible_pill = candidate
+                await candidate.click()
+                await asyncio.sleep(0.5)
+                if await page.locator('[role="tablist"]').count() >= 2:
+                    return True
                 break
-        if visible_pill is None:
+
+        return await page.locator('[role="tablist"]').count() >= 2
+
+    async def _prepare_video_mode(self, page, model: str) -> None:
+        """Open Flow settings, switch to Video mode, select model."""
+        # Focus prompt textarea trước (Flow UI yêu cầu)
+        try:
+            ed = page.locator("div[contenteditable]").first
+            if await ed.count() > 0:
+                await ed.click()
+                await asyncio.sleep(0.3)
+        except Exception:
+            pass
+
+        opened = await self._open_settings_panel(page)
+        if not opened:
             raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
-        await visible_pill.click()
+
         tabs = page.locator('[role="tab"]')
         await tabs.first.wait_for(state="visible", timeout=10_000)
         video_tab = tabs.filter(has_text="Video").first
@@ -608,13 +641,10 @@ class FlowService:
     async def _prepare_ui_model(self, page, kind: str, model: str, *, ui=None) -> None:  # noqa: C901
         """Select a current Flow UI model for models without a stable REST key.
 
-        Strategy:
-        1. Ensure settings panel is open — delegate to ui.open_settings_panel() when
-           available (uses JS, immune to React render timing), else fall back to the
-           custom Playwright-based pill-click with 3 retries.
-        2. Switch to the correct mode tab — delegate to ui.switch_mode() when available.
-        3. Click the model family selector and pick the right option (always custom,
-           since the library does not expose a model-family chooser).
+        Strategy (aligned with google-flow-mcp reference):
+        1. Open settings panel via <i>tune</i>/<i>settings_2</i> icon (language-independent).
+        2. Switch to the correct mode tab (Image/Video) if not already selected.
+        3. Click the model family selector and pick the right option.
         """
         try:
             await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=30_000, state="attached")
@@ -622,131 +652,72 @@ class FlowService:
             _log.warning("_prepare_ui_model: settings pill not found within 30s — proceeding anyway")
 
         family = re.compile(r"Nano Banana|Imagen", re.I) if kind == "image" else re.compile(r"Omni|Veo", re.I)
+        mode_pattern = (
+            re.compile(r"Image|H\u00ecnh \u1ea3nh", re.I) if kind == "image"
+            else re.compile(r"Video", re.I)
+        )
 
         # ------------------------------------------------------------------
         # Steps 1 + 2: open settings panel and switch mode
         # ------------------------------------------------------------------
-        # NOTE: The library's open_settings_panel / switch_mode use JS .click()
-        # which does NOT trigger React synthetic events reliably. In the current
-        # Flow UI the pill click only opens the settings panel (not a media picker)
-        # when the prompt textarea is already focused AND a Playwright click is used.
-        # We therefore always use the direct Playwright approach below.
-        if False:  # keep block to preserve diff context; ui-library path retired 2026-08-29
-            pass
-        else:
-            mode_pattern = (
-                re.compile(r"Image|H\u00ecnh \u1ea3nh", re.I) if kind == "image"
-                else re.compile(r"Video", re.I)
-            )
+        async def _visible_mode_tab():
+            loc = page.locator('[role="tab"]').filter(has_text=mode_pattern)
+            for index in range(await loc.count()):
+                candidate = loc.nth(index)
+                if await candidate.is_visible():
+                    return candidate
+            return None
 
-            async def _visible_mode_tab():
-                loc = page.locator('[role="tab"]').filter(has_text=mode_pattern)
-                for index in range(await loc.count()):
-                    candidate = loc.nth(index)
-                    if await candidate.is_visible():
-                        return candidate
-                return None
+        mode_tab = await _visible_mode_tab()
+        if mode_tab is None:
+            for attempt in range(3):
+                try:
+                    await page.keyboard.press("Escape")
+                    await asyncio.sleep(0.2)
+                except Exception:
+                    pass
 
-            async def _model_pill_already_visible() -> bool:
-                loc = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
-                for index in range(await loc.count()):
-                    if await loc.nth(index).is_visible():
-                        return True
-                return False
+                # Focus prompt textarea (Flow UI yêu cầu để pill mở settings, không phải media picker)
+                try:
+                    ed = page.locator("div[contenteditable]").first
+                    if await ed.count() > 0:
+                        await ed.click()
+                        await asyncio.sleep(0.4)
+                except Exception:
+                    pass
 
-            mode_tab = await _visible_mode_tab()
-            if mode_tab is None:
-                for attempt in range(3):
+                # Mở settings panel
+                opened = await self._open_settings_panel(page)
+                await asyncio.sleep(1.0)
+                mode_tab = await _visible_mode_tab()
+                if mode_tab is not None:
+                    break
+
+                all_tabs = page.locator('[role="tab"]')
+                tab_texts: list[str] = []
+                for idx in range(min(10, await all_tabs.count())):
                     try:
-                        await page.keyboard.press("Escape")
-                        await asyncio.sleep(0.2)
+                        tab_texts.append((await all_tabs.nth(idx).inner_text()).strip())
                     except Exception:
                         pass
+                _log.warning(
+                    "_prepare_ui_model attempt %d: no %s tab visible; opened=%s tabs=%s",
+                    attempt + 1, kind, opened, tab_texts,
+                )
 
-                    # Critical: focus the prompt textarea before clicking the settings
-                    # pill.  In the current Flow UI the pill only opens the mode/model/
-                    # aspect panel when the prompt input already has focus; otherwise it
-                    # opens the reference-image media picker.
-                    try:
-                        ed = page.locator("div[contenteditable]").first
-                        if await ed.count() > 0:
-                            await ed.click()
-                            await asyncio.sleep(0.4)
-                    except Exception:
-                        pass
-
-                    pills = page.locator('button[aria-haspopup="menu"]')
-                    trigger = None
-                    # 1. Pill với x1/x2/x3/x4 (video mode)
-                    for index in range(await pills.count() - 1, -1, -1):
-                        candidate = pills.nth(index)
-                        text = (await candidate.inner_text()).strip()
-                        if await candidate.is_visible() and re.search(r"x[1-4]\b", text):
-                            trigger = candidate
-                            break
-                    # 2. Pill có text chứa Image/Video/Hình ảnh/Imagen (image mode localized)
-                    if trigger is None:
-                        img_kw = re.compile(r"Image|Hình|Imagen|Photo", re.I)
-                        for index in range(await pills.count() - 1, -1, -1):
-                            candidate = pills.nth(index)
-                            if await candidate.is_visible() and img_kw.search((await candidate.inner_text()).strip()):
-                                trigger = candidate
-                                break
-                    # 3. Bất kỳ pill visible nào (aria-haspopup="menu")
-                    if trigger is None:
-                        for index in range(await pills.count() - 1, -1, -1):
-                            candidate = pills.nth(index)
-                            if await candidate.is_visible():
-                                trigger = candidate
-                                break
-                    # 4. Fallback rộng hơn: bất kỳ button visible nào chứa keyword settings
-                    if trigger is None:
-                        gen_kw = re.compile(r"Image|Video|Hình|Imagen|Photo|Model|720|1080|Settings", re.I)
-                        all_btns = page.locator("button")
-                        for index in range(await all_btns.count() - 1, -1, -1):
-                            candidate = all_btns.nth(index)
-                            try:
-                                if await candidate.is_visible() and gen_kw.search((await candidate.inner_text()).strip()):
-                                    trigger = candidate
-                                    break
-                            except Exception:
-                                pass
-                    if trigger is None:
-                        _log.warning(
-                            "_prepare_ui_model attempt %d: no settings pill found (Windows layout?) — skipping open",
-                            attempt + 1,
-                        )
-                        # Không raise: thử xem mode_tab có xuất hiện tự nhiên không
-                    else:
-                        await trigger.click()
-                    await asyncio.sleep(1.2)
-                    mode_tab = await _visible_mode_tab()
-                    if mode_tab is not None:
-                        break
-
-                    all_tabs = page.locator('[role="tab"]')
-                    tab_texts: list[str] = []
-                    for idx in range(min(10, await all_tabs.count())):
-                        try:
-                            tab_texts.append((await all_tabs.nth(idx).inner_text()).strip())
-                        except Exception:
-                            pass
-                    _log.warning(
-                        "_prepare_ui_model attempt %d: no %s tab visible; tabs=%s",
-                        attempt + 1, kind, tab_texts,
-                    )
-
-            if mode_tab is None:
-                if await _model_pill_already_visible():
-                    _log.info(
-                        "_prepare_ui_model: %s tab not found but model pill present — skipping",
-                        kind,
-                    )
-                else:
-                    raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
-            elif await mode_tab.get_attribute("aria-selected") != "true":
-                await mode_tab.click()
-                await asyncio.sleep(0.6)
+        if mode_tab is None:
+            # Kiểm model pill có visible không — nếu có thì đang đúng mode rồi
+            model_loc = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
+            pill_visible = any(
+                [await model_loc.nth(i).is_visible() for i in range(await model_loc.count())]
+            ) if await model_loc.count() > 0 else False
+            if pill_visible:
+                _log.info("_prepare_ui_model: %s tab not found but model pill present — skipping", kind)
+            else:
+                raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
+        elif await mode_tab.get_attribute("aria-selected") != "true":
+            await mode_tab.click()
+            await asyncio.sleep(0.6)
 
         # ------------------------------------------------------------------
         # Step 3: find and click model family selector, pick the right option
