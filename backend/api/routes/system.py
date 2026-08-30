@@ -900,64 +900,38 @@ def api_update_apply():
         _set_update_state(phase="complete", message="Đã mở macOS Installer để cập nhật")
         return {"ok": True, "message": "Đã mở macOS Installer để cập nhật"}
 
-    exe_path = Path(sys.executable).resolve()
-    exe_dir = exe_path.parent
-    if _win_versioned_folder(exe_path):
-        # Versioned: Target = folder mới cạnh folder cũ; OldTarget = folder cũ
-        asset_stem = package.stem  # ZM_AIO_TOOL_v4.3.1-windows-x64
-        target_str = str(exe_dir.parent / asset_stem)
-        old_target_str = str(exe_dir)
-    else:
-        # Flat: Target = thư mục hiện tại (overwrite)
-        target_str = str(exe_dir)
-        old_target_str = ""
+    # Windows portable: giải nén zip trực tiếp bằng Python, mở Explorer vào folder mới
+    # Người dùng tự chạy EXE bản mới — không cần PowerShell hay external tools.
+    extract_dir = package.parent / package.stem  # e.g. D:\tool\ZM_AIO_TOOL_v4.6.1-windows-x64
 
-    package_str = str(package)
-    exe_str = str(exe_path)
-    script = _windows_update_script(package.parent)
-    powershell_exe = shutil.which("powershell.exe") or os.path.join(
-        os.environ.get("SystemRoot", "C:\\Windows"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
-    )
-    # Ghi params ra JSON — tranh quoting nightmare khi pass qua command line
-    import json as _json
-    params_file = package.parent / "update-params.json"
-    params_file.write_text(
-        _json.dumps({
-            "AppPid": os.getpid(),
-            "Zip": str(package),
-            "Target": target_str,
-            "Exe": exe_str,
-            "OldTarget": old_target_str,
-        }, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    def _extract_and_open() -> None:
+        import zipfile as _zf
+        try:
+            _set_update_state(phase="applying", progress=10, message="Đang giải nén bản cập nhật…")
+            if extract_dir.exists():
+                shutil.rmtree(str(extract_dir), ignore_errors=True)
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            with _zf.ZipFile(str(package), "r") as zf:
+                total = len(zf.namelist())
+                for i, member in enumerate(zf.namelist(), 1):
+                    zf.extract(member, str(extract_dir))
+                    if i % max(1, total // 20) == 0:
+                        _set_update_state(progress=10 + int(i * 85 / total))
+            _set_update_state(phase="complete", progress=100,
+                              message=f"Đã giải nén xong! Mở thư mục bản mới…")
+            time.sleep(0.8)
+            # Mở Explorer vào folder chứa EXE mới
+            subprocess.Popen(["explorer.exe", str(extract_dir)])
+            time.sleep(1.5)
+        except Exception as exc:
+            _set_update_state(phase="error", error=str(exc),
+                              message=f"Giải nén thất bại: {exc}")
+            return
+        os._exit(0)
 
-    # VBScript launcher: WScript.Shell.Run voi hidden=True, wait=False
-    # Day la cach chuan nhat tren Windows de spawn hidden detached process.
-    # Truc tiep launch PowerShell voi DETACHED_PROCESS flags khong reliable.
-    ps_path = str(script)
-    vbs_content = (
-        'Set sh = CreateObject("WScript.Shell")\n'
-        'cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass'
-        ' -WindowStyle Hidden -File " & Chr(34) & "' + ps_path.replace('"', '') + '" & Chr(34)\n'
-        'sh.Run cmd, 0, False\n'
-    )
-    vbs_file = package.parent / "run-update.vbs"
-    vbs_file.write_text(vbs_content, encoding="utf-8")
+    threading.Thread(target=_extract_and_open, name="win-update-extract", daemon=True).start()
+    return {"ok": True, "message": "Đang giải nén bản cập nhật…"}
 
-    wscript_exe = os.path.join(
-        os.environ.get("SystemRoot", "C:\\Windows"), "System32", "wscript.exe"
-    )
-    subprocess.Popen(
-        [wscript_exe, str(vbs_file)],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-    )
-    _set_update_state(phase="applying", message="Đang cài và khởi động lại ứng dụng…")
-    threading.Timer(3.0, lambda: os._exit(0)).start()
-    return {"ok": True, "message": "Đang cài và khởi động lại ứng dụng…"}
 
 
 @router.get("/api/system/logs")
