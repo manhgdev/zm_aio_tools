@@ -32,7 +32,10 @@
 .renders-empty span { font-size: .86rem; }
 .renders-alert { max-width: 1400px; margin: 0 auto 18px; padding: 10px 13px; border: 1px solid color-mix(in srgb, #dc2626 35%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #dc2626 8%, var(--surface)); color: #dc2626; }
 .renders-alert button { margin-left: 8px; border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; }
-.renders-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; max-width: 1400px; margin: 26px auto 0; color: var(--muted-foreground); font-size: .82rem; }
+.renders-pagination { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; max-width: 1400px; margin: 26px auto 0; color: var(--muted-foreground); font-size: .82rem; }
+.renders-page-size { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.renders-page-size select { min-width: 58px; min-height: 34px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: .82rem; cursor: pointer; }
+.renders-page-size select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .renders-pagination button { min-width: 72px; min-height: 34px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .renders-pagination button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .renders-pagination button:disabled { opacity: .45; cursor: default; }

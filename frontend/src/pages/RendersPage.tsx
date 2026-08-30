@@ -8,7 +8,9 @@ import { localize, useLocale } from '@/app/i18n'
 import { toast } from 'sonner'
 import './RendersPage.css'
 
-const PAGE_SIZE = 12
+const PAGE_SIZE_OPTIONS = [12, 24, 48] as const
+type PageSize = typeof PAGE_SIZE_OPTIONS[number]
+const DEFAULT_PAGE_SIZE: PageSize = PAGE_SIZE_OPTIONS[0]
 
 function durationLabel(seconds: number) {
   const total = Math.max(0, Math.round(seconds))
@@ -38,6 +40,7 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
   const [canReveal, setCanReveal] = useState(false)
   const [viewing, setViewing] = useState<RenderedVideo | null>(null)
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [openingId, setOpeningId] = useState<string | null>(null)
@@ -47,9 +50,9 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
   useEffect(() => { setPage(1); setSelectedIds(new Set()) }, [activeTab])
 
   const filteredItems = items.filter(item => activeTab === 'all' || item.type === activeTab || (!item.type && activeTab === 'video'))
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize))
   const safePage = Math.min(page, totalPages)
-  const pageItems = filteredItems.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const pageItems = filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   const currentViewingIndex = viewing ? filteredItems.findIndex((i) => i.renderId === viewing.renderId) : -1
   const moveViewing = useCallback((delta: number) => {
@@ -298,11 +301,27 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
         </section>
       )}
 
-      {!loading && filteredItems.length > PAGE_SIZE && (
-        <nav className="renders-pagination" aria-label="Phân trang video đã render">
-          <button type="button" disabled={safePage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Trước</button>
-          <span>Trang {safePage}/{totalPages}</span>
-          <button type="button" disabled={safePage === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Sau</button>
+      {!loading && filteredItems.length > 0 && (
+        <nav className="renders-pagination" aria-label={t('Phân trang media đã render', 'Rendered media pagination')}>
+          <label className="renders-page-size">
+            <span>{t('Hiển thị', 'Show')}</span>
+            <select
+              value={pageSize}
+              aria-label={t('Số mục mỗi trang', 'Items per page')}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value) as PageSize)
+                setPage(1)
+              }}
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+            <span>{t('mục/trang', 'per page')}</span>
+          </label>
+          {totalPages > 1 && <>
+            <button type="button" disabled={safePage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>{t('Trước', 'Previous')}</button>
+            <span>{t(`Trang ${safePage}/${totalPages}`, `Page ${safePage}/${totalPages}`)}</span>
+            <button type="button" disabled={safePage === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>{t('Sau', 'Next')}</button>
+          </>}
         </nav>
       )}
 

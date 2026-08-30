@@ -171,9 +171,12 @@ test('Render list is bilingual and covers Clone plus Review', async () => {
   assert.match(messages, /'nav\.renders': \{ vi: 'List render', en: 'Render list' \}/)
 })
 
-test('Render list paginates complete responsive grid rows', async () => {
+test('Render list paginates complete responsive grid rows with a bilingual page-size control', async () => {
   const page = await readFile(new URL('../frontend/src/pages/RendersPage.tsx', import.meta.url), 'utf8')
-  assert.match(page, /const PAGE_SIZE = 12/)
+  assert.match(page, /const PAGE_SIZE_OPTIONS = \[12, 24, 48\] as const/)
+  assert.match(page, /className="renders-page-size"/)
+  assert.match(page, /t\('Số mục mỗi trang', 'Items per page'\)/)
+  assert.match(page, /setPage\(1\)/)
 })
 
 test('English catalog covers Live Preview empty page', () => {
