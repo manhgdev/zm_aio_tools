@@ -117,7 +117,8 @@ export function readText(key: string, fallback: string) {
 export function readSettings(): FlowSettings {
   const fallback: FlowSettings = {
     model: "Veo 3.1 - Fast", videoModel: "Veo 3.1 - Fast", imageModel: "Nano Banana 2",
-    ratio: "16:9", duration: "8", count: 1, account: "Ultra 01",
+    ratio: "16:9", imageRatio: "16:9", duration: "8", count: 1, imageCount: 1,
+    account: "Ultra 01",
     outputDir: defaultFlowOutputFolder(), quality: "Standard", resolution: "1K",
     concurrency: "3", format: "PNG", filePrefix: "flow", referenceStrength: 70, autoDownload: true,
   };
@@ -131,6 +132,9 @@ export function readSettings(): FlowSettings {
     if (/^Imagen 3/i.test(merged.model)) merged.model = "Nano Banana 2";
     if (!isVideoModel(merged.videoModel)) merged.videoModel = isVideoModel(merged.model) ? merged.model : fallback.videoModel;
     if (!isImageModel(merged.imageModel)) merged.imageModel = isImageModel(merged.model) ? merged.model : fallback.imageModel;
+    if (!["16:9","9:16","1:1","4:3","3:4"].includes(merged.imageRatio)) merged.imageRatio = fallback.imageRatio;
+    if (![1,2,3,4].includes(Number(merged.imageCount))) merged.imageCount = fallback.imageCount;
+    if (!["16:9","9:16","1:1","4:3","3:4"].includes(merged.ratio)) merged.ratio = fallback.ratio;
     if (!["1","2","3","4","5","6"].includes(String(merged.concurrency))) merged.concurrency = fallback.concurrency;
     if (!String(merged.outputDir || "").trim() || merged.outputDir === "flow_20250824_143022") {
       merged.outputDir = defaultFlowOutputFolder();
@@ -140,6 +144,7 @@ export function readSettings(): FlowSettings {
     return merged;
   } catch { return fallback; }
 }
+
 
 export function readAccounts(): FlowAccount[] {
   try {

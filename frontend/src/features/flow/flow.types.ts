@@ -63,9 +63,11 @@ export type FlowSettings = {
   model: string;
   videoModel: string;
   imageModel: string;
-  ratio: string;
+  ratio: string;        // video ratio
+  imageRatio: string;   // image ratio (separate from video)
   duration: string;
-  count: number;
+  count: number;        // video count
+  imageCount: number;   // image count (separate from video)
   account: string;
   outputDir: string;
   quality: string;

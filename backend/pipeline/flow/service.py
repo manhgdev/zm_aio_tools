@@ -573,13 +573,26 @@ class FlowService:
         if visible_pill is None:
             raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
         await visible_pill.click()
-        tabs = page.locator('[role="tab"]')
-        await tabs.first.wait_for(state="visible", timeout=10_000)
-        video_tab = tabs.filter(has_text="Video").first
-        if await video_tab.count() == 0:
-            raise RuntimeError("FLOW_UI_CHANGED: Video mode tab was not found")
-        await video_tab.click()
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
+        # Tab "Video" — dùng regex để catch cả localized variants; fallback force-click nếu is_visible() fail (Windows DPI)
+        video_tab_loc = page.locator('[role="tab"]').filter(has=page.locator('text=/^Video/i'))
+        if await video_tab_loc.count() == 0:
+            # Thử regex rộng hơn: bất kỳ tab nào KHÔNG phải Image/Hình/S/M/L/Landscape/Portrait/Square
+            all_tabs = page.locator('[role="tab"]')
+            await all_tabs.first.wait_for(state="attached", timeout=10_000)
+            video_tab_loc = all_tabs.filter(has=page.locator('text=/^Video/i'))
+        if await video_tab_loc.count() == 0:
+            tab_texts = []
+            all_tabs2 = page.locator('[role="tab"]')
+            for i in range(min(10, await all_tabs2.count())):
+                try:
+                    tab_texts.append((await all_tabs2.nth(i).inner_text()).strip())
+                except Exception:
+                    pass
+            raise RuntimeError(f"FLOW_UI_CHANGED: Video mode tab was not found — tabs={tab_texts}")
+        # Force click — is_visible() unreliable trên Windows DPI
+        await video_tab_loc.first.click(force=True)
+        await asyncio.sleep(0.6)
 
         setting_pills = page.locator('button[aria-haspopup="menu"]')
         video_summary = setting_pills.filter(has_text=re.compile(r"Video", re.I)).last
@@ -627,10 +640,15 @@ class FlowService:
 
         async def _visible_mode_tab():
             loc = page.locator('[role="tab"]').filter(has_text=mode_pattern)
+            # 1. Prefer truly visible tab
             for index in range(await loc.count()):
                 candidate = loc.nth(index)
                 if await candidate.is_visible():
                     return candidate
+            # 2. Fallback: Windows DPI can make is_visible() unreliable — use first attached tab
+            if await loc.count() > 0:
+                _log.warning("_visible_mode_tab: %s tab not visible but attached — DPI fallback", kind)
+                return loc.first
             return None
 
         async def _model_pill_already_visible() -> bool:

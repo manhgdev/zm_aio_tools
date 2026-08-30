@@ -1648,9 +1648,13 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                 />
                 <FlowSelect
                   label={t("Tỷ lệ", "Ratio")}
-                  value={settings.ratio}
-                  onChange={(ratio) =>
-                    setSettings((current) => ({ ...current, ratio }))
+                  value={createKind === "image" ? settings.imageRatio : settings.ratio}
+                  onChange={(value) =>
+                    setSettings((current) =>
+                      createKind === "image"
+                        ? { ...current, imageRatio: value }
+                        : { ...current, ratio: value }
+                    )
                   }
                   options={
                     createKind === "video"
@@ -1703,20 +1707,24 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
                       onClick={() =>
                         setSettings((current) => ({
                           ...current,
-                          count: Math.max(1, current.count - 1),
+                          ...(createKind === "image"
+                            ? { imageCount: Math.max(1, (current.imageCount ?? 1) - 1) }
+                            : { count: Math.max(1, current.count - 1) }),
                         }))
                       }
                       aria-label={t("Giảm số lượng", "Decrease quantity")}
                     >
                       −
                     </button>
-                    <strong>{settings.count}</strong>
+                    <strong>{createKind === "image" ? (settings.imageCount ?? 1) : settings.count}</strong>
                     <button
                       type="button"
                       onClick={() =>
                         setSettings((current) => ({
                           ...current,
-                          count: Math.min(4, current.count + 1),
+                          ...(createKind === "image"
+                            ? { imageCount: Math.min(4, (current.imageCount ?? 1) + 1) }
+                            : { count: Math.min(4, current.count + 1) }),
                         }))
                       }
                       aria-label={t("Tăng số lượng", "Increase quantity")}
