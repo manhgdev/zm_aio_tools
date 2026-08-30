@@ -595,7 +595,10 @@ class FlowService:
         3. Click the model family selector and pick the right option (always custom,
            since the library does not expose a model-family chooser).
         """
-        await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=15_000)
+        try:
+            await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=30_000, state="attached")
+        except Exception:
+            _log.warning("_prepare_ui_model: settings pill not found within 30s — proceeding anyway")
 
         family = re.compile(r"Nano Banana|Imagen", re.I) if kind == "image" else re.compile(r"Omni|Veo", re.I)
 
