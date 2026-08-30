@@ -330,15 +330,29 @@ try {
     if (Test-Path $backup) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue }
 
     # 5. Khoi dong lai ung dung
+    # Tim EXE theo ten chinh xac, fallback sang bat ky .exe nao trong Target
     $newExe = Join-Path $Target $exeName
-    if (-not (Test-Path $newExe)) {
-        $newExe = $Exe
+    if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {
+        # Neu EXE khong co trong Target (user doi ten, v.v.) thi tim bat ky .exe nao
+        $fallbackExe = Get-ChildItem -LiteralPath $Target -Filter '*.exe' -File | Select-Object -First 1
+        if ($fallbackExe) {
+            $newExe = $fallbackExe.FullName
+            Log "Ten EXE goc khong tim thay, dung fallback: $newExe"
+        } elseif (Test-Path -LiteralPath $Exe -PathType Leaf) {
+            $newExe = $Exe
+            Log "Dung duong dan EXE goc: $newExe"
+        } else {
+            Log "CANH BAO: Khong tim thay EXE de chay lai. Mo thu muc ung dung..."
+            Start-Process -FilePath "explorer.exe" -ArgumentList "`"$Target`""
+            Log "=== Da cap nhat (can chay thu cong) ==="
+        }
     }
-    Log "Khoi dong lai ung dung: $newExe"
-    Start-Sleep -Seconds 1
-    Start-Process -FilePath $newExe
-
-    Log "=== Cap nhat thanh cong! ==="
+    if (Test-Path -LiteralPath $newExe -PathType Leaf) {
+        Log "Khoi dong lai ung dung: $newExe"
+        Start-Sleep -Seconds 1
+        Start-Process -FilePath "$newExe"
+        Log "=== Cap nhat thanh cong! ==="
+    }
 } catch {
     $err = $_.Exception.Message
     Log "LOI CAP NHAT: $err"
