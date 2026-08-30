@@ -677,27 +677,53 @@ class FlowService:
 
                     pills = page.locator('button[aria-haspopup="menu"]')
                     trigger = None
+                    # 1. Pill với x1/x2/x3/x4 (video mode)
                     for index in range(await pills.count() - 1, -1, -1):
                         candidate = pills.nth(index)
                         text = (await candidate.inner_text()).strip()
-                        # New pill format: 'Video · 720p · 8scrop_16_9x1' — x1 is
-                        # preceded by a digit so \bx[1-4]\b never fires; use x[1-4]\b.
                         if await candidate.is_visible() and re.search(r"x[1-4]\b", text):
                             trigger = candidate
                             break
+                    # 2. Pill có text chứa Image/Video/Hình ảnh/Imagen (image mode localized)
+                    if trigger is None:
+                        img_kw = re.compile(r"Image|Hình|Imagen|Photo", re.I)
+                        for index in range(await pills.count() - 1, -1, -1):
+                            candidate = pills.nth(index)
+                            if await candidate.is_visible() and img_kw.search((await candidate.inner_text()).strip()):
+                                trigger = candidate
+                                break
+                    # 3. Bất kỳ pill visible nào (aria-haspopup="menu")
                     if trigger is None:
                         for index in range(await pills.count() - 1, -1, -1):
                             candidate = pills.nth(index)
                             if await candidate.is_visible():
                                 trigger = candidate
                                 break
+                    # 4. Fallback rộng hơn: bất kỳ button visible nào chứa keyword settings
                     if trigger is None:
-                        raise RuntimeError("FLOW_UI_CHANGED: generation settings control was not found")
-                    await trigger.click()
+                        gen_kw = re.compile(r"Image|Video|Hình|Imagen|Photo|Model|720|1080|Settings", re.I)
+                        all_btns = page.locator("button")
+                        for index in range(await all_btns.count() - 1, -1, -1):
+                            candidate = all_btns.nth(index)
+                            try:
+                                if await candidate.is_visible() and gen_kw.search((await candidate.inner_text()).strip()):
+                                    trigger = candidate
+                                    break
+                            except Exception:
+                                pass
+                    if trigger is None:
+                        _log.warning(
+                            "_prepare_ui_model attempt %d: no settings pill found (Windows layout?) — skipping open",
+                            attempt + 1,
+                        )
+                        # Không raise: thử xem mode_tab có xuất hiện tự nhiên không
+                    else:
+                        await trigger.click()
                     await asyncio.sleep(1.2)
                     mode_tab = await _visible_mode_tab()
                     if mode_tab is not None:
                         break
+
                     all_tabs = page.locator('[role="tab"]')
                     tab_texts: list[str] = []
                     for idx in range(min(10, await all_tabs.count())):
