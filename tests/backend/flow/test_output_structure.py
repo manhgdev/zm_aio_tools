@@ -40,6 +40,45 @@ def test_flow_settings_pill_retries_with_force_click_when_plain_click_does_not_o
     assert pill.clicks == [False, True]
 
 
+def test_flow_settings_uses_dom_fallback_when_windows_clicks_do_not_open_panel():
+    state = {"open": False}
+
+    class Tab:
+        async def is_visible(self):
+            return state["open"]
+
+    class Tabs:
+        async def count(self):
+            return 1
+
+        def nth(self, _index):
+            return Tab()
+
+    class Pill:
+        async def click(self, *, force=False):
+            return None
+
+    class Ui:
+        def __init__(self):
+            self.calls = 0
+
+        async def open_settings_panel(self, page):
+            assert page == "flow-page"
+            self.calls += 1
+            state["open"] = True
+            return True
+
+    ui = Ui()
+
+    assert asyncio.run(service_module._open_flow_settings_panel("flow-page", Pill(), Tabs(), ui)) is True
+    assert ui.calls == 1
+
+
+def test_flow_mode_icons_do_not_depend_on_google_interface_language():
+    assert service_module._mode_tab_icon("image") == "image"
+    assert service_module._mode_tab_icon("video") == "videocam"
+
+
 def test_flow_desktop_browser_uses_installed_chrome_not_playwright_download():
     browser = importlib.import_module("pipeline.flow.browser")
     source = Path(browser.__file__).read_text(encoding="utf-8")

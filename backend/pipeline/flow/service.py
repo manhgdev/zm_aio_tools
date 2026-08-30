@@ -85,6 +85,11 @@ def _match_model_choice(requested: str, text: str) -> bool:
     return False
 
 
+def _mode_tab_icon(kind: str) -> str:
+    """Material symbols used by Flow's language-independent mode tabs."""
+    return "image" if kind == "image" else "videocam"
+
+
 async def _click_settings_pill(pill, tabs) -> bool:
     """Open Flow settings, retrying with a forced click for Windows DPI."""
     for force in (False, True):
@@ -99,6 +104,18 @@ async def _click_settings_pill(pill, tabs) -> bool:
             if await tabs.nth(index).is_visible():
                 return True
     return False
+
+
+async def _open_flow_settings_panel(page, pill, tabs, ui=None) -> bool:
+    """Prefer Playwright clicks, then reuse flow-py's DOM-click fallback."""
+    if pill is not None and await _click_settings_pill(pill, tabs):
+        return True
+    if ui is None:
+        return False
+    try:
+        return bool(await ui.open_settings_panel(page))
+    except Exception:
+        return False
 
 
 class FlowService:
@@ -644,7 +661,7 @@ class FlowService:
         3. Click the model family selector and pick the right option.
         """
         try:
-            await page.wait_for_selector('button[aria-haspopup="menu"]', timeout=30_000, state="attached")
+            await page.wait_for_selector('button', timeout=30_000, state="attached")
         except Exception:
             _log.warning("_prepare_ui_model: settings pill not found within 30s — proceeding anyway")
 
@@ -665,6 +682,16 @@ class FlowService:
             if await loc.count() > 0:
                 _log.warning("_visible_mode_tab: %s tab not visible but attached — DPI fallback", kind)
                 return loc.first
+            icon_tabs = page.locator('[role="tab"]').filter(
+                has=page.locator("i", has_text=re.compile(rf"^{_mode_tab_icon(kind)}$", re.I)),
+            )
+            for index in range(await icon_tabs.count()):
+                candidate = icon_tabs.nth(index)
+                if await candidate.is_visible():
+                    return candidate
+            if await icon_tabs.count() > 0:
+                _log.warning("_visible_mode_tab: %s icon tab not visible but attached — DPI fallback", kind)
+                return icon_tabs.first
             return None
 
         async def _model_pill_already_visible() -> bool:
@@ -688,49 +715,55 @@ class FlowService:
                 # aspect panel when the prompt input already has focus; otherwise it
                 # opens the reference-image media picker.
                 try:
-                    ed = page.locator("div[contenteditable]").first
+                    ed = page.locator('textarea, [contenteditable="true"][role="textbox"], div[contenteditable]').first
                     if await ed.count() > 0:
                         await ed.click()
                         await asyncio.sleep(0.4)
                 except Exception:
                     pass
 
-                pills = page.locator('button[aria-haspopup="menu"]')
+                pills = page.locator("button")
                 trigger = None
                 # 1. Pill với x[1-4] (matches cả "x1" và "crop_16_9x1")
                 for index in range(await pills.count() - 1, -1, -1):
                     candidate = pills.nth(index)
                     text = (await candidate.inner_text()).strip()
-                    if await candidate.is_visible() and re.search(r"x[1-4]\b", text):
+                    if (
+                        await candidate.is_visible()
+                        and await candidate.get_attribute("role") != "tab"
+                        and re.search(r"x[1-4]\b", text)
+                    ):
                         trigger = candidate
                         break
                 # 2. Pill có text chứa Image/Video/Hình ảnh/Imagen
                 if trigger is None:
-                    img_kw = re.compile(r"Image|Hình|Imagen|Photo", re.I)
+                    img_kw = re.compile(r"Image|Hình|Imagen|Photo|Nano Banana|Omni|Veo|Video", re.I)
                     for index in range(await pills.count() - 1, -1, -1):
                         candidate = pills.nth(index)
-                        if await candidate.is_visible() and img_kw.search((await candidate.inner_text()).strip()):
+                        if (
+                            await candidate.is_visible()
+                            and await candidate.get_attribute("role") != "tab"
+                            and img_kw.search((await candidate.inner_text()).strip())
+                        ):
                             trigger = candidate
                             break
-                # 3. Bất kỳ pill visible nào (aria-haspopup="menu")
+                # 3. Bất kỳ button menu visible nào.
                 if trigger is None:
                     for index in range(await pills.count() - 1, -1, -1):
                         candidate = pills.nth(index)
-                        if await candidate.is_visible():
+                        if await candidate.is_visible() and await candidate.get_attribute("role") != "tab":
                             trigger = candidate
                             break
                 if trigger is None:
+                    _log.warning("_prepare_ui_model attempt %d: no settings pill found", attempt + 1)
+                opened = await _open_flow_settings_panel(
+                    page, trigger, page.locator('[role="tab"]'), ui,
+                )
+                if not opened:
                     _log.warning(
-                        "_prepare_ui_model attempt %d: no settings pill found — skipping open",
+                        "_prepare_ui_model attempt %d: settings pill did not open panel",
                         attempt + 1,
                     )
-                else:
-                    opened = await _click_settings_pill(trigger, page.locator('[role="tab"]'))
-                    if not opened:
-                        _log.warning(
-                            "_prepare_ui_model attempt %d: settings pill did not open panel",
-                            attempt + 1,
-                        )
                 await asyncio.sleep(1.2)
                 mode_tab = await _visible_mode_tab()
                 if mode_tab is not None:
