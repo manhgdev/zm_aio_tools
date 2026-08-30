@@ -140,6 +140,20 @@ def _save_key(key: str, last_valid: dict[str, Any] | None = None) -> None:
     tmp.replace(LICENSE_FILE)
 
 
+def _clear_disk_cache(key: str) -> None:
+    """Xoá last_valid khỏi disk khi server xác nhận key không hợp lệ.
+    Giữ lại key để UI vẫn hiện thông báo lỗi đúng.
+    """
+    try:
+        payload: dict[str, Any] = {"key": key}
+        payload["_sig"] = _sign(payload)
+        tmp = Path(f"{LICENSE_FILE}.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(LICENSE_FILE)
+    except OSError:
+        pass
+
+
 def _request(action: str, key: str, retries: int = 3) -> dict[str, Any]:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ZM-Tool/1.0",
@@ -227,11 +241,15 @@ def license_status(*, force: bool = False) -> dict[str, Any]:
                 return dict(_cache)
         try:
             result = status_from_payload(_request("checkkey", key), key)
-            # Lưu trạng thái valid vào disk — dùng lại khi server tạm lỗi lần sau
             if result.get("valid"):
+                # Key hợp lệ: lưu disk cache
                 _save_key(key, result)
+            else:
+                # Server xác nhận key INVALID (revoke, hết hạn, bị khoá)
+                # → xoá last_valid khỏi disk ngay để tránh offline bypass
+                _clear_disk_cache(key)
         except Exception as exc:
-            # Server đang tạm lỗi (MongoDB timeout, etc.) — nếu cache RAM còn valid thì giữ
+            # Network/server lỗi — nếu cache RAM còn valid thì giữ
             with _cache_lock:
                 if _cache and _cache.get("valid"):
                     _cache_at = time.monotonic()
