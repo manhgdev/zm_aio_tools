@@ -507,6 +507,12 @@ class FlowService:
             while self._account_active.get(account_id, 0) >= concurrency:
                 self._account_condition.wait()
             self._account_active[account_id] = self._account_active.get(account_id, 0) + 1
+        # ponytail: one auto-retry for transient failures (timeout / UI selector);
+        # hard errors (LOGIN_REQUIRED, GENERATION_FAILED/REJECTED, CANCELLED) skip retry.
+        _HARD_ERROR = re.compile(
+            r"LOGIN_REQUIRED|GENERATION_FAILED|GENERATION_REJECTED|FLOW_EMPTY_OUTPUT",
+            re.I,
+        )
         try:
             if job_id in self._cancelled:
                 return
@@ -515,6 +521,21 @@ class FlowService:
                 asyncio.run(self._run(job_id, profile_dir=runtime_profile))
             finally:
                 shutil.rmtree(runtime_profile, ignore_errors=True)
+
+            # Check whether _run marked the job as a transient failure → auto-retry once
+            finished = store.get_row("jobs", job_id) or {}
+            if finished.get("status") == "failed" and not _HARD_ERROR.search(str(finished.get("error") or "")):
+                _log.warning(
+                    "auto-retry job %s after transient failure: %s",
+                    job_id, finished.get("error"),
+                )
+                time.sleep(3)
+                store.patch_row("jobs", job_id, {"status": "queued", "stage": "queued", "progress": 0, "error": None, "outputs": []})
+                runtime_profile2 = self._clone_runtime_profile(account_id, job_id)
+                try:
+                    asyncio.run(self._run(job_id, profile_dir=runtime_profile2))
+                finally:
+                    shutil.rmtree(runtime_profile2, ignore_errors=True)
         finally:
             with self._account_condition:
                 self._account_active[account_id] -= 1
