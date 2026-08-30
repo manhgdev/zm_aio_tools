@@ -74,3 +74,25 @@ def test_render_list_includes_all_clone_and_review_downloads(tmp_path, monkeypat
     assert len({row["renderId"] for row in rows}) == 2
     assert all(row["renderId"].startswith("media-") for row in rows)
     assert {rendered._render_path(row["renderId"]) for row in rows} == {clone, review}
+
+
+def test_render_list_includes_tts_and_subtitle_job_output_folders(tmp_path, monkeypatch):
+    monkeypatch.setattr(rendered, "PUBLIC_DATA", tmp_path / "public")
+    monkeypatch.setattr(rendered, "downloads_folder", lambda tab: tmp_path / "downloads" / tab)
+    monkeypatch.setattr(rendered, "ffprobe_duration", lambda _path: 4.0)
+
+    tts_job = tmp_path / "downloads" / "tts" / "job-voice-01"
+    subtitle_job = tmp_path / "downloads" / "subtitle-export" / "job-srt-01"
+    tts_job.mkdir(parents=True)
+    subtitle_job.mkdir(parents=True)
+    (tts_job / "audio.wav").write_bytes(b"audio")
+    (tts_job / "subtitles.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHello", encoding="utf-8")
+    (subtitle_job / "subtitles-vi.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nXin chào", encoding="utf-8")
+
+    rows = rendered.list_rendered_videos()
+    by_path = {rendered._render_path(row["renderId"]): row for row in rows}
+
+    assert {row["type"] for row in rows} == {"audio", "srt"}
+    assert by_path[tts_job / "audio.wav"]["outputFolder"] == str(tts_job)
+    assert by_path[tts_job / "subtitles.srt"]["outputFolder"] == str(tts_job)
+    assert by_path[subtitle_job / "subtitles-vi.srt"]["outputFolder"] == str(subtitle_job)

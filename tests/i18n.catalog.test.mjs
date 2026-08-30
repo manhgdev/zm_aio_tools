@@ -168,6 +168,7 @@ test('Render list is bilingual and covers Clone plus Review', async () => {
   assert.match(page, /List render/)
   assert.match(page, /Render list/)
   assert.match(page, /All media exported from Clone, Review, and tools/)
+  assert.match(page, /t\('Thư mục', 'Folder'\)/)
   assert.match(messages, /'nav\.renders': \{ vi: 'List render', en: 'Render list' \}/)
 })
 

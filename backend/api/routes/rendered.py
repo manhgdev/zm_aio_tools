@@ -66,6 +66,8 @@ def _export_media_paths() -> list[Path]:
         downloads_folder("film"),
         downloads_folder("flow"),
         downloads_folder("download-video"),
+        downloads_folder("tts"),
+        downloads_folder("subtitle-export"),
         downloads_folder("subtitle-image"),
         downloads_folder("drawing"),
         downloads_folder("cleaner"),
@@ -233,6 +235,7 @@ def list_rendered_videos() -> list[dict[str, Any]]:
             "duration": info["duration"],
             "width": info["width"],
             "height": info["height"],
+            "outputFolder": str(output.parent),
             "videoUrl": f"/api/renders/{render_id}/video",
             "downloadUrl": f"/api/renders/{render_id}/video?download=1",
             "thumbnailUrl": f"/api/renders/{render_id}/thumbnail",
@@ -365,8 +368,8 @@ def api_render_video(render_id: str, download: bool = False):
     if path is None:
         raise HTTPException(404)
     if download:
-        return FileResponse(path, filename=path.name, media_type="video/mp4")
-    return FileResponse(path, media_type="video/mp4", content_disposition_type="inline")
+        return FileResponse(path, filename=path.name)
+    return FileResponse(path, content_disposition_type="inline")
 
 
 @router.get("/api/renders/{render_id}/thumbnail")

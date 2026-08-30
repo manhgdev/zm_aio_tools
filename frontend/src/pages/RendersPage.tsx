@@ -283,6 +283,7 @@ export default function RendersPage({ onBack, onEdit }: { onBack: () => void; on
                 )}
                 <span>{new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.createdAt))}</span>
                 <span>{item.width}×{item.height} · {sizeLabel(item.sizeBytes)}</span>
+                {item.outputFolder && <span className="render-folder" title={item.outputFolder}>{t('Thư mục', 'Folder')}: {item.outputFolder}</span>}
               </div>
               <div className="render-actions">
                 <button type="button" onClick={() => setViewing(item)}>Xem</button>

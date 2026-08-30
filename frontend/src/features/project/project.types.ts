@@ -446,6 +446,7 @@ export type RenderedVideo = {
   duration: number
   width: number
   height: number
+  outputFolder?: string
   videoUrl: string
   downloadUrl: string
   thumbnailUrl: string
