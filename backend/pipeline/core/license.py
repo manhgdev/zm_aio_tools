@@ -24,9 +24,15 @@ _request_lock = threading.Lock()
 _cache_at = 0.0
 _cache: dict[str, Any] | None = None
 
-# ponytail: HMAC key để phát hiện license.json bị sửa tay.
-# Không phải crypto-grade secret — chỉ ngăn sửa JSON naively.
-_SIG_KEY = b"zm-tool-license-integrity-2025"
+# ponytail: HMAC key gắn với machine node (MAC address) để license.json
+# không thể copy từ máy này sang máy khác. uuid.getnode() = stdlib, no deps.
+def _machine_sig_key() -> bytes:
+    import uuid
+    node = uuid.getnode()
+    return f"zm-tool-license-{node}-2025".encode()
+
+
+_SIG_KEY = _machine_sig_key()
 
 
 def _sign(payload: dict[str, Any]) -> str:
