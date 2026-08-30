@@ -1067,12 +1067,15 @@ class FlowService:
             try:
                 relative = selected.relative_to(flow_root)
             except ValueError:
-                folder = selected / kind
+                # Path nằm ngoài flow_root → đặt vào flow_root/tên-folder
+                # VD: user chọn ~/Downloads/test → ~/Downloads/ZM_AIO_TOOL/flow/video/test
+                folder = flow_root / safe_output_part(selected.name or "results", "results")
             else:
                 parts = list(relative.parts)
                 if parts and parts[0] in {"image", "video"}:
                     parts = parts[1:]
                 folder = flow_root / safe_output_part(parts[-1] if parts else "results", "results")
+
         else:
             root = selected_or_default(flow_tab, "")
             folder = root / safe_output_part(selected, "results")
