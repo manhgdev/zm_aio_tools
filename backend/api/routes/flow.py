@@ -29,7 +29,7 @@ class AccountIn(BaseModel):
 
 
 class GenerateIn(BaseModel):
-    prompts: list[str] = Field(min_length=1, max_length=100)
+    prompts: list[str] = Field(min_length=1)
     kind: str = Field(pattern="^(image|video)$")
     mode: str = Field(default="text", pattern="^(text|edit|reference|frame)$")
     accountId: str
