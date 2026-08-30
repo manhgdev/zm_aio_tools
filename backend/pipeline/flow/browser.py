@@ -54,7 +54,10 @@ class BrowserManager:
             slow_mo=self.slow_mo,
             viewport={"width": 1440, "height": 900},
             accept_downloads=True,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-infobars"],
+            locale="en-US",
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-infobars",
+                  "--lang=en-US"],
         )
         await self._ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return self
