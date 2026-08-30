@@ -241,10 +241,11 @@ try {
     Start-Sleep -Milliseconds 800
 
     # 3. Giai nen goi cap nhat
-    $parent = Split-Path $Target -Parent
+    # Giai nen vao _update\extracted\ (cung thu muc chua zip) — tranh can quyen ghi ra thu muc cha
+    $updateDir = Split-Path $Zip -Parent
     $stamp = Get-Date -Format 'yyyyMMddHHmmss'
-    $next = Join-Path $parent ((Split-Path $Target -Leaf) + '.new-' + $stamp)
-    $backup = Join-Path $parent ((Split-Path $Target -Leaf) + '.old-' + $stamp)
+    $next = Join-Path $updateDir ('extracted-' + $stamp)
+    $backup = Join-Path $updateDir ('backup-' + $stamp)
 
     Log "Giai nen vao $next..."
     if (Test-Path $next) { Remove-Item -LiteralPath $next -Recurse -Force -ErrorAction SilentlyContinue }
@@ -842,7 +843,12 @@ def api_update_install():
             if not asset or _version_key(tag) <= _version_key(_desktop_version()):
                 _set_update_state(phase="complete", progress=100, message="Đã là phiên bản mới nhất")
                 return
-            updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
+            # Windows portable: tải vào _update/ cạnh EXE (cùng ổ đĩa → dễ Robocopy, dễ debug)
+            # Mac / dev server: dùng AppData/updates như cũ
+            if sys.platform == "win32" and getattr(sys, "frozen", False):
+                updates = Path(sys.executable).resolve().parent / "_update"
+            else:
+                updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
             updates.mkdir(parents=True, exist_ok=True)
             package = _download_update(asset, updates, tag.lstrip("v"))
             _set_update_state(phase="ready", progress=100, message="Đã tải gói cập nhật", packagePath=str(package))
