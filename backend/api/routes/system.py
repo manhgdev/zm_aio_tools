@@ -122,8 +122,12 @@ def _latest_release() -> dict[str, Any]:
 
 def _desktop_platform_asset_suffix(platform_name: str | None = None, machine: str | None = None) -> str:
     """Return the only release asset suffix acceptable for this desktop build."""
+    import platform as _platform
     platform_name = platform_name or sys.platform
-    machine = (machine or os.uname().machine if hasattr(os, "uname") else "").lower()
+    if machine is None:
+        machine = _platform.machine().lower()  # works on all OS including Windows
+    else:
+        machine = machine.lower()
     if platform_name == "win32":
         return "-windows-x64.zip"
     if platform_name == "darwin":
@@ -872,7 +876,7 @@ def api_update_apply():
         "-AppPid", str(os.getpid()), "-Zip", package_str, "-Target", target_str, "-Exe", exe_str,
     ], creationflags=detached_flags)
     _set_update_state(phase="applying", message="Đang cài và khởi động lại ứng dụng…")
-    threading.Timer(0.8, lambda: os._exit(0)).start()
+    threading.Timer(3.0, lambda: os._exit(0)).start()
     return {"ok": True, "message": "Đang cài và khởi động lại ứng dụng…"}
 
 
