@@ -47,6 +47,10 @@ test('desktop update check uses bilingual in-app dialog and platform updater API
   assert.match(config, /Download update/)
   assert.match(config, /aria-valuenow=\{updateProgress\}/)
   assert.match(config, /\{updateProgress\}%/)
+  assert.match(config, /kind: 'applying'/)
+  assert.match(config, /state\.phase === 'applying'/)
+  assert.match(config, /Đang cài cập nhật/)
+  assert.match(config, /Installing update/)
   assert.match(api, /checkAppUpdate/)
   assert.match(api, /installAppUpdate/)
   assert.match(api, /getAppUpdateStatus/)
@@ -648,6 +652,18 @@ test('Flow creation falls back to the connected account when an old saved label 
   assert.match(source, /function selectedFlowAccount\(accounts: FlowAccount\[\], accountLabel: string\)/)
   assert.match(source, /accounts\.find\(\(account\) => account\.status === "online"\)/)
   assert.match(source, /const account = selectedFlowAccount\(accounts, settings\.account\);/)
+})
+
+test('Flow requests interactive re-login when an account session is no longer valid', async () => {
+  const [page, service] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/flow/service.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /Phiên Flow đã hết hạn/)
+  assert.match(page, /Chrome is opening so you can sign in again/)
+  assert.match(page, /\/api\/flow\/accounts\/\$\{account\.id\}\/connect/)
+  assert.match(service, /def _session_needs_login/)
+  assert.match(service, /self\.connect\(account\["id"\]\)/)
 })
 
 test('Flow default account selection updates the account cards immediately', async () => {

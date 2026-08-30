@@ -568,6 +568,18 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       );
       return;
     }
+    if (account.status !== "online") {
+      const message = t(
+        "Phiên Flow đã hết hạn. Chrome đang mở để bạn đăng nhập lại.",
+        "The Flow session has expired. Chrome is opening so you can sign in again.",
+      );
+      setApiError(message);
+      toast.info(message);
+      void flowRequest<FlowAccount>(`/api/flow/accounts/${account.id}/connect`, { method: "POST" })
+        .then((connected) => setAccounts((current) => current.map((item) => item.id === connected.id ? connected : item)))
+        .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
+      return;
+    }
     try {
       if (!isDesktopApp && settings.autoDownload && !webOutputRootRef.current) {
         try {

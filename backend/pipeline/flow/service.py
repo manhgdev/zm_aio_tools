@@ -90,6 +90,15 @@ def _mode_tab_icon(kind: str) -> str:
     return "image" if kind == "image" else "videocam"
 
 
+def _session_needs_login(error: Exception) -> bool:
+    """Identify failures that require the visible Google re-login flow."""
+    return bool(re.search(
+        r"LOGIN_REQUIRED|recaptcha|accounts\.google\.com|not signed in|unauthenticated|authentication required",
+        str(error),
+        re.I,
+    ))
+
+
 async def _click_settings_pill(pill, tabs) -> bool:
     """Open Flow settings, retrying with a forced click for Windows DPI."""
     for force in (False, True):
@@ -1112,9 +1121,16 @@ class FlowService:
             store.patch_row("jobs", job_id, {"status": "cancelled", "stage": "cancelled", "progress": 0, "updatedAt": time.time()})
             self._log("warning", "job_cancelled", job_id=job_id, account_id=account["id"])
         except Exception as exc:
-            action = "action_required" if "LOGIN_REQUIRED" in str(exc) or "recaptcha" in str(exc).lower() else "failed"
+            needs_login = _session_needs_login(exc)
+            action = "action_required" if needs_login else "failed"
             failed_stage = (store.get_row("jobs", job_id) or {}).get("stage")
             store.patch_row("jobs", job_id, {"status": action, "stage": action, "error": str(exc), "updatedAt": time.time()})
+            if needs_login:
+                # The queued job used a cloned headless profile.  Its saved Google
+                # session cannot be repaired headlessly, so open the account's
+                # persistent profile for the user to authenticate again.
+                store.patch_row("accounts", account["id"], {"status": "reconnect", "error": str(exc), "updatedAt": time.time()})
+                self.connect(account["id"])
             if job.get("seriesContext"):
                 from . import series
                 series.mark_job_error(job, str(exc))

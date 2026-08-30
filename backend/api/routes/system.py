@@ -918,11 +918,11 @@ def api_update_apply():
                     if i % max(1, total // 20) == 0:
                         _set_update_state(progress=10 + int(i * 85 / total))
             _set_update_state(phase="complete", progress=100,
-                              message=f"Đã giải nén xong! Mở thư mục bản mới…")
-            time.sleep(0.8)
-            # Mở Explorer vào folder chứa EXE mới
+                              message="Giải nén xong! Đang mở thư mục bản mới…")
+            time.sleep(0.5)
+            # Mở Explorer trước khi thoát — chờ dủ lâu để Explorer khởi động
             subprocess.Popen(["explorer.exe", str(extract_dir)])
-            time.sleep(1.5)
+            time.sleep(3.0)
         except Exception as exc:
             _set_update_state(phase="error", error=str(exc),
                               message=f"Giải nén thất bại: {exc}")

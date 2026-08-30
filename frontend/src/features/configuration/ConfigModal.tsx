@@ -130,25 +130,29 @@ export default function ConfigModal({
 
   const applyUpdate = async () => {
     try {
-      const result = await api.applyAppUpdate()
-      void result
-      setUpdateDialog({ kind: 'complete', title: t('Cập nhật đã sẵn sàng', 'Update is ready'), detail: t('Trình cài đặt đã được mở hoặc ứng dụng sẽ tự khởi động lại.', 'The installer has opened or the app will restart automatically.') })
+      await api.applyAppUpdate()
+      setUpdateDialog({ kind: 'applying', title: t('Đang cài cập nhật', 'Installing update'), detail: t('Đang giải nén và chuẩn bị bản mới…', 'Extracting and preparing the new version…'), progress: 0 })
     } catch (error) {
       setUpdateDialog({ kind: 'error', title: t('Không thể cài cập nhật', 'Could not install update'), detail: error instanceof Error ? error.message : t('Vui lòng thử lại sau.', 'Please try again later.') })
     }
   }
 
   useEffect(() => {
-    if (updateDialog?.kind !== 'downloading') return
+    const isApplying = updateDialog?.kind === 'applying'
+    if (updateDialog?.kind !== 'downloading' && !isApplying) return
     let cancelled = false
     const poll = async () => {
       try {
         const state = await api.getAppUpdateStatus()
         if (cancelled) return
         if (state.phase === 'error') {
-          setUpdateDialog({ kind: 'error', title: t('Không thể tải cập nhật', 'Could not download update'), detail: state.error || state.message })
-        } else if (state.phase === 'ready') {
+          setUpdateDialog({ kind: 'error', title: isApplying ? t('Không thể cài cập nhật', 'Could not install update') : t('Không thể tải cập nhật', 'Could not download update'), detail: state.error || state.message })
+        } else if (state.phase === 'complete') {
+          setUpdateDialog({ kind: 'complete', title: t('Cập nhật đã sẵn sàng', 'Update is ready'), detail: t('Thư mục bản mới đã được mở. Vui lòng chạy EXE trong thư mục đó để hoàn tất cập nhật.', 'The new version folder has opened. Please run the EXE inside to complete the update.'), progress: 100 })
+        } else if (!isApplying && state.phase === 'ready') {
           setUpdateDialog({ kind: 'ready', title: t('Đã tải xong', 'Download complete'), detail: t('Gói cập nhật đã sẵn sàng để cài.', 'The update package is ready to install.'), progress: 100 })
+        } else if (isApplying || state.phase === 'applying') {
+          setUpdateDialog({ kind: 'applying', title: t('Đang cài cập nhật', 'Installing update'), detail: state.message || t('Đang giải nén và chuẩn bị bản mới…', 'Extracting and preparing the new version…'), progress: state.progress })
         } else {
           setUpdateDialog({ kind: 'downloading', title: t('Đang tải cập nhật', 'Downloading update'), detail: t('Đang tải gói cài đặt…', 'Downloading the installation package…'), progress: state.progress })
         }
@@ -945,7 +949,7 @@ export default function ConfigModal({
         <div
           className="cfg-update-layer"
           role="presentation"
-          onMouseDown={() => updateDialog.kind !== 'downloading' && setUpdateDialog(null)}
+          onMouseDown={() => updateDialog.kind !== 'downloading' && updateDialog.kind !== 'applying' && setUpdateDialog(null)}
         >
           <section
             className={`cfg-update-dialog is-${updateDialog.kind}`}
@@ -962,16 +966,16 @@ export default function ConfigModal({
               <h3>{updateDialog.title}</h3>
               <p>{updateDialog.detail}</p>
             </div>
-            {updateDialog.kind === 'downloading' ? (
+            {updateDialog.kind === 'downloading' || updateDialog.kind === 'applying' ? (
               <>
                 <div className="cfg-update-progress-label">
-                  <span>{t('Tiến trình tải', 'Download progress')}</span>
+                  <span>{updateDialog.kind === 'applying' ? t('Tiến trình cài đặt', 'Installation progress') : t('Tiến trình tải', 'Download progress')}</span>
                   <strong>{updateProgress}%</strong>
                 </div>
                 <div
                   className="cfg-update-progress"
                   role="progressbar"
-                  aria-label={t('Tiến trình tải cập nhật', 'Update download progress')}
+                  aria-label={updateDialog.kind === 'applying' ? t('Tiến trình cài đặt cập nhật', 'Update installation progress') : t('Tiến trình tải cập nhật', 'Update download progress')}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={updateProgress}
@@ -983,7 +987,7 @@ export default function ConfigModal({
             <div className="cfg-update-actions">
               {updateDialog.kind === 'available' ? <button type="button" className="primary" onClick={() => void downloadUpdate()}>{t('Tải cập nhật', 'Download update')}</button> : null}
               {updateDialog.kind === 'ready' ? <button type="button" className="primary" onClick={() => void applyUpdate()}>{t('Cài cập nhật', 'Install update')}</button> : null}
-              {updateDialog.kind !== 'downloading' ? <button type="button" onClick={() => setUpdateDialog(null)}>{t('Đóng', 'Close')}</button> : null}
+              {updateDialog.kind !== 'downloading' && updateDialog.kind !== 'applying' ? <button type="button" onClick={() => setUpdateDialog(null)}>{t('Đóng', 'Close')}</button> : null}
             </div>
           </section>
         </div>
