@@ -303,13 +303,30 @@ def get_client() -> Any:
     global _client, _client_err, _load_state
     if getattr(sys, "frozen", False):
         from . import vieneu_frozen
+        # Frozen APP previously probed the available ONNX runtime first, so an
+        # Apple Silicon install could stay on CPU even though MPS PyTorch had
+        # not been prepared yet.  Prepare the runtime once before choosing a
+        # worker backend.
+        with _lock:
+            if _load_state != "ready":
+                _load_state = "loading"
+                try:
+                    from pipeline.core.system_check import ensure_runtime_torch, ensure_runtime_transformers
+                    from pipeline.core.runtime_site import bootstrap_ai_runtime, install_runtime_meta_path
 
-        ok, detail = vieneu_frozen.probe()
-        if not ok:
-            _load_state = "error"
-            _client_err = detail
-            raise RuntimeError(f"Không khởi tạo được VieNeu: {detail}")
-        _load_state = "ready"
+                    install_runtime_meta_path()
+                    bootstrap_ai_runtime()
+                    ensure_runtime_torch()
+                    ensure_runtime_transformers()
+                    ok, detail = vieneu_frozen.probe()
+                    if not ok:
+                        raise RuntimeError(detail)
+                    _load_state = "ready"
+                    _client_err = None
+                except Exception as exc:
+                    _load_state = "error"
+                    _client_err = str(exc)
+                    raise RuntimeError(f"Không khởi tạo được VieNeu: {exc}") from exc
         return None  # synthesize() uses subprocess on frozen builds
     if not available():
         raise RuntimeError(
@@ -784,6 +801,7 @@ def synthesize(
 
         if cancel_check and cancel_check():
             raise RuntimeError("Job đã hủy")
+        get_client()  # prepares PyTorch/MPS or CUDA before resolving the worker
         backend, device = vieneu_frozen.resolve_backend()
         clone_ref = None
         voice_arg = name

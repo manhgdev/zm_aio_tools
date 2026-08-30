@@ -67,6 +67,7 @@ def test_frozen_synthesize_reference_passes_ref_path(monkeypatch, tmp_path) -> N
     seen: dict = {}
 
     monkeypatch.setattr(v.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(v, "get_client", lambda: None)
     monkeypatch.setattr(
         "pipeline.tts.engines.vieneu_frozen.resolve_backend",
         lambda: ("onnx", "cpu"),
@@ -90,3 +91,25 @@ def test_frozen_synthesize_reference_passes_ref_path(monkeypatch, tmp_path) -> N
     assert seen.get("clone_ref") == str(ref)
     assert seen.get("voice") == "zmai1"
     assert "npm run server" not in str(seen)
+
+
+def test_frozen_synthesis_prepares_runtime_before_selecting_backend(monkeypatch, tmp_path) -> None:
+    from pipeline.tts.engines import vieneu as v
+
+    order: list[str] = []
+    monkeypatch.setattr(v.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(v, "parse_voice", lambda voice: ("preset", voice))
+    monkeypatch.setattr(v, "get_client", lambda: order.append("runtime"))
+    def resolve_backend():
+        order.append("backend")
+        return "pytorch", "mps"
+
+    monkeypatch.setattr("pipeline.tts.engines.vieneu_frozen.resolve_backend", resolve_backend)
+    monkeypatch.setattr(
+        "pipeline.tts.engines.vieneu_frozen.synthesize",
+        lambda **_: None,
+    )
+
+    v.synthesize("xin chào", "voice", tmp_path / "out.wav")
+
+    assert order == ["runtime", "backend"]
