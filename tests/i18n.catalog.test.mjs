@@ -171,6 +171,11 @@ test('Render list is bilingual and covers Clone plus Review', async () => {
   assert.match(messages, /'nav\.renders': \{ vi: 'List render', en: 'Render list' \}/)
 })
 
+test('Render list paginates complete responsive grid rows', async () => {
+  const page = await readFile(new URL('../frontend/src/pages/RendersPage.tsx', import.meta.url), 'utf8')
+  assert.match(page, /const PAGE_SIZE = 12/)
+})
+
 test('English catalog covers Live Preview empty page', () => {
   const expected = {
     'Chưa có video để xem trước': 'No video to preview yet',

@@ -8,7 +8,7 @@ import { localize, useLocale } from '@/app/i18n'
 import { toast } from 'sonner'
 import './RendersPage.css'
 
-const PAGE_SIZE = 10
+const PAGE_SIZE = 12
 
 function durationLabel(seconds: number) {
   const total = Math.max(0, Math.round(seconds))
