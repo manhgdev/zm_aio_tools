@@ -83,7 +83,10 @@ export function OutputFolderField({
     [appFolder],
   )
   const appPath = useMemo(() => {
-    const defaultRoot = `${desktopOutputRoot || `Downloads/ZM_AIO_TOOL/${appFolder}`}`.replace(/[\\/]+$/, '')
+    const folderSuffix = appFolder.replace(/^[/\\]+|[/\\]+$/g, '')
+    const defaultRoot = desktopOutputRoot
+      ? `${desktopOutputRoot.replace(/[\\/]+$/, '')}/${folderSuffix}`
+      : `Downloads/ZM_AIO_TOOL/${folderSuffix}`
     const entered = value.trim()
     if (!entered || !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(entered)) return { prefix: `${defaultRoot}/`, suffix: value }
     const normalized = entered.replace(/[\\/]+$/, '')
