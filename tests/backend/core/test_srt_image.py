@@ -14,6 +14,7 @@ from pipeline.srt_image import (
     _text_logo_filter,
     _text_logo_position,
     LOGO_RANDOM_POSITIONS,
+    _output_resolution,
     create_job,
     image_resolution,
     is_video,
@@ -205,6 +206,14 @@ def test_image_resolution_is_even(monkeypatch, tmp_path):
     assert image_resolution(tmp_path / "image.jpg") == (1920, 1080)
 
 
+def test_output_resolution_auto_preserves_media_aspect_at_1080p(monkeypatch, tmp_path):
+    source = tmp_path / "input.jpg"
+    monkeypatch.setattr("pipeline.srt_image.image_resolution", lambda _path: (800, 600))
+    assert _output_resolution({}, source) == (1440, 1080)
+    monkeypatch.setattr("pipeline.srt_image.image_resolution", lambda _path: (720, 1280))
+    assert _output_resolution({"resolution": "auto"}, source) == (1080, 1920)
+
+
 def test_logo_position():
     assert "W*0.0000" in _logo_position(0, 0)[0]
     assert "floor(t/6.000)" in _logo_position(moving=True)[0]
@@ -329,4 +338,3 @@ def test_build_subtitle_overlay_concat_renders_frames_and_ffconcat(tmp_path):
     assert (tmp_path / "subtitle_frames" / "blank.png").is_file()
     assert (tmp_path / "subtitle_frames" / "cue_00000.png").is_file()
     assert (tmp_path / "subtitle_frames" / "cue_00001.png").is_file()
-

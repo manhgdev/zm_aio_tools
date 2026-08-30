@@ -34,7 +34,8 @@ ROOT = DATA / "srt_image"
 ROOT.mkdir(parents=True, exist_ok=True)
 CACHE_ROOT = ROOT / "render-cache"
 CACHE_INDEX = CACHE_ROOT / "index.json"
-CACHE_VERSION = 1
+CACHE_VERSION = 2
+DEFAULT_OUTPUT_RESOLUTION = "auto"
 _LOCK = threading.Lock()
 _CACHE_LOCK = threading.Lock()
 _CACHE_CONDITION = threading.Condition()
@@ -451,6 +452,18 @@ def image_resolution(path: Path) -> tuple[int, int]:
     stream = json.loads(result.stdout)["streams"][0]
     width, height = int(stream["width"]), int(stream["height"])
     return width - width % 2, height - height % 2
+
+
+def _output_resolution(options: dict, first_media: Path) -> tuple[int, int]:
+    resolution = str(options.get("resolution", DEFAULT_OUTPUT_RESOLUTION))
+    if resolution != "auto":
+        return tuple(int(value) for value in resolution.split("x", 1))
+    source_width, source_height = image_resolution(first_media)
+    scale = 1080 / min(source_width, source_height)
+    return (
+        max(2, round(source_width * scale / 2) * 2),
+        max(2, round(source_height * scale / 2) * 2),
+    )
 
 
 def is_video(path: Path) -> bool:
@@ -1306,10 +1319,7 @@ def run(job_id: str) -> None:
             _log(job_id, f"Preview {preview:g}s: chỉ chuẩn bị {len(media)} media đầu tiên")
         work = Path(job["work"])
         media = _drawing_video_sources(job_id, media, durations, opts, work)
-        resolution = str(opts.get("resolution", "auto"))
-        width, height = image_resolution(media[0]) if resolution == "auto" else (
-            int(value) for value in resolution.split("x", 1)
-        )
+        width, height = _output_resolution(opts, media[0])
         fps = max(1, min(60, int(opts.get("fps", 30))))
         crf = max(14, min(32, int(opts.get("crf", 20))))
         gpu_encoder = h264_hardware_encoder() if opts.get("encoder", "auto") != "cpu" else None

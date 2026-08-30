@@ -884,6 +884,21 @@ test('Flow queue confines large batches to its own scroll area', async () => {
   assert.equal((batch.match(/className="studio-queue-scroll"/g) || []).length, 2)
 })
 
+test('SRT image merge defaults its localized output quality to 1080p', async () => {
+  const [page, pipeline] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/SrtImagePage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/srt_image.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /cached\.resolution \?\? 'auto'/)
+  assert.match(page, /t\('Chất lượng xuất', 'Output quality'\)/)
+  assert.match(page, /t\('Auto \(theo ảnh · 1080p\)', 'Auto \(based on media · 1080p\)'\)/)
+  assert.match(page, /t\('1080p ngang \(1920 × 1080\)', '1080p landscape \(1920 × 1080\)'\)/)
+  assert.match(page, /t\('Chất lượng nén', 'Compression quality'\)/)
+  assert.match(page, /Auto is the default: it keeps the media aspect ratio and exports with a 1080px short edge/)
+  assert.match(pipeline, /DEFAULT_OUTPUT_RESOLUTION = "auto"/)
+  assert.match(pipeline, /def _output_resolution/)
+})
+
 test('SRT image merge accepts a media folder without a timeline file', async () => {
   const [page, route, pipeline, app] = await Promise.all([
     readFile(new URL('../frontend/src/pages/SrtImagePage.tsx', import.meta.url), 'utf8'),

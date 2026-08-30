@@ -15,6 +15,19 @@ import {
 export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBack: () => void; initialMediaFolder?: string }) {
   const { locale } = useLocale()
   const t = (vietnamese: string, english: string) => localize(locale, vietnamese, english)
+  function helpText(key: HelpKey) {
+    if (key === 'resolution') return [
+      t('Chất lượng xuất', 'Output quality'),
+      t('Chọn kích thước khung hình video xuất. Auto mặc định giữ tỷ lệ ảnh và xuất với cạnh ngắn 1080px.', 'Choose the output video frame size. Auto is the default: it keeps the media aspect ratio and exports with a 1080px short edge.'),
+      t('Auto cho ảnh ngang là 1920×1080, ảnh dọc là 1080×1920; chọn preset khi cần khung hình cố định.', 'Auto creates 1920×1080 for landscape and 1080×1920 for portrait media; choose a preset when you need a fixed frame.'),
+    ]
+    if (key === 'quality') return [
+      t('Chất lượng nén', 'Compression quality'),
+      t('Điều khiển mức nén video. Chất lượng cao cho hình đẹp hơn nhưng render lâu và file lớn.', 'Controls video compression. High quality looks better but takes longer and creates larger files.'),
+      t('Cân bằng phù hợp mặc định; chọn Nhanh khi cần thử hoặc xem trước.', 'Balanced is the default choice; use Fast for a test or preview.'),
+    ]
+    return HELP[key]
+  }
   const cached = useRef(cachedSettings()).current
   const [tab, setTab] = useState<'project' | 'settings'>('project')
   const [helpKey, setHelpKey] = useState<HelpKey | null>(null)
@@ -557,13 +570,13 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
           ) : (
             <div className="siv-settings">
               <div className="siv-set-row siv-set-row--four">
-                <label><span className="siv-setting-title">{t('Độ phân giải', 'Resolution')} <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('resolution') }}>i</span></span>
+                <label><span className="siv-setting-title">{t('Chất lượng xuất', 'Output quality')} <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('resolution') }}>i</span></span>
                   <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
-                    <option value="auto">{t('Auto (theo ảnh)', 'Auto (according to media)')}</option>
-                    <option value="1920x1080">1920 × 1080 (16:9)</option>
-                    <option value="1080x1920">1080 × 1920 (9:16)</option>
-                    <option value="1080x1080">1080 × 1080 (1:1)</option>
-                    <option value="1280x720">1280 × 720</option>
+                    <option value="auto">{t('Auto (theo ảnh · 1080p)', 'Auto (based on media · 1080p)')}</option>
+                    <option value="1920x1080">{t('1080p ngang (1920 × 1080)', '1080p landscape (1920 × 1080)')}</option>
+                    <option value="1080x1920">{t('1080p dọc (1080 × 1920)', '1080p portrait (1080 × 1920)')}</option>
+                    <option value="1080x1080">{t('1080p vuông (1080 × 1080)', '1080p square (1080 × 1080)')}</option>
+                    <option value="1280x720">{t('720p ngang (1280 × 720)', '720p landscape (1280 × 720)')}</option>
                   </select>
                 </label>
                 <label><span className="siv-setting-title">FPS <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('fps') }}>i</span></span>
@@ -571,7 +584,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
                     <option>24</option><option>25</option><option>30</option><option>60</option>
                   </select>
                 </label>
-                <label><span className="siv-setting-title">{t('Chất lượng', 'Quality')} <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('quality') }}>i</span></span>
+                <label><span className="siv-setting-title">{t('Chất lượng nén', 'Compression quality')} <span role="button" tabIndex={0} className="siv-info" onClick={(e) => { e.stopPropagation(); setHelpKey('quality') }}>i</span></span>
                   <select value={crf} onChange={(e) => setCrf(Number(e.target.value))}>
                     <option value="18">{t('Cao', 'High')}</option><option value="20">{t('Cân bằng', 'Balanced')}</option><option value="24">{t('Nhanh', 'Fast')}</option>
                   </select>
@@ -761,7 +774,7 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
             <header>
               <div>
                 <small>{t('Hướng dẫn sử dụng', 'User Guide')}</small>
-                <h2 id="siv-help-title">{helpKey === 'timeline' ? t('File timeline & Các định dạng Timecode', 'Timeline File & Timecode Formats') : HELP[helpKey][0]}</h2>
+                <h2 id="siv-help-title">{helpKey === 'timeline' ? t('File timeline & Các định dạng Timecode', 'Timeline File & Timecode Formats') : helpText(helpKey)[0]}</h2>
               </div>
               <button type="button" aria-label={t('Đóng hướng dẫn', 'Close guide')} onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>×</button>
             </header>
@@ -836,8 +849,8 @@ Cảnh 2`}</pre>
               </div>
             ) : (
               <>
-                <p>{HELP[helpKey][1]}</p>
-                <div><strong>{t('File hoặc thiết lập cần dùng', 'Required file or setting')}</strong><p>{HELP[helpKey][2]}</p></div>
+                <p>{helpText(helpKey)[1]}</p>
+                <div><strong>{t('File hoặc thiết lập cần dùng', 'Required file or setting')}</strong><p>{helpText(helpKey)[2]}</p></div>
               </>
             )}
             <button type="button" className="siv-help-close" onClick={(e) => { e.stopPropagation(); setHelpKey(null) }}>{t('Đã hiểu', 'Got it')}</button>
