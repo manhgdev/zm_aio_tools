@@ -12,7 +12,10 @@ import shutil
 import sys
 from pathlib import Path
 
+from .runtime_site import _windows_path_key, prepend_windows_path
+
 _path_bound = False
+_dll_handles: dict[str, object] = {}
 
 _CUDNN_NAMES = (
     "cudnn_ops64_9.dll",
@@ -75,10 +78,14 @@ def _sherpa_lib() -> Path | None:
 
 def _bind_torch_path(lib: Path) -> None:
     global _path_bound
-    os.environ["PATH"] = str(lib) + os.pathsep + os.environ.get("PATH", "")
+    prepend_windows_path(lib)
     if hasattr(os, "add_dll_directory"):
         try:
-            os.add_dll_directory(str(lib))
+            key = _windows_path_key(str(lib))
+            if key not in _dll_handles:
+                handle = os.add_dll_directory(str(lib))
+                if handle is not None:
+                    _dll_handles[key] = handle
         except OSError:
             pass
     _path_bound = True

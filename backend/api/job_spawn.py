@@ -61,6 +61,35 @@ def _mark_job_error(project_id: object, job: str, msg: str) -> None:
             traceback.print_exc()
 
 
+def _worker_environment(backend) -> dict[str, str]:  # noqa: ANN001
+    """Build a bounded environment for Windows AI workers."""
+    from pathlib import Path
+
+    env = os.environ.copy()
+    if sys.platform == "win32":
+        from pipeline.core.runtime_site import sanitize_windows_path
+
+        env["PATH"] = sanitize_windows_path(env.get("PATH", ""))
+    path_parts = [str(Path(backend))]
+    meipass = getattr(sys, "_MEIPASS", None) or env.get("VIDEO_CLONE_MEIPASS")
+    if meipass:
+        path_parts.insert(0, str(meipass))
+        env["VIDEO_CLONE_MEIPASS"] = str(meipass)
+    env["PYTHONPATH"] = os.pathsep.join(path_parts + [env.get("PYTHONPATH", "")])
+    return env
+
+
+def _spawn_error_message(exc: OSError) -> str:
+    from pipeline.core.runtime_site import is_windows_path_too_long_error
+
+    if is_windows_path_too_long_error(exc):
+        return (
+            "Không tạo được tiến trình AI (WinError 206): PATH Windows quá dài. "
+            "App đã loại đường dẫn trùng; không cần cài lại gói AI."
+        )
+    return str(exc).strip() or type(exc).__name__
+
+
 def _run_in_thread(fn, args) -> None:
     import time
 
@@ -107,13 +136,7 @@ def _run_in_subprocess(fn, args) -> None:
         pin, wpy = tdir / "job.json", tdir / "worker.py"
         pin.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         wpy.write_text(_JOB_WORKER, encoding="utf-8")
-        env = os.environ.copy()
-        path_parts = [str(backend)]
-        meipass = getattr(sys, "_MEIPASS", None) or env.get("VIDEO_CLONE_MEIPASS")
-        if meipass:
-            path_parts.insert(0, str(meipass))
-            env["VIDEO_CLONE_MEIPASS"] = str(meipass)
-        env["PYTHONPATH"] = os.pathsep.join(path_parts + [env.get("PYTHONPATH", "")])
+        env = _worker_environment(backend)
         kw: dict = {
             "cwd": str(backend),
             "env": env,
@@ -122,7 +145,18 @@ def _run_in_subprocess(fn, args) -> None:
         }
         if sys.platform == "win32":
             kw["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
-        proc = subprocess.Popen([py, str(wpy), str(pin)], **kw)
+        try:
+            proc = subprocess.Popen([py, str(wpy), str(pin)], **kw)
+        except OSError as exc:
+            msg = _spawn_error_message(exc)
+            try:
+                from pipeline.core.app_log import append_exception
+
+                append_exception(f"[job:{job}] spawn failed", exc)
+            except Exception:
+                pass
+            _mark_job_error(project_id, job, msg)
+            return
         unreg = None
         if isinstance(project_id, str):
             try:

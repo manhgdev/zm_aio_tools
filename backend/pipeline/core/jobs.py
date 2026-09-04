@@ -274,13 +274,13 @@ def short_cmd_error(exc: BaseException, *, limit: int = 280) -> str:
         # WinError 206 / path dài
         err = getattr(exc, "strerror", None) or ""
         if "206" in str(code) or "too long" in str(exc).lower():
-            msg = "Đường dẫn/lệnh quá dài (WinError 206) — đã rút filter; restart backend rồi xuất lại."
+            msg = "PATH Windows quá dài (WinError 206) — app đã loại đường dẫn trùng; không cần cài lại gói AI."
         return msg[:limit]
     text = str(exc).strip() or type(exc).__name__
     # Cắt khối Command '[ffmpeg'… khổng lồ
     if "Command '" in text or "Command \"" in text:
         if "206" in text or "too long" in text.lower():
-            return "Đường dẫn/lệnh quá dài (WinError 206) — restart backend rồi xuất lại."
+            return "PATH Windows quá dài (WinError 206) — app đã loại đường dẫn trùng; không cần cài lại gói AI."
         if "ffmpeg" in text.lower():
             # Lấy exit status nếu có
             import re

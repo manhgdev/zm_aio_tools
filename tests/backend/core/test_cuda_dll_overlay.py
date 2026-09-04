@@ -42,3 +42,18 @@ def test_vieneu_does_not_switch_to_cpu_on_bad_cudnn() -> None:
     text = Path("backend/pipeline/tts/engines/vieneu.py").read_text(encoding="utf-8")
     assert "chuyển ONNX/CPU" not in text
     assert "giữ CUDA" in text
+
+
+def test_bind_torch_path_reuses_runtime_path_helper(monkeypatch, tmp_path: Path) -> None:
+    from pipeline.core import cuda_dll as m
+
+    calls: list[Path] = []
+    monkeypatch.setattr(m, "prepend_windows_path", lambda path: calls.append(path))
+    monkeypatch.setattr(m.os, "add_dll_directory", lambda _path: object(), raising=False)
+    monkeypatch.setattr(m, "_dll_handles", {})
+
+    m._bind_torch_path(tmp_path)
+    m._bind_torch_path(tmp_path)
+
+    assert calls == [tmp_path, tmp_path]
+    assert len(m._dll_handles) == 1

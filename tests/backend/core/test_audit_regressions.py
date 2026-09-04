@@ -146,6 +146,45 @@ def test_job_worker_does_not_require_utf8_sig_codec_alias() -> None:
     assert 'removeprefix(b"\\\\xef\\\\xbb\\\\xbf").decode("utf-8")' in source
 
 
+def test_windows_job_environment_sanitizes_inherited_path(monkeypatch) -> None:
+    import importlib.util
+
+    path = Path("backend/api/job_spawn.py")
+    spec = importlib.util.spec_from_file_location("vc_job_spawn_env", path)
+    assert spec and spec.loader
+    js = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(js)
+    monkeypatch.setattr(js.sys, "platform", "win32")
+    monkeypatch.setenv("PATH", r"C:\\Tools;c:/tools;C:\\Windows")
+
+    env = js._worker_environment(Path("C:/backend"))
+
+    assert env["PATH"] == r"C:\\Tools;C:\\Windows"
+
+
+def test_windows_job_spawn_error_updates_project_status(monkeypatch, tmp_path) -> None:
+    import importlib.util
+
+    path = Path("backend/api/job_spawn.py")
+    spec = importlib.util.spec_from_file_location("vc_job_spawn_error", path)
+    assert spec and spec.loader
+    js = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(js)
+    errors: list[tuple[object, str, str]] = []
+    monkeypatch.setattr(js.time if hasattr(js, "time") else __import__("time"), "sleep", lambda _n: None)
+    monkeypatch.setattr(js, "_job_python", lambda: "python.exe")
+    monkeypatch.setattr(js.subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(OSError(206, "The filename or extension is too long")))
+    monkeypatch.setattr(js, "_mark_job_error", lambda project, job, msg: errors.append((project, job, msg)))
+
+    def fake_job(_project_id):
+        return None
+
+    js._run_in_subprocess(fake_job, ("project-1",))
+
+    assert errors and errors[0][:2] == ("project-1", "fake_job")
+    assert "WinError 206" in errors[0][2]
+
+
 def test_ollama_detector_covers_gui_app_paths_on_macos() -> None:
     source = Path("backend/pipeline/core/system_check/checks.py").read_text(encoding="utf-8")
     assert "/Applications/Ollama.app/Contents/Resources/ollama" in source

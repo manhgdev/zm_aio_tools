@@ -186,6 +186,28 @@ def test_ensure_runtime_transformers_installs_when_missing(monkeypatch):
     ]
 
 
+def test_ensure_runtime_transformers_does_not_reinstall_for_winerror_206(monkeypatch):
+    monkeypatch.setattr(
+        "pipeline.core.runtime_site.verify_transformers_ok",
+        lambda: (False, "[WinError 206] The filename or extension is too long"),
+    )
+    monkeypatch.setattr(
+        "pipeline.core.runtime_site.bootstrap_ai_runtime",
+        lambda **_kw: None,
+    )
+
+    def unexpected_install(*_args, **_kwargs):
+        raise AssertionError("WinError 206 must not reinstall transformers")
+
+    monkeypatch.setattr(
+        "pipeline.core.system_check._runtime_pip_install",
+        unexpected_install,
+    )
+
+    with pytest.raises(RuntimeError, match="không cần cài lại gói AI"):
+        system_check.ensure_runtime_transformers()
+
+
 def test_ai_runtime_installs_when_transformers_missing(monkeypatch):
     monkeypatch.setattr(system_check, "_runtime_torch_needs_install", lambda: False)
     monkeypatch.setattr(system_check, "_torch_broken", lambda: False)

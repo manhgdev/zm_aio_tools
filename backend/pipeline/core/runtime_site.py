@@ -6,14 +6,16 @@ Install a meta-path finder so runtime-root imports resolve from site-packages.
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import sys
+from collections.abc import MutableMapping
 from importlib.machinery import PathFinder
 from importlib.util import module_from_spec
 from pathlib import Path
 
 # add_dll_directory() trả handle — phải giữ sống hoặc GC sẽ xóa dir khỏi DLL search path!
-_dll_handles: list = []
+_dll_handles: dict[str, object] = {}
 
 _RUNTIME_ROOTS = frozenset(
     {
@@ -86,21 +88,69 @@ def runtime_site_packages() -> Path | None:
     return site if site.is_dir() else None
 
 
+def _windows_path_key(value: str) -> str:
+    return ntpath.normcase(ntpath.normpath(value.strip().strip('"')))
+
+
+def sanitize_windows_path(value: str) -> str:
+    """Remove empty and normalized duplicate entries from a Windows PATH."""
+    if sys.platform != "win32":
+        return value
+    seen: set[str] = set()
+    parts: list[str] = []
+    for part in value.split(";"):
+        if not part.strip():
+            continue
+        key = _windows_path_key(part)
+        if key in seen:
+            continue
+        seen.add(key)
+        parts.append(part)
+    return ";".join(parts)
+
+
+def prepend_windows_path(path: str | Path, env: MutableMapping[str, str] = os.environ) -> None:
+    """Prepend one normalized PATH entry without growing PATH on repeat calls."""
+    value = str(path)
+    if sys.platform != "win32":
+        env["PATH"] = value + os.pathsep + env.get("PATH", "")
+        return
+    target = _windows_path_key(value)
+    rest = [
+        part
+        for part in sanitize_windows_path(env.get("PATH", "")).split(";")
+        if part and _windows_path_key(part) != target
+    ]
+    env["PATH"] = ";".join([value, *rest])
+
+
 def prepare_runtime_torch_dlls(site: Path) -> None:
     """Add torch/lib to DLL search path (frozen + external torch wheels)."""
     torch_lib = site / "torch" / "lib"
     if not torch_lib.is_dir():
         return
     lib_s = str(torch_lib)
-    os.environ["PATH"] = lib_s + os.pathsep + os.environ.get("PATH", "")
+    prepend_windows_path(lib_s)
     add_dir = getattr(os, "add_dll_directory", None)
     if add_dir and sys.platform == "win32":
         try:
-            handle = add_dir(lib_s)
-            if handle is not None:
-                _dll_handles.append(handle)
+            key = _windows_path_key(lib_s)
+            if key not in _dll_handles:
+                handle = add_dir(lib_s)
+                if handle is not None:
+                    _dll_handles[key] = handle
         except OSError:
             pass
+
+
+def is_windows_path_too_long_error(error: object) -> bool:
+    text = str(error).lower()
+    return (
+        getattr(error, "winerror", None) == 206
+        or getattr(error, "errno", None) == 206
+        or "winerror 206" in text
+        or "filename or extension is too long" in text
+    )
 
 
 def _purge_external_modules(site: Path) -> None:

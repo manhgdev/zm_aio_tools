@@ -1,5 +1,6 @@
 """cv2 must not go through runtime meta-path — OpenCV re-imports itself."""
 import sys
+import ntpath
 from pathlib import Path
 
 from pipeline.core import runtime_site as rs
@@ -67,3 +68,45 @@ def test_probe_rejects_hollow_cv2(monkeypatch) -> None:
     monkeypatch.setattr(probe.importlib.util, "find_spec", lambda _name: object())
     monkeypatch.setattr("builtins.__import__", lambda name, *args, **kwargs: _Hollow() if name == "cv2" else __import__(name, *args, **kwargs))
     assert probe._mod_ok("cv2") == (False, "cv2 thiếu VideoCapture")
+
+
+def test_prepend_windows_path_is_idempotent_and_preserves_other_entries(monkeypatch) -> None:
+    monkeypatch.setattr(rs.sys, "platform", "win32")
+    env = {
+        "PATH": (
+            r"C:\Windows\System32;C:\Users\Admin\AppData\Local\VideoClone\.venv-runtime\Lib\site-packages\torch\lib;"
+            r"c:/users/admin/appdata/local/videoclone/.venv-runtime/lib/site-packages/torch/lib;C:\Tools"
+        )
+    }
+    torch_lib = r"C:\Users\Admin\AppData\Local\VideoClone\.venv-runtime\Lib\site-packages\torch\lib"
+
+    for _ in range(300):
+        rs.prepend_windows_path(torch_lib, env)
+
+    parts = env["PATH"].split(";")
+    normalized = [ntpath.normcase(ntpath.normpath(part)) for part in parts]
+    assert normalized.count(ntpath.normcase(ntpath.normpath(torch_lib))) == 1
+    assert parts[1:] == [r"C:\Windows\System32", r"C:\Tools"]
+
+
+def test_sanitize_windows_path_removes_all_normalized_duplicates(monkeypatch) -> None:
+    monkeypatch.setattr(rs.sys, "platform", "win32")
+    value = r"C:\Tools;c:/tools/;C:\Windows\System32;;C:\TOOLS"
+    assert rs.sanitize_windows_path(value) == r"C:\Tools;C:\Windows\System32"
+
+
+def test_prepare_runtime_torch_dlls_registers_handle_once(monkeypatch, tmp_path: Path) -> None:
+    site = tmp_path / "site-packages"
+    torch_lib = site / "torch" / "lib"
+    torch_lib.mkdir(parents=True)
+    handles: list[str] = []
+
+    monkeypatch.setattr(rs.sys, "platform", "win32")
+    monkeypatch.setattr(rs.os, "add_dll_directory", lambda path: handles.append(path) or object(), raising=False)
+    monkeypatch.setattr(rs, "_dll_handles", {})
+    monkeypatch.setenv("PATH", r"C:\Windows\System32")
+
+    rs.prepare_runtime_torch_dlls(site)
+    rs.prepare_runtime_torch_dlls(site)
+
+    assert handles == [str(torch_lib)]

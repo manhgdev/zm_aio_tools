@@ -339,7 +339,7 @@ def _sanitize_status_text(raw: Any, *, limit: int = 280) -> str:
         return ""
     low = t.lower()
     if "winerror 206" in low or "filename or extension is too long" in low:
-        return "Lệnh/đường dẫn quá dài (WinError 206). Restart backend rồi xuất lại."
+        return "PATH Windows quá dài (WinError 206). App đã loại đường dẫn trùng; không cần cài lại gói AI."
     if (
         "Command '[" in t
         or 'Command "[' in t

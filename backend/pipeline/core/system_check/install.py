@@ -394,6 +394,7 @@ def ensure_runtime_transformers() -> None:
         install_runtime_meta_path,
         runtime_site_packages,
         verify_transformers_ok,
+        is_windows_path_too_long_error,
         _purge_external_modules,
     )
 
@@ -401,6 +402,11 @@ def ensure_runtime_transformers() -> None:
     ok, _detail = verify_transformers_ok()
     if ok:
         return
+    if is_windows_path_too_long_error(_detail):
+        raise RuntimeError(
+            "PATH Windows quá dài nên không thể nạp transformers. "
+            "App đã loại đường dẫn trùng; không cần cài lại gói AI."
+        )
     _runtime_pip_install(
         "transformers>=4.46.0",
         "huggingface-hub>=0.34",  # bỏ <1.0 — không downgrade hf-hub 1.x đang có
@@ -414,6 +420,11 @@ def ensure_runtime_transformers() -> None:
     bootstrap_ai_runtime()
     ok, detail = verify_transformers_ok()
     if not ok:
+        if is_windows_path_too_long_error(detail):
+            raise RuntimeError(
+                "PATH Windows quá dài nên không thể nạp transformers. "
+                "App đã loại đường dẫn trùng; không cần cài lại gói AI."
+            )
         raise RuntimeError(
             f"transformers chưa import được sau cài đặt: {detail}. "
             "Thử Thiết lập → Cài gói AI rồi khởi động lại app."

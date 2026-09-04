@@ -43,7 +43,7 @@ export function sanitizeJobMessage(raw?: string | null, limit = 220): string {
     || lower.includes('filename or extension is too long')
     || (lower.includes('too long') && lower.includes('ffmpeg'))
   ) {
-    return 'Lệnh/đường dẫn quá dài (WinError 206). Restart backend rồi xuất lại.'
+    return 'PATH Windows quá dài (WinError 206). App đã loại đường dẫn trùng; không cần cài lại gói AI.'
   }
   if (
     t.includes("Command '[")

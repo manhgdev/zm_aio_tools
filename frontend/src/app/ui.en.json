@@ -528,6 +528,7 @@
   "Lệch (s)": "Deviation(s)",
   "Lệch phụ đề": "Subtitle deviation",
   "Lệnh/đường dẫn quá dài (WinError 206). Restart backend rồi xuất lại.": "Command/path too long (WinError 206). Restart the backend and export again.",
+  "PATH Windows quá dài (WinError 206). App đã loại đường dẫn trùng; không cần cài lại gói AI.": "Windows PATH is too long (WinError 206). The app removed duplicate entries; reinstalling the AI packages is not required.",
   "Lịch sử tạo": "Creation history",
   "Lịch sử tạo giọng": "History of accent creation",
   "Lọc danh sách theo tag": "Filter the list by tag",
