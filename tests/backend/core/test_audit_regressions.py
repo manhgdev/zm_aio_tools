@@ -230,6 +230,13 @@ def test_desktop_bundle_exposes_embedded_ytdlp_cli() -> None:
     assert "yt-dlp embedded CLI" in check
 
 
+def test_desktop_build_uses_the_ci_release_version_file() -> None:
+    """Tag builds must name artifacts with the version written by their workflow."""
+    build = Path("build_app/build.mjs").read_text(encoding="utf-8")
+    assert "releaseVersionFilePath" in build
+    assert "readFileSync(releaseVersionFilePath, \"utf8\")" in build
+
+
 def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     """A stable payload prevents every update from adding another .app."""
     workflow = Path(".github/workflows/release-macos.yml").read_text(encoding="utf-8")

@@ -11,6 +11,7 @@ const dataSep = isWin ? ';' : ':'
 const packageJsonPath = path.join(root, 'package.json')
 const workDir = path.join(root, 'build_app', '.work')
 const versionFilePath = path.join(workDir, 'VERSION')
+const releaseVersionFilePath = path.join(root, 'build_app', 'VERSION')
 // onedir = nhanh (Windows mặc định). ONEFILE=1 để gói 1 file (chậm vì bước PKG).
 const oneFile = process.env.ONEFILE === '1' || process.env.ONEFILE === 'true'
 const clean = process.env.CLEAN === '1' || process.env.CLEAN === 'true'
@@ -153,7 +154,12 @@ if (!existsSync(python)) {
 }
 
 const pkg = readPackage()
-const appVersion = formatSemver(parseSemver(pkg.version || '1.0.0'))
+// CI writes build_app/VERSION from the release tag. Local builds retain the
+// package version so a stale release file cannot rename a developer build.
+const ciReleaseVersion = process.env.CI && existsSync(releaseVersionFilePath)
+  ? readFileSync(releaseVersionFilePath, "utf8").trim()
+  : ''
+const appVersion = formatSemver(parseSemver(ciReleaseVersion || pkg.version || '1.0.0'))
 if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true })
 writeFileSync(versionFilePath, `${appVersion}\n`, 'utf8')
 console.log(`Building ${APP_DISPLAY_NAME} v${appVersion} (${oneFile ? 'onefile' : 'onedir'}${clean ? ', clean' : ''})`)
