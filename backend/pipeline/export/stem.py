@@ -506,7 +506,9 @@ def _run_demucs_mlx_progress(
     """Apple Silicon: demucs-mlx trên Metal (nhanh hơn torch MPS / CPU)."""
     set_stem_progress(project_id, 18, "Demucs-MLX (Apple GPU) đang tách…")
     separated.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    from ..core.runtime_site import subprocess_environment
+
+    env = subprocess_environment({"PYTHONUNBUFFERED": "1"})
     kw: dict = dict(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -601,7 +603,9 @@ def _run_demucs_progress(
         if seg:
             cmd.extend(["--segment", seg])
         cmd.append(str(source_wav))
-        env = {**os.environ, "PYTHONUNBUFFERED": "1", "TQDM_MINITERS": "1"}
+        from ..core.runtime_site import subprocess_environment
+
+        env = subprocess_environment({"PYTHONUNBUFFERED": "1", "TQDM_MINITERS": "1"})
         kw: dict = dict(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

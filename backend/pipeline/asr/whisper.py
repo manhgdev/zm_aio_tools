@@ -470,7 +470,9 @@ Path(sys.argv[3]).write_text(json.dumps(rows, ensure_ascii=False), encoding="utf
             }
             pin.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             wpy.write_text(worker_src, encoding="utf-8")
-            env = os.environ.copy()
+            from pipeline.core.runtime_site import subprocess_environment
+
+            env = subprocess_environment()
             env["PYTHONPATH"] = str(pipeline_root) + os.pathsep + env.get("PYTHONPATH", "")
             env["VIDEO_CLONE_HOME"] = str(SERVER_ROOT)
             env["VIDEO_CLONE_DATA"] = str(DATA)
@@ -662,4 +664,3 @@ def asr_whisper_inprocess(
     if on_progress:
         on_progress(len(out), max((float(row.get("end") or 0) for row in out), default=0.0))
     return out
-

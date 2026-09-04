@@ -210,7 +210,9 @@ Path(sys.argv[3]).write_text(
             wpy = tdir / "worker.py"
             pin.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             wpy.write_text(worker_src, encoding="utf-8")
-            env = os.environ.copy()
+            from pipeline.core.runtime_site import subprocess_environment
+
+            env = subprocess_environment()
             env["PYTHONPATH"] = str(pipeline_root) + os.pathsep + env.get("PYTHONPATH", "")
             if meipass:
                 env["VIDEO_CLONE_MEIPASS"] = str(meipass)
@@ -390,8 +392,9 @@ atexit.register(_stop_warm_worker)
 
 def _warm_worker_env(pipeline_root: Path, meipass: str | None) -> dict[str, str]:
     from pipeline.core.config import DATA, PUBLIC_DATA, SERVER_ROOT
+    from pipeline.core.runtime_site import subprocess_environment
 
-    env = os.environ.copy()
+    env = subprocess_environment()
     env["PYTHONPATH"] = str(pipeline_root) + os.pathsep + env.get("PYTHONPATH", "")
     if meipass:
         env["VIDEO_CLONE_MEIPASS"] = str(meipass)

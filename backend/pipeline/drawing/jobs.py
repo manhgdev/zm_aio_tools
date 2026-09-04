@@ -42,7 +42,10 @@ def _spawn(command: list[str], **kwargs: Any) -> subprocess.Popen:
     pressed Cancel, particularly on macOS.
     """
     if sys.platform == "win32":
+        from pipeline.core.runtime_site import subprocess_environment
+
         kwargs.setdefault("creationflags", int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)))
+        kwargs["env"] = subprocess_environment(kwargs.get("env"))
     else:
         kwargs.setdefault("start_new_session", True)
     return subprocess.Popen(command, **kwargs)

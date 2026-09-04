@@ -64,11 +64,32 @@ def test_download_update_writes_the_release_asset(monkeypatch, tmp_path):
 def test_windows_update_script_uses_staged_replace_and_rollback(tmp_path):
     script = system._windows_update_script(tmp_path)
     text = script.read_text(encoding="utf-8")
-    assert "param([int]$AppPid" in text
+    assert "param([string]$ParamsFile)" in text
+    assert "$AppPid    = [int]$p.AppPid" in text
     assert "Wait-Process -Id $AppPid" in text
     assert "[int]$Pid" not in text
     assert "Expand-Archive" in text
     assert "Move-Item -LiteralPath $Target -Destination $backup" in text
     assert "Move-Item -LiteralPath $backup -Destination $Target" in text
-    assert "ZM AIO TOOL.exe" in text
-    assert "VERSION" in text
+    assert "Start-Process -FilePath \"$newExe\"" in text
+    assert "Start-Process explorer.exe" in text
+
+
+def test_windows_updater_writes_params_and_starts_detached(monkeypatch, tmp_path):
+    package = tmp_path / "ZM_AIO_TOOL_v4.9.8-windows-x64.zip"
+    package.write_bytes(b"zip")
+    old = tmp_path / "ZM_AIO_TOOL_v4.9.7-windows-x64"
+    old.mkdir()
+    exe = old / "ZM AIO TOOL.exe"
+    exe.write_bytes(b"exe")
+    calls = []
+    monkeypatch.setattr(system.sys, "executable", str(exe))
+    monkeypatch.setattr(system.subprocess, "Popen", lambda cmd, **kw: calls.append((cmd, kw)))
+
+    system._launch_windows_updater(package)
+
+    params = (tmp_path / "update-params.json").read_text(encoding="utf-8")
+    assert '"Target":' in params and "v4.9.8" in params
+    assert '"OldTarget":' in params and "v4.9.7" in params
+    assert calls and calls[0][0][0].lower().endswith("powershell.exe")
+    assert calls[0][1]["creationflags"] & 0x00000008

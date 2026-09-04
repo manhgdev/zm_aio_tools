@@ -185,6 +185,20 @@ def test_windows_job_spawn_error_updates_project_status(monkeypatch, tmp_path) -
     assert "WinError 206" in errors[0][2]
 
 
+def test_ai_subprocesses_use_the_shared_sanitized_environment() -> None:
+    for path in (
+        "backend/api/job_spawn.py",
+        "backend/pipeline/asr/whisper.py",
+        "backend/pipeline/tts/engines/vieneu_frozen.py",
+        "backend/pipeline/ocr/extract_parts/api.py",
+        "backend/pipeline/ocr/locate_worker.py",
+        "backend/pipeline/export/stem.py",
+        "backend/pipeline/drawing/jobs.py",
+    ):
+        source = Path(path).read_text(encoding="utf-8")
+        assert "subprocess_environment" in source, path
+
+
 def test_ollama_detector_covers_gui_app_paths_on_macos() -> None:
     source = Path("backend/pipeline/core/system_check/checks.py").read_text(encoding="utf-8")
     assert "/Applications/Ollama.app/Contents/Resources/ollama" in source

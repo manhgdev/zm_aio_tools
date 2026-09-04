@@ -110,3 +110,14 @@ def test_prepare_runtime_torch_dlls_registers_handle_once(monkeypatch, tmp_path:
     rs.prepare_runtime_torch_dlls(site)
 
     assert handles == [str(torch_lib)]
+
+
+def test_subprocess_environment_sanitizes_path_and_applies_overrides(monkeypatch) -> None:
+    monkeypatch.setattr(rs.sys, "platform", "win32")
+    monkeypatch.setenv("PATH", r"C:\Tools;c:/tools/;C:\Windows")
+
+    env = rs.subprocess_environment({"PYTHONUNBUFFERED": "1", "REMOVE_ME": None})
+
+    assert env["PATH"] == r"C:\Tools;C:\Windows"
+    assert env["PYTHONUNBUFFERED"] == "1"
+    assert "REMOVE_ME" not in env

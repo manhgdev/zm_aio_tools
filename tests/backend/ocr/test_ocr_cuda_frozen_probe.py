@@ -40,3 +40,27 @@ def test_ocr_cuda_check_in_process_when_not_frozen(monkeypatch) -> None:
 
     assert ok is True
     assert "CUDAExecutionProvider" in detail
+
+
+def test_cuda_dll_reset_does_not_duplicate_path_or_handles(monkeypatch, tmp_path: Path) -> None:
+    from pipeline.ocr.extract_parts import runtime
+
+    dll_dir = tmp_path / "torch" / "lib"
+    dll_dir.mkdir(parents=True)
+    registered: list[str] = []
+    monkeypatch.setattr(runtime.os, "name", "nt")
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
+    monkeypatch.setattr(runtime, "_nvidia_bin_dirs", lambda: [dll_dir])
+    monkeypatch.setattr(runtime.sys, "path", [])
+    monkeypatch.setattr(runtime, "_cuda_dlls_ready", False)
+    monkeypatch.setattr(runtime, "_dll_handles", {})
+    monkeypatch.setattr(runtime.os, "add_dll_directory", lambda path: registered.append(path) or object(), raising=False)
+    monkeypatch.setenv("PATH", rf"{dll_dir};{str(dll_dir).upper()};C:\Windows")
+
+    for _ in range(20):
+        runtime._reset_cuda_dlls()
+        runtime.prepare_cuda_dlls()
+
+    assert registered == [str(dll_dir)]
+    assert runtime.os.environ["PATH"].split(";")[0] == str(dll_dir)
+    assert len(runtime.os.environ["PATH"].split(";")) == 2

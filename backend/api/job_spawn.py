@@ -65,11 +65,9 @@ def _worker_environment(backend) -> dict[str, str]:  # noqa: ANN001
     """Build a bounded environment for Windows AI workers."""
     from pathlib import Path
 
-    env = os.environ.copy()
-    if sys.platform == "win32":
-        from pipeline.core.runtime_site import sanitize_windows_path
+    from pipeline.core.runtime_site import subprocess_environment
 
-        env["PATH"] = sanitize_windows_path(env.get("PATH", ""))
+    env = subprocess_environment()
     path_parts = [str(Path(backend))]
     meipass = getattr(sys, "_MEIPASS", None) or env.get("VIDEO_CLONE_MEIPASS")
     if meipass:

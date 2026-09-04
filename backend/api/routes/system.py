@@ -281,6 +281,7 @@ try {
 
     # 4. Chuyen file vao $Target
     $replaced = $false
+    $backup = Join-Path $updateDir ('backup-' + $stamp)
 
     if ($Mode -eq 'versioned') {
         # Versioned: $Target la folder moi chua ton tai — Move truc tiep
@@ -297,36 +298,22 @@ try {
             }
         }
     } else {
-        # Overwrite: Robocopy mirror vao folder hien tai
-        try {
-            if (-not (Test-Path $Target)) { New-Item -ItemType Directory -Path $Target -Force | Out-Null }
-            $robo = Start-Process robocopy.exe -ArgumentList @("`"$sourceDir`"", "`"$Target`"", '/MIR', '/R:10', '/W:1', '/NP', '/NFL', '/NDL', '/NJH', '/NJS') -PassThru -Wait -NoNewWindow
-            if ($robo.ExitCode -lt 8) {
+        # Overwrite: staged swap. Backup is kept until the new EXE launches.
+        for ($attempt = 1; $attempt -le 10; $attempt++) {
+            try {
+                if (Test-Path $backup) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop }
+                if (Test-Path $Target) { Move-Item -LiteralPath $Target -Destination $backup -Force -ErrorAction Stop }
+                Move-Item -LiteralPath $sourceDir -Destination $Target -Force -ErrorAction Stop
                 $replaced = $true
-                Log "Robocopy ExitCode=$($robo.ExitCode)"
-            } else {
-                Log "Robocopy ExitCode=$($robo.ExitCode) — fallback Move"
-            }
-        } catch { Log "Robocopy exception: $_" }
-
-        if (-not $replaced) {
-            $bak = Join-Path $updateDir ('backup-' + $stamp)
-            for ($attempt = 1; $attempt -le 10; $attempt++) {
-                try {
-                    if (Test-Path $Target) { Move-Item -LiteralPath $Target -Destination $bak -Force -ErrorAction Stop }
-                    Move-Item -LiteralPath $sourceDir -Destination $Target -Force -ErrorAction Stop
-                    $replaced = $true
-                    Log "Move-Item overwrite thanh cong o lan $attempt."
-                    break
-                } catch {
-                    Log "Move-Item overwrite lan $attempt: $_"
-                    if ((Test-Path $bak) -and (-not (Test-Path $Target))) {
-                        Move-Item -LiteralPath $bak -Destination $Target -Force -ErrorAction SilentlyContinue
-                    }
-                    Start-Sleep -Milliseconds 600
+                Log "Move-Item overwrite thanh cong o lan $attempt."
+                break
+            } catch {
+                Log "Move-Item overwrite lan $attempt: $_"
+                if ((Test-Path $backup) -and (-not (Test-Path $Target))) {
+                    Move-Item -LiteralPath $backup -Destination $Target -Force -ErrorAction SilentlyContinue
                 }
+                Start-Sleep -Milliseconds 600
             }
-            if (Test-Path $bak) { Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
 
@@ -356,6 +343,10 @@ try {
         Start-Sleep -Seconds 1
         Start-Process -FilePath "$newExe"
         Log "=== Cap nhat thanh cong! ==="
+        if ($Mode -eq 'overwrite' -and (Test-Path $backup)) {
+            Start-Sleep -Seconds 2
+            Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     # 6. Versioned: xoa folder cu sau khi da launch thanh cong
@@ -863,7 +854,7 @@ def api_update_install():
                 if _win_versioned_folder(Path(sys.executable)):
                     updates = exe_dir.parent  # D:\tool\
                 else:
-                    updates = exe_dir / "_update"
+                    updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
             else:
                 updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
             updates.mkdir(parents=True, exist_ok=True)
@@ -883,6 +874,46 @@ def api_update_status():
     return {"desktop": os.environ.get("VIDEO_CLONE_DESKTOP") == "1", **_update_snapshot()}
 
 
+def _launch_windows_updater(package: Path) -> None:
+    """Start the detached staged updater; it waits for this app before swapping."""
+    exe = Path(sys.executable).resolve()
+    old_target = exe.parent
+    target = package.parent / package.stem if _win_versioned_folder(exe) else old_target
+    script = _windows_update_script(package.parent)
+    params = package.parent / "update-params.json"
+    params.write_text(
+        json.dumps(
+            {
+                "AppPid": os.getpid(),
+                "Zip": str(package.resolve()),
+                "Target": str(target.resolve()),
+                "Exe": exe.name,
+                "OldTarget": str(old_target.resolve()),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    flags = int(getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
+    flags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-ParamsFile",
+            str(params),
+        ],
+        cwd=str(package.parent),
+        creationflags=flags,
+        close_fds=True,
+    )
+
+
 @router.post("/api/system/update/apply")
 def api_update_apply():
     if not _update_supported():
@@ -900,37 +931,14 @@ def api_update_apply():
         _set_update_state(phase="complete", message="Đã mở macOS Installer để cập nhật")
         return {"ok": True, "message": "Đã mở macOS Installer để cập nhật"}
 
-    # Windows portable: giải nén zip trực tiếp bằng Python, mở Explorer vào folder mới
-    # Người dùng tự chạy EXE bản mới — không cần PowerShell hay external tools.
-    extract_dir = package.parent / package.stem  # e.g. D:\tool\ZM_AIO_TOOL_v4.6.1-windows-x64
-
-    def _extract_and_open() -> None:
-        import zipfile as _zf
-        try:
-            _set_update_state(phase="applying", progress=10, message="Đang giải nén bản cập nhật…")
-            if extract_dir.exists():
-                shutil.rmtree(str(extract_dir), ignore_errors=True)
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            with _zf.ZipFile(str(package), "r") as zf:
-                total = len(zf.namelist())
-                for i, member in enumerate(zf.namelist(), 1):
-                    zf.extract(member, str(extract_dir))
-                    if i % max(1, total // 20) == 0:
-                        _set_update_state(progress=10 + int(i * 85 / total))
-            _set_update_state(phase="complete", progress=100,
-                              message="Giải nén xong! Đang mở thư mục bản mới…")
-            time.sleep(0.5)
-            # Mở Explorer trước khi thoát — chờ dủ lâu để Explorer khởi động
-            subprocess.Popen(["explorer.exe", str(extract_dir)])
-            time.sleep(3.0)
-        except Exception as exc:
-            _set_update_state(phase="error", error=str(exc),
-                              message=f"Giải nén thất bại: {exc}")
-            return
-        os._exit(0)
-
-    threading.Thread(target=_extract_and_open, name="win-update-extract", daemon=True).start()
-    return {"ok": True, "message": "Đang giải nén bản cập nhật…"}
+    try:
+        _launch_windows_updater(package)
+    except Exception as exc:
+        _set_update_state(phase="error", error=str(exc), message="Không thể mở trình cập nhật")
+        raise HTTPException(500, f"Không thể mở trình cập nhật: {exc}") from exc
+    _set_update_state(phase="applying", progress=100, message="Đang đóng app để cập nhật và mở lại…")
+    threading.Timer(0.8, lambda: os._exit(0)).start()
+    return {"ok": True, "message": "Đang đóng app để cập nhật và mở lại…"}
 
 
 

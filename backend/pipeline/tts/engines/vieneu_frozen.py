@@ -169,7 +169,9 @@ class _Worker:
         self.device = device
         self.key = f"{backend}|{device}"
         self._lock = threading.Lock()
-        env = os.environ.copy()
+        from pipeline.core.runtime_site import subprocess_environment
+
+        env = subprocess_environment()
         _sanitize_no_proxy(env)
         env["PYTHONIOENCODING"] = "utf-8"
         env["TQDM_DISABLE"] = "1"

@@ -33,7 +33,7 @@ jobs:
           npm install
           python -m venv backend/.venv
           backend/.venv/Scripts/python.exe -m pip install --upgrade pip
-          backend/.venv/Scripts/python.exe -m pip install -r backend/requirements-app.txt pyinstaller pywebview uv pythonnet
+          backend/.venv/Scripts/python.exe -m pip install -r backend/requirements-app.txt pyinstaller pywebview uv pythonnet pytest
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
             choco install ffmpeg -y --no-progress
             'C:\ProgramData\chocolatey\bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
@@ -47,6 +47,19 @@ jobs:
           if (-not $version) { $version = '0.0.0' }
           Set-Content -Path build_app/VERSION -Value $version.Trim()
           Write-Host "Building version: $version"
+
+      - name: Windows regression checks
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$PWD/backend"
+          backend/.venv/Scripts/python.exe -m pytest `
+            tests/backend/core/test_runtime_site.py `
+            tests/backend/core/test_ai_runtime_setup.py `
+            tests/backend/core/test_desktop_update.py `
+            tests/backend/core/test_audit_regressions.py `
+            tests/backend/core/test_cuda_dll_overlay.py `
+            tests/backend/ocr/test_ocr_cuda_frozen_probe.py
+          node --test --test-name-pattern="English catalog covers Configuration labels|English catalog has no empty entries" tests/i18n.catalog.test.mjs
 
       - name: Build EXE
         shell: pwsh

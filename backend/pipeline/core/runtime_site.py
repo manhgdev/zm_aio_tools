@@ -9,7 +9,7 @@ from __future__ import annotations
 import ntpath
 import os
 import sys
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from importlib.machinery import PathFinder
 from importlib.util import module_from_spec
 from pathlib import Path
@@ -107,6 +107,21 @@ def sanitize_windows_path(value: str) -> str:
         seen.add(key)
         parts.append(part)
     return ";".join(parts)
+
+
+def subprocess_environment(
+    overrides: Mapping[str, str | None] | None = None,
+) -> dict[str, str]:
+    """Copy the process environment and bound Windows PATH before spawning."""
+    env = os.environ.copy()
+    for name, value in (overrides or {}).items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = str(value)
+    if sys.platform == "win32":
+        env["PATH"] = sanitize_windows_path(env.get("PATH", ""))
+    return env
 
 
 def prepend_windows_path(path: str | Path, env: MutableMapping[str, str] = os.environ) -> None:

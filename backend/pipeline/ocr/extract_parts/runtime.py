@@ -28,7 +28,7 @@ _ocr_sem: threading.Semaphore | None = None
 _ocr_sem_n: int = 0
 _cuda_dlls_ready = False
 # add_dll_directory() trả handle — phải giữ sống hoặc GC sẽ xóa dir khỏi search path!
-_dll_handles: list = []
+_dll_handles: dict[str, object] = {}
 
 
 def _cpu_budget(ratio: float = 0.9) -> int:
@@ -269,20 +269,21 @@ def prepare_cuda_dlls() -> None:
                     bins.insert(0, d)  # ưu tiên _MEIPASS trước
         if not bins:
             return
-        path = os.environ.get("PATH", "")
-        path_parts = path.split(os.pathsep) if path else []
-        prepend = [str(b) for b in bins if str(b) not in path_parts]
-        if prepend:
-            os.environ["PATH"] = os.pathsep.join(prepend + path_parts)
+        from pipeline.core.runtime_site import _windows_path_key, prepend_windows_path
+
+        for b in reversed(bins):
+            prepend_windows_path(b)
         # Windows: LoadLibrary tìm DLL qua add_dll_directory (PATH đôi khi không đủ).
         # QUAN TRỌNG: lưu handle vào _dll_handles — nếu handle bị GC thì dir bị xóa khỏi search path!
         add_dir = getattr(os, "add_dll_directory", None)
         if add_dir:
             for b in bins:
                 try:
-                    handle = add_dir(str(b))
-                    if handle is not None:
-                        _dll_handles.append(handle)
+                    key = _windows_path_key(str(b))
+                    if key not in _dll_handles:
+                        handle = add_dir(str(b))
+                        if handle is not None:
+                            _dll_handles[key] = handle
                 except (OSError, FileNotFoundError):
                     pass
         _cuda_dlls_ready = True
