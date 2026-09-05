@@ -1,6 +1,5 @@
 /**
- * Luồng lồng tiếng + huỷ job: lock chống double-click, busyAt chặn Huỷ dính
- * click sớm, và optimistic cancel.
+ * Luồng lồng tiếng + huỷ job: lock chống double-click và optimistic cancel.
  */
 import { useRef, type Dispatch, type SetStateAction } from 'react'
 import { api } from './project.api'
@@ -24,7 +23,7 @@ export function useDubControl({
   flushSegmentSave: () => Promise<void>
 }) {
   const dubLockRef = useRef(false)
-  /** chặn double-click: Dịch/Xuất rồi dính nút Huỷ vừa hiện */
+  const cancelLockRef = useRef(false)
   const busyAt = useRef(0)
 
   /** Mở khóa lồng tiếng — gọi mọi đường thoát job (huỷ / lỗi / xong / disconnect). */
@@ -88,8 +87,10 @@ export function useDubControl({
 
   async function onCancel() {
     if (!projectId || !status.running) return
-    // chỉ chặn double-click cực sớm (mount Huỷ)
-    if (Date.now() - busyAt.current < 400) return
+    // A deliberate click immediately after the popup appears is still a real
+    // cancellation. Deduplicate only concurrent requests, never a time window.
+    if (cancelLockRef.current) return
+    cancelLockRef.current = true
     const stepNow = status.step
     // Mở khóa lồng tiếng ngay — poll dừng khi running=false nên không clear lock được
     releaseDubLock()
@@ -111,6 +112,7 @@ export function useDubControl({
     } catch {
       /* flag server có thể fail; UI đã dừng */
     } finally {
+      cancelLockRef.current = false
       releaseDubLock()
     }
   }
