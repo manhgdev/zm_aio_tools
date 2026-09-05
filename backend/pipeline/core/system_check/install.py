@@ -39,6 +39,13 @@ from .probe import (
 _install_log_fn: Any = None  # Callable[[str], None] | None
 
 
+def _runtime_subprocess_env() -> dict[str, str]:
+    """Environment for pip/uv probes, including Windows PATH hardening."""
+    from ..runtime_site import subprocess_environment
+
+    return subprocess_environment({"PYTHONUNBUFFERED": "1"})
+
+
 def _clean_corrupted_dists(site: Path | None = None) -> None:
     """Xóa các thư mục ~* do pip để lại khi uninstall bị ngắt giữa chừng (WinError 32).
     Ví dụ: ~orch (từ torch), ~okenizers (từ tokenizers).
@@ -67,7 +74,7 @@ def _pip_stream(cmd: list[str], *, timeout: float = 1800) -> subprocess.Complete
     import queue as _queue
     buf: list[str] = []
     q: _queue.Queue[str | None] = _queue.Queue()
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env = _runtime_subprocess_env()
 
     def _reader(stdout) -> None:  # chạy trong thread riêng
         try:
@@ -187,7 +194,7 @@ def _sherpa_cuda_ready(python: Path | str = sys.executable) -> bool:
     try:
         proc = subprocess.run(
             [str(python), "-c", "import sherpa_onnx; print(sherpa_onnx.__version__)"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, env=_runtime_subprocess_env(),
         )
         return proc.returncode == 0 and ("+cuda" in proc.stdout.lower())
     except Exception:
@@ -329,7 +336,7 @@ def _runtime_pip_install(
     cmd = _runtime_pip_cmd("--upgrade", *packages)
     if index_url:
         cmd.extend(["--index-url", index_url])
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=_runtime_subprocess_env())
     if proc.returncode:
         raise RuntimeError((proc.stderr or proc.stdout)[-2000:])
 
@@ -343,6 +350,7 @@ def _install_runtime_torch(*, accel: str | None = None) -> None:
             capture_output=True,
             text=True,
             timeout=300,
+            env=_runtime_subprocess_env(),
         )
         _runtime_pip_install(
             "torch",
@@ -548,6 +556,7 @@ def install_ai_runtime() -> dict[str, Any]:
                     capture_output=True,
                     text=True,
                     timeout=120,
+                    env=_runtime_subprocess_env(),
                 )
             except (OSError, subprocess.SubprocessError):
                 pass  # bỏ qua nếu file bị lock
@@ -769,6 +778,7 @@ def install_ocr_cuda() -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=1200,
+            env=_runtime_subprocess_env(),
         )
         if proc.returncode:
             raise RuntimeError((proc.stderr or proc.stdout)[-2000:])
@@ -787,6 +797,7 @@ def install_ocr_cuda() -> dict[str, Any]:
         capture_output=True,
         text=True,
         timeout=180,
+        env=_runtime_subprocess_env(),
     )
     try:
         proc = subprocess.run(
@@ -802,6 +813,7 @@ def install_ocr_cuda() -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=900,
+            env=_runtime_subprocess_env(),
         )
         if proc.returncode:
             raise RuntimeError((proc.stderr or proc.stdout)[-2000:])
@@ -812,6 +824,7 @@ def install_ocr_cuda() -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=300,
+            env=_runtime_subprocess_env(),
         )
         raise
     # ponytail: Windows keeps the old ORT DLL mapped until this API exits; verify after restart.

@@ -30,6 +30,12 @@ def test_update_rejects_asset_with_a_different_version(monkeypatch):
     assert system._release_asset(release) is None
 
 
+def test_update_rejects_asset_with_a_version_prefix_collision(monkeypatch):
+    monkeypatch.setattr(system.sys, "platform", "win32")
+    release = _release({"name": "ZM_AIO_TOOL_v3.5.70-windows-x64.zip"})
+    assert system._release_asset(release) is None
+
+
 def test_update_check_accepts_matching_platform_asset_without_checksum(monkeypatch):
     monkeypatch.setenv("VIDEO_CLONE_DESKTOP", "1")
     monkeypatch.setattr(system.sys, "frozen", True, raising=False)
@@ -59,6 +65,59 @@ def test_download_update_writes_the_release_asset(monkeypatch, tmp_path):
     target = system._download_update(asset, tmp_path, "3.5.9")
     assert target.read_bytes() == payload
     assert not (tmp_path / "app.zip.part").exists()
+
+
+def test_download_update_allows_slow_large_downloads_and_cleans_partial(monkeypatch, tmp_path):
+    calls = []
+
+    class BrokenResponse(io.BytesIO):
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, *_args):
+            raise TimeoutError("connection stalled")
+
+    def open_url(_url, **kwargs):
+        calls.append(kwargs)
+        return BrokenResponse()
+
+    monkeypatch.setattr(system.urllib.request, "urlopen", open_url)
+    try:
+        system._download_update(
+            {"name": "app.zip", "browser_download_url": "https://example.invalid/app.zip"},
+            tmp_path,
+            "5.0.1",
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("expected download failure")
+    assert calls and calls[0]["timeout"] == system._UPDATE_DOWNLOAD_TIMEOUT_SECONDS
+    assert not (tmp_path / "app.zip.part").exists()
+
+
+def test_download_update_rejects_path_traversal_asset(monkeypatch, tmp_path):
+    monkeypatch.setattr(system.urllib.request, "urlopen", lambda *_a, **_k: None)
+    try:
+        system._download_update(
+            {"name": "../app.zip", "browser_download_url": "https://example.invalid/app.zip"},
+            tmp_path,
+            "5.0.1",
+        )
+    except RuntimeError as exc:
+        assert "không hợp lệ" in str(exc)
+    else:
+        raise AssertionError("expected invalid asset name")
+
+
+def test_update_module_has_time_for_background_update_lifecycle():
+    """The packaged updater must not fail with NameError while waiting/polling."""
+    assert hasattr(system, "time")
 
 
 def test_windows_update_script_uses_staged_replace_and_rollback(tmp_path):

@@ -14,6 +14,9 @@ PACE = {
 
 BUILD_MODES = ("fixed", "stretch", "accumulate", "smart")
 PAUSE = {"fast": 0.08, "balanced": 0.32, "slow": 0.65}
+# Stretch remains readable only for modest retimes. Longer narration consumes
+# the next chronological scene instead of freezing one short source shot.
+MAX_STRETCH_FACTOR = 1.75
 
 
 def resolve_build_mode(settings: dict[str, Any] | None) -> str:
@@ -175,7 +178,7 @@ def match_voice(
         pool = accumulate_windows(visuals)
     else:
         pool = list(visuals)
-    sequential = mode in {"accumulate", "smart"}
+    sequential = mode in {"accumulate", "smart", "stretch"}
     stretch = mode == "stretch"
     pause = PAUSE.get(pause_pace, 0.32) if stretch else 0.0
     used: dict[int, int] = {}
@@ -205,15 +208,16 @@ def match_voice(
                 break
             span = float(scene.get("duration") or remain)
             if stretch:
-                take = min(span, max(remain, span * 0.6))
+                target = min(remain, span * MAX_STRETCH_FACTOR)
+                take = min(span, target)
                 start = float(scene["start"])
                 clips.append({
                     "scene_id": scene["scene_id"],
                     "source_start": round(start, 3),
                     "source_end": round(start + min(span, take), 3),
-                    "target_duration": round(remain, 3),
+                    "target_duration": round(target, 3),
                 })
-                remain = 0.0
+                remain -= target
             else:
                 target = min(hi, max(lo, remain if remain < hi + 0.4 else lo + (hi - lo) * 0.5))
                 take = min(target, remain, span)

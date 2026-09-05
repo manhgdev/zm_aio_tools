@@ -79,6 +79,73 @@ def test_flow_mode_icons_do_not_depend_on_google_interface_language():
     assert service_module._mode_tab_icon("video") == "videocam"
 
 
+def test_flow_controls_support_current_radio_markup_and_checked_state():
+    assert service_module._FLOW_CONTROL_SELECTOR == '[role="tab"], [role="radio"]'
+    assert service_module._flow_control_selected_from_attrs(
+        aria_selected=None, aria_checked="true", data_state="unchecked",
+    ) is True
+    assert service_module._flow_control_selected_from_attrs(
+        aria_selected="false", aria_checked="false", data_state="unchecked",
+    ) is False
+
+
+def test_flow_duration_pattern_accepts_english_and_localized_labels():
+    pattern = service_module._duration_pattern("8")
+
+    assert pattern.search("8s")
+    assert pattern.search("8 sec")
+    assert pattern.search("8 seconds")
+    assert pattern.search("8 giây")
+    assert not pattern.search("18 giây")
+
+
+def test_flow_settings_trigger_matches_generation_pill_not_grid_settings():
+    assert service_module._is_settings_trigger("Video · 720p · 8 giây crop_16_9 x2")
+    assert service_module._is_settings_trigger("", "Điều kiện kích hoạt cài đặt")
+    assert not service_module._is_settings_trigger("Cài đặt lưới ô", "Cài đặt")
+
+
+def test_flow_submit_button_matches_current_localized_icon_button():
+    assert service_module._flow_submit_button_score("arrow_forward", "Bắt đầu tạo") > 0
+    assert service_module._flow_submit_button_score("", "Start creating") > 0
+    assert service_module._flow_submit_button_score("Create", "") > 0
+    assert service_module._flow_submit_button_score("settings_2", "Cài đặt lưới ô") == 0
+
+
+def test_flow_media_prompt_match_is_exact_and_ignores_unrelated_media():
+    prompt = "a prehistoric forest"
+    assert service_module._media_prompt_matches(
+        {"mediaMetadata": {"requestData": {"promptInputs": [{"textInput": prompt}]}}},
+        prompt,
+    )
+    assert not service_module._media_prompt_matches(
+        {"mediaMetadata": {"requestData": {"promptInputs": [{"textInput": "another prompt"}]}}},
+        prompt,
+    )
+
+
+def test_flow_recovers_media_created_by_submit_before_worker_timeout():
+    class Api:
+        async def get_project_data(self):
+            return {"projectContents": {"media": [{
+                "name": "media-1",
+                "image": {"generatedImage": {}},
+                "mediaMetadata": {
+                    "createTime": "2026-09-05T00:00:01Z",
+                    "requestData": {"promptInputs": [{"textInput": "recover me"}]},
+                },
+            }]}}
+
+    class Page:
+        async def evaluate(self, _script):
+            return [{"id": "media-1", "src": "https://flow.google.com/asb/media-1", "width": 1376}]
+
+    job = {"createdAt": 1788566400.0, "prompt": "recover me"}
+    found = asyncio.run(service_module.FlowService()._find_existing_project_media(Api(), Page(), job, "image", 1))
+
+    assert found == [{"id": "media-1", "src": "https://flow.google.com/asb/media-1", "width": 1376}]
+
+
 def test_flow_desktop_browser_uses_installed_chrome_not_playwright_download():
     browser = importlib.import_module("pipeline.flow.browser")
     source = Path(browser.__file__).read_text(encoding="utf-8")
@@ -286,6 +353,22 @@ def test_desktop_flow_adds_kind_to_full_selected_output_path(monkeypatch, tmp_pa
     assert output.parent.is_dir()
 
 
+def test_desktop_flow_does_not_duplicate_kind_for_selected_flow_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIDEO_CLONE_DESKTOP", "1")
+    flow = service_module.FlowService()
+    selected = tmp_path / "ZM_AIO_TOOL" / "flow" / "image" / "campaign"
+    job = {
+        "id": "job-canonical-path",
+        "inputIndex": 1,
+        "kind": "image",
+        "settings": {"outputDir": str(selected), "filePrefix": "result"},
+    }
+
+    output = flow._output_path(job, 1, "png")
+
+    assert output.parent == selected
+
+
 def test_desktop_flow_resolves_relative_result_folder_under_downloads(monkeypatch, tmp_path):
     monkeypatch.setenv("VIDEO_CLONE_DESKTOP", "1")
     monkeypatch.setattr(service_module.Path, "home", lambda: tmp_path)
@@ -385,6 +468,60 @@ def test_flow_runtime_profile_keeps_login_state_and_skips_browser_caches(monkeyp
     assert (runtime / "Default" / "Cookies").read_text(encoding="utf-8") == "session"
     assert not (runtime / "Default" / "Cache").exists()
     assert not (runtime / "SingletonLock").exists()
+
+
+def test_flow_runtime_profile_ignores_ephemeral_chrome_state(monkeypatch, tmp_path):
+    source = tmp_path / "profiles" / "account-1"
+    (source / "Default").mkdir(parents=True)
+    (source / "Default" / "Cookies").write_text("session", encoding="utf-8")
+    (source / "RunningChromeVersion").write_text("ephemeral", encoding="utf-8")
+    monkeypatch.setattr(service_module.store, "profile_dir", lambda _account_id: source)
+    monkeypatch.setattr(service_module.store, "root", lambda: tmp_path)
+
+    runtime = service_module.FlowService()._clone_runtime_profile("account-1", "job-1")
+
+    assert (runtime / "Default" / "Cookies").is_file()
+    assert not (runtime / "RunningChromeVersion").exists()
+
+
+def test_flow_runtime_profile_missing_source_returns_empty_profile(monkeypatch, tmp_path):
+    source = tmp_path / "profiles" / "account-1"
+    monkeypatch.setattr(service_module.store, "profile_dir", lambda _account_id: source)
+    monkeypatch.setattr(service_module.store, "root", lambda: tmp_path)
+
+    runtime = service_module.FlowService()._clone_runtime_profile("account-1", "job-1")
+
+    assert runtime.is_dir()
+    assert list(runtime.iterdir()) == []
+
+
+def test_flow_runtime_profile_handles_profile_removed_during_copy(monkeypatch, tmp_path):
+    source = tmp_path / "profiles" / "account-1"
+    source.mkdir(parents=True)
+    monkeypatch.setattr(service_module.store, "profile_dir", lambda _account_id: source)
+    monkeypatch.setattr(service_module.store, "root", lambda: tmp_path)
+    monkeypatch.setattr(service_module.shutil, "copytree", lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError(2, "No such file or directory")))
+
+    runtime = service_module.FlowService()._clone_runtime_profile("account-1", "job-1")
+
+    assert runtime.is_dir()
+
+
+def test_flow_runtime_profile_failure_marks_job_failed_without_thread_traceback(monkeypatch):
+    """A profile I/O failure must become a readable job error, not a dead thread."""
+    flow = service_module.FlowService()
+    job = {"id": "job-profile", "accountId": "account-1", "settings": {"concurrency": 1}, "status": "queued"}
+    patches = []
+    monkeypatch.setattr(service_module.store, "get_row", lambda table, row_id: job if table == "jobs" and row_id == job["id"] else ({"id": "account-1"} if table == "accounts" else None))
+    monkeypatch.setattr(service_module.store, "patch_row", lambda _table, _row_id, patch: patches.append(dict(patch)) or {**job, **patch})
+    monkeypatch.setattr(flow, "_clone_runtime_profile", lambda *_args: (_ for _ in ()).throw(OSError("profile copy failed")))
+
+    flow._run_sync(job["id"])
+
+    assert patches
+    assert patches[-1]["status"] == "failed"
+    assert patches[-1]["stage"] == "profile"
+    assert "profile copy failed" in patches[-1]["error"]
 
 
 def test_flow_uses_selected_jobs_per_account_concurrency(monkeypatch, tmp_path):

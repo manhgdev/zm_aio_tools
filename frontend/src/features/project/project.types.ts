@@ -128,7 +128,7 @@ export type ProjectSettings = {
   subtitleSource?: string
   sourceLang: string
   targetLang: string
-  /** google | mymemory | tiktok | capcut | ollama | openai | gemini | deepseek | openrouter | grok | nvidia */
+  /** google | mymemory | tiktok | capcut | ollama | openai | gemini | deepseek | openrouter | grok | groq | nvidia */
   translator:
     | 'google'
     | 'mymemory'
@@ -140,6 +140,7 @@ export type ProjectSettings = {
     | 'deepseek'
     | 'openrouter'
     | 'grok'
+    | 'groq'
     | 'nvidia'
   /** Ollama local dùng model đã tải; cloud dùng hạn mức tài khoản Ollama. */
   ollamaMode: 'local' | 'cloud'
@@ -271,7 +272,7 @@ export type TimelineLayer = {
   keyframes?: Array<{ at: number; x?: number; y?: number; scaleX?: number; scaleY?: number; rotation?: number; opacity?: number }>
 }
 
-export type CloudProviderId = 'openai' | 'gemini' | 'deepseek' | 'openrouter' | 'grok' | 'nvidia'
+export type CloudProviderId = 'openai' | 'gemini' | 'deepseek' | 'openrouter' | 'grok' | 'groq' | 'nvidia'
 
 export type CloudProviderConfig = {
   apiKey: string
@@ -280,8 +281,6 @@ export type CloudProviderConfig = {
   keyCount?: number
   baseUrl: string
   model: string
-  reviewBaseUrl: string
-  reviewModel: string
   label: string
   env: string
 }

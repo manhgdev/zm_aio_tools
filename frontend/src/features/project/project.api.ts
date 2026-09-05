@@ -219,7 +219,7 @@ export const api = {
   saveConfig: (body: {
     cloud?: Record<
       string,
-      { apiKey?: string; baseUrl?: string; model?: string; reviewBaseUrl?: string; reviewModel?: string }
+      { apiKey?: string; baseUrl?: string; model?: string }
     >
     tts?: {
       elevenlabs?: { apiKeys?: string }

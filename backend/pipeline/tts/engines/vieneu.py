@@ -34,6 +34,16 @@ _clone_lock = threading.Lock()
 _clone_cache: dict[str, tuple[int, int]] = {}
 
 
+def _subprocess_env() -> dict[str, str]:
+    """Use the bounded desktop environment for ffmpeg and GPU probes."""
+    try:
+        from pipeline.core.runtime_site import subprocess_environment
+
+        return subprocess_environment()
+    except Exception:
+        return os.environ.copy()
+
+
 def _normalize_clone_reference(source: Path, destination: Path) -> None:
     """Convert an uploaded reference to the exact WAV format VieNeu expects.
 
@@ -59,6 +69,7 @@ def _normalize_clone_reference(source: Path, destination: Path) -> None:
             text=True,
             timeout=180,
             check=False,
+            env=_subprocess_env(),
         )
     except FileNotFoundError as exc:
         raise RuntimeError("Không tìm thấy FFmpeg để đọc file mẫu giọng") from exc
@@ -146,6 +157,7 @@ def _nvidia_present() -> bool:
             capture_output=True,
             text=True,
             timeout=8,
+            env=_subprocess_env(),
             creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if sys.platform == "win32" else 0,
         )
         return r.returncode == 0 and bool((r.stdout or "").strip())
@@ -303,21 +315,13 @@ def get_client() -> Any:
     global _client, _client_err, _load_state
     if getattr(sys, "frozen", False):
         from . import vieneu_frozen
-        # Frozen APP previously probed the available ONNX runtime first, so an
-        # Apple Silicon install could stay on CPU even though MPS PyTorch had
-        # not been prepared yet.  Prepare the runtime once before choosing a
-        # worker backend.
+        # Frozen APP must keep torch/ONNX out of the UI/API process.  The
+        # runtime worker performs the real import and reports a short error;
+        # loading native extensions here can abort the whole desktop process.
         with _lock:
             if _load_state != "ready":
                 _load_state = "loading"
                 try:
-                    from pipeline.core.system_check import ensure_runtime_torch, ensure_runtime_transformers
-                    from pipeline.core.runtime_site import bootstrap_ai_runtime, install_runtime_meta_path
-
-                    install_runtime_meta_path()
-                    bootstrap_ai_runtime()
-                    ensure_runtime_torch()
-                    ensure_runtime_transformers()
                     ok, detail = vieneu_frozen.probe()
                     if not ok:
                         raise RuntimeError(detail)

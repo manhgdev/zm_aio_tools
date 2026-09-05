@@ -962,11 +962,15 @@ export function estimateCaptionBox(
   // below/above: căn giữa theo bề rộng video, không theo tâm bbox OCR
   // (bbox OCR có thể ngắn/lệch → caption bị lệch so với chữ gốc)
   const cx = frameW / 2
+  const belowY = ocr.y + ocr.h + gap
+  const aboveY = ocr.y - gap - textBox.h
   let y0: number
   if (placement === 'below') {
-    y0 = Math.min(frameH - textBox.h, ocr.y + ocr.h + gap)
+    // Near an edge, clamping the requested lane can put its text straight on
+    // top of the source subtitle.  Flip only when that is the sole free side.
+    y0 = belowY <= frameH - textBox.h ? belowY : Math.max(0, aboveY)
   } else {
-    y0 = Math.max(0, ocr.y - gap - textBox.h)
+    y0 = aboveY >= 0 ? aboveY : Math.min(frameH - textBox.h, belowY)
   }
   const x0 = Math.max(0, Math.min(frameW - textBox.w, Math.round(cx - textBox.w / 2)))
   return { x: x0, y: y0, w: textBox.w, h: textBox.h }

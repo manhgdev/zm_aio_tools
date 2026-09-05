@@ -114,6 +114,30 @@ function reviewErrorLabel(error: string, t: (vi: string, en: string) => string) 
       'Gemini rejected the request. Check the API key, its project, and Gemini API access in Settings → Cloud.',
     )
   }
+  if (error.includes('REVIEW_CLOUD_GEMINI_API_KEY_MISSING')) {
+    return t(
+      'Gemini chưa có API key. Mở Cấu hình → Cloud → Gemini, lưu key rồi chạy lại.',
+      'Gemini has no API key. Open Settings → Cloud → Gemini, save a key, then retry.',
+    )
+  }
+  if (error.includes('REVIEW_CLOUD_GEMINI_AUTH_FAILED') || error.includes('REVIEW_CLOUD_GEMINI_ACCESS_DENIED')) {
+    return t(
+      'Gemini từ chối API key hoặc key chưa có quyền dùng Gemini API. Kiểm tra key và project trong Cấu hình → Cloud.',
+      'Gemini rejected the API key or it lacks Gemini API access. Check the key and project in Settings → Cloud.',
+    )
+  }
+  if (error.includes('REVIEW_CLOUD_GEMINI_RATE_LIMITED_OR_QUOTA')) {
+    return t(
+      'Gemini đang hết quota hoặc bị giới hạn tốc độ. Chờ quota khả dụng rồi chạy lại.',
+      'Gemini is out of quota or rate-limited. Wait for quota to become available, then retry.',
+    )
+  }
+  if (error.includes('REVIEW_CLOUD_GEMINI_MODEL_OR_REQUEST_INVALID')) {
+    return t(
+      'Model AI phân tích Review của Gemini không hợp lệ. Mở Cấu hình → Cloud → Gemini và dùng model Gemini API, ví dụ gemini-2.5-flash.',
+      'The Gemini Review analysis model is invalid. Open Settings → Cloud → Gemini and use a Gemini API model, such as gemini-2.5-flash.',
+    )
+  }
   if (error.includes('REVIEW_CLOUD_GEMINI_UNAVAILABLE')) {
     return t(
       'Gemini đang tạm không phản hồi. Hệ thống đã thử lại tự động; kiểm tra mạng, Base URL và API key trong Cấu hình → Cloud rồi chạy lại.',
@@ -533,12 +557,13 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
           return (
             <article key={job.id} className="rv-job">
               <div className="rv-job-top">
-                <div>
+                <div className="rv-job-summary">
                   <span className="rv-num">#{idx + 1}</span>
                   <h3>{jobTitle(job)} - {fmtDate(job, locale)}</h3>
                   <div className="rv-meta">{relTime(job.updatedAt || job.createdAt, t)} · {fmtDate(job, locale)}</div>
                   <div className="rv-tags">
                     <span>📐 {modeLabel(mode, t)}</span>
+                    <span>🌐 {t('Gốc', 'Source')}: {String(snap.sourceLang || 'auto').toUpperCase()}</span>
                     <span>🎙 {voices.find((v) => v.id === snap.voice)?.name || t('Giọng hệ thống', 'System voice')}</span>
                     <span>📝 {String(snap.scriptStyle || snap.style || '')}</span>
                   </div>
@@ -584,7 +609,8 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
                   </div> : null}
                 </div>
               ) : null}
-              <div className="rv-row" style={{ marginTop: 10 }}>
+              <div className="rv-job-actions">
+              <div className="rv-row">
                 {job.status === 'done' && job.projectId && onOpenEditor ? (
                   <button type="button" className="rv-run" onClick={() => onOpenEditor(job.projectId!)}>▶ {t('Mở Editor', 'Open Editor')}</button>
                 ) : null}
@@ -612,12 +638,13 @@ export default function FilmPage({ onBack, onOpenEditor }: Props) {
                 <button type="button" className="rv-ghost" onClick={() => openCreate(job, true)}>✎ {t('Cài đặt', 'Settings')}</button>
                 <button type="button" className="rv-ghost danger" onClick={() => void removeJob(job)}>✕ {t('Xoá', 'Delete')}</button>
               </div>
-              <div className="rv-log-h" style={{ marginTop: 8 }}>
+              <div className="rv-log-h">
                 <button type="button" className="rv-ghost" onClick={() => setJobLogOpen((s) => ({ ...s, [job.id]: !logShown }))}>
                   📄 {t('Xem nhật ký tiến trình', 'View progress log')} ({lines.length} {t('dòng', 'lines')}) {logShown ? '▲' : '▼'}
                 </button>
                 <button type="button" className="rv-mini" onClick={() => void copyText(lines.join('\n'), t('Đã sao chép log.', 'Log copied.'))}>📋 {t('Chép log', 'Copy log')}</button>
                 {!showParts ? <span className="rv-mode-tag">{modeLabel(mode, t)}</span> : null}
+              </div>
               </div>
               {logShown ? <AutoLog className="rv-job-log" text={lines.join('\n') || t('[Hệ thống] đang chạy…', '[System] running…')} /> : null}
             </article>

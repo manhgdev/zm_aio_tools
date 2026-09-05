@@ -59,7 +59,10 @@ jobs:
             tests/backend/core/test_audit_regressions.py `
             tests/backend/core/test_cuda_dll_overlay.py `
             tests/backend/ocr/test_ocr_cuda_frozen_probe.py
-          node --test --test-name-pattern="English catalog covers Configuration labels|English catalog has no empty entries" tests/i18n.catalog.test.mjs
+          backend/.venv/Scripts/python.exe -m pytest tests/test_chat.py
+          backend/.venv/Scripts/python.exe -m pytest tests/test_chat_providers.py
+          backend/.venv/Scripts/python.exe -m pytest tests/test_automation.py
+          node --test --test-name-pattern="English catalog covers Configuration labels|English catalog has no empty entries|Chat tab is bilingual|Automation queue UI" tests/i18n.catalog.test.mjs
 
       - name: Build EXE
         shell: pwsh

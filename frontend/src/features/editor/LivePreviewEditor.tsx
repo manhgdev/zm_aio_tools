@@ -61,6 +61,7 @@ import {
   dubPlaybackSpeed,
   effectiveOverlayLayout,
   emptyTrackFlags,
+  expandOverlappingSubtitleBand,
   expandSegmentsForPlayback,
   fallbackCoverBox,
   fitTimelineZoom,
@@ -93,6 +94,7 @@ import {
   resolveOverlayFontPreferred,
   resolvePreviewOverLayout,
   resolveSegmentCover,
+  resolveTimelineDuration,
   rippleDeleteMediaClips,
   rippleShiftOverlay,
   rippleShiftSegment,
@@ -237,6 +239,11 @@ export default function LivePreviewEditor({
   const videoMutedForDubRef = useRef(false)
   const trackRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  /** Overlay geometry is painted directly while dragging.  Persisting every
+   * pointer event used to re-render the whole editor and issue an API write,
+   * making effect boxes appear to stick behind the pointer. */
+  const overlayElementRefs = useRef(new Map<string, HTMLDivElement>())
+  const overlayDragDraftRef = useRef<TextOverlay | null>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const rulerScrollRef = useRef<HTMLDivElement>(null)
   const tracksScrollRef = useRef<HTMLDivElement>(null)
@@ -393,6 +400,7 @@ export default function LivePreviewEditor({
   const [draft, setDraft] = useState<{ id: string; start: number; end: number } | null>(null)
   const [groupDraft, setGroupDraft] = useState<Record<string, { start: number; end: number }> | null>(null)
   const [bboxDraft, setBboxDraft] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [activeBboxId, setActiveBboxId] = useState<string | null>(null)
   const [draggingBox, setDraggingBox] = useState(false)
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({ h: false, v: false })
   /** true khi đang kéo pan aspect / crop tự do — hiện tia căn giữa giống bbox */
@@ -409,6 +417,7 @@ export default function LivePreviewEditor({
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null)
   const [videoClips, setVideoClips] = useState<MediaClip[]>([])
   const [bgClips, setBgClips] = useState<MediaClip[]>([])
+  const mediaDurRef = useRef(0)
   const [importedClips, setImportedClips] = useState<ImportedTimelineClip[]>(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem(`videoclone.importedClips.${projectId}`) || '[]')
@@ -949,18 +958,14 @@ export default function LivePreviewEditor({
   // Preview Ns → chỉ làm việc trong Ns (khớp xuất). Dịch full → cả video.
   // Ưu tiên videoTrackEnd (sau trim right) — không phình lại full source.
   const sourceDur = Number.isFinite(duration) && duration > 0 ? duration : 0
-  const clipCap = workClipSec > 0 ? workClipSec : 0
-  const sourceWindow = sourceDur > 0 ? Math.max(0, sourceDur - videoSourceStart) : 0
-  const timelineDuration = (() => {
-    let d = videoTrackEnd > 0
-      ? videoTrackEnd
-      : Math.max(sourceWindow, lastSegment?.end ?? 0, 1)
-    if (clipCap > 0) {
-      const cap = Math.max(0, clipCap - videoSourceStart)
-      d = Math.min(d, cap, sourceWindow > 0 ? sourceWindow : cap)
-    }
-    return Math.max(d, 1)
-  })()
+  const timelineDuration = resolveTimelineDuration({
+    sourceDuration: sourceDur,
+    lastSegmentEnd: lastSegment?.end ?? 0,
+    videoTrackEnd,
+    previousMediaDuration: mediaDurRef.current,
+    workClipSec,
+    videoSourceStart,
+  })
 
   useEffect(() => {
     if (!playing) return
@@ -1076,8 +1081,6 @@ export default function LivePreviewEditor({
       if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = 0
     }
   }
-
-  const mediaDurRef = useRef(0)
 
   // Init / clamp clip Video & Âm gốc theo cửa sổ làm việc
   useEffect(() => {
@@ -1380,6 +1383,35 @@ export default function LivePreviewEditor({
   const captionPreferId =
     selectedId && layoutSegs.some((s) => s.id === selectedId) ? selectedId : null
   const solidAtPlayhead = solidOverlaysAt(layoutSegs, time)
+  const withExpandedMidHardsubBand = (items: Segment[]) => {
+    const mids = items.filter((seg) =>
+      seg.bboxInherited !== false
+      && Boolean(seg.bbox)
+      && effectiveOverlayLayout(seg, sourceHeight, sourceWidth) === 'mid',
+    )
+    if (!mids.length) return items
+    return items.map((seg) => {
+      if (!mids.includes(seg) || !seg.bbox) return seg
+      const box = clampCoverBox(seg.bbox, sourceWidth, sourceHeight)
+      const peers = mids.filter((peer) => {
+        if (!peer.bbox) return false
+        const candidate = clampCoverBox(peer.bbox, sourceWidth, sourceHeight)
+        const overlap = Math.max(0, Math.min(box.x + box.w, candidate.x + candidate.w) - Math.max(box.x, candidate.x))
+        const sameRow = Math.abs((box.y + box.h / 2) - (candidate.y + candidate.h / 2)) <= Math.max(box.h, candidate.h) * 0.5
+        return sameRow && overlap >= Math.min(box.w, candidate.w) * 0.35
+      })
+      const sourceGlyphs = [...(seg.source || '')].filter((char) => /[\p{L}\p{N}]/u.test(char)).length
+      const likelyTwoRows = peers.length > 1 || (box.w >= sourceWidth * 0.9 && sourceGlyphs >= 24)
+      if (!likelyTwoRows) return seg
+      const band = expandOverlappingSubtitleBand(
+        peers.map((peer) => clampCoverBox(peer.bbox!, sourceWidth, sourceHeight)),
+        sourceWidth,
+        sourceHeight,
+        resolveCaptionFontSize(seg, settings, sourceWidth, sourceHeight),
+      )
+      return band ? { ...seg, bbox: band } : seg
+    })
+  }
   // Preview masks follow caption [start,end) exactly. Extended cover timing made
   // old/new boxes appear outside their timeline clips and overlap at boundaries.
   const coverSegsRaw = settings.burnSubs
@@ -1421,8 +1453,8 @@ export default function LivePreviewEditor({
       ?? hors.reduce((a, b) => (a.start >= b.start ? a : b))
     return list.filter((s) => captionLaneOf(s, sourceHeight, sourceWidth) !== 'horizontal' || s.id === active.id)
   }
-  const coverSegs = pickOneHorizontal(pickOneMid(coverSegsRaw))
-  const timelineSegs = pickOneHorizontal(pickOneMid(timelineSegsRaw))
+  const coverSegs = pickOneHorizontal(pickOneMid(withExpandedMidHardsubBand(coverSegsRaw)))
+  const timelineSegs = pickOneHorizontal(pickOneMid(withExpandedMidHardsubBand(timelineSegsRaw)))
   const timelineSeg = pickTimelineSeg(layoutSegs, time, captionPreferId)
   const coverSeg = (captionPreferId && coverSegs.find((s) => s.id === captionPreferId))
     ?? coverSegs[0]
@@ -1501,20 +1533,21 @@ export default function LivePreviewEditor({
           )
         : null)
       ?? selectedBoxSource
-  // Khung kéo (handles): Caption / Cover tool / tab Vùng che chữ
-  const showBboxAtPlayhead = (() => {
-    // Watermark/OCR owns a TextOverlay box.  Do not show the subtitle bbox
-    // when that timeline clip is selected: otherwise the user drags a
-    // caption region simply because both happen to share the playhead.
-    if (selectedOverlayId && overlays.some((overlay) => overlay.id === selectedOverlayId && isWatermarkOverlay(overlay))) return false
+  // Caption bbox is always clickable during its own time range, just like a
+  // manual blur region. It must not depend on first selecting the timeline row.
+  const bboxInteractiveAtPlayhead = (() => {
     if (tool === 'text') return false
     if (bboxDraft) return true
-    if (!(trackFocus === 'caption' || tool === 'cover' || propTab === 'mask')) return false
     const target = bboxSeg ?? selected
     // Editor handles follow caption timecode exactly. Only the mask may use
     // coverStart/coverEnd to hide source text before/after speech timing.
     return Boolean(target && time >= target.start && time < target.end)
   })()
+  // A selected manual effect hides the bbox frame, but not its hitbox: click
+  // the subtitle area to switch focus back without ever seeing two frames.
+  const showBboxAtPlayhead = bboxInteractiveAtPlayhead
+    && activeBboxId === bboxSeg?.id
+    && !selectedOverlayId
   const captionLanes = useMemo(() => {
     const present = new Set(layoutSegs.map((s) => captionLaneOf(s, sourceHeight, sourceWidth)))
     return CAPTION_LANE_DEFS.filter((l) => l.key === 'horizontal' || present.has(l.key))
@@ -1522,9 +1555,16 @@ export default function LivePreviewEditor({
   const previewLogoDraft = logoDraft
     ? { ...logoDraft, positionKeyframes: generateLogoKeyframes(logoDraft, timelineDuration, sourceWidth, sourceHeight, segments, logoDraft.positionSeed) }
     : null
-  const previewOverlays = previewLogoDraft
+  const previewOverlaysBase = previewLogoDraft
     ? [...overlays.filter((o) => o.id !== previewLogoDraft.id), previewLogoDraft]
     : overlays
+  // Keep an imperative drag frame authoritative if video playback causes an
+  // unrelated React render before the single pointer-up save reaches App.
+  const previewOverlays = overlayDragDraftRef.current
+    ? previewOverlaysBase.map((overlay) =>
+      overlay.id === overlayDragDraftRef.current?.id ? overlayDragDraftRef.current : overlay,
+    )
+    : previewOverlaysBase
   const activeOverlays = previewOverlays.filter((o) => {
     const watermark = isWatermarkOverlay(o)
     // The video element can report currentTime === duration on its final
@@ -2402,30 +2442,60 @@ export default function LivePreviewEditor({
     event.preventDefault()
     const rect = canvas.getBoundingClientRect()
     const original = { x: overlay.x, y: overlay.y }
+    // One visual editor target at a time: an effect takes focus from bbox.
+    setActiveBboxId(null)
+    setSelectedId(null)
+    setSelectedIds([])
     setSelectedOverlayId(overlay.id)
+    setActiveBboxId(null)
     const watermark = isWatermarkOverlay(overlay)
     setTrackFocus(overlayTrack)
     setPropTab(watermark ? 'mask' : 'overlay')
     if (watermark) setTool('cover')
-    const histGate = { current: false }
-
-    const update = (move: PointerEvent) => {
-      const dx = ((move.clientX - event.clientX) / rect.width) * crop.w
-      const dy = ((move.clientY - event.clientY) / rect.height) * crop.h
-      const next = {
+    let last = overlay
+    let raf = 0
+    const paint = (next: TextOverlay) => {
+      const element = overlayElementRefs.current.get(next.id)
+      if (!element) return
+      const style = sourceToDisplayStyle(next, crop)
+      element.style.left = String(style.left)
+      element.style.top = String(style.top)
+      element.style.width = String(style.width)
+      element.style.height = String(style.height)
+    }
+    const update = (clientX: number, clientY: number) => {
+      const dx = ((clientX - event.clientX) / rect.width) * crop.w
+      const dy = ((clientY - event.clientY) / rect.height) * crop.h
+      last = {
         ...overlay,
         x: Math.round(Math.max(0, Math.min(sourceWidth - overlay.w, original.x + dx))),
         y: Math.round(Math.max(0, Math.min(sourceHeight - overlay.h, original.y + dy))),
       }
-      if (Math.abs(next.x - original.x) > 1 || Math.abs(next.y - original.y) > 1) {
-        pushHistoryOnce(histGate)
-      }
-      if (logoDraft?.id === overlay.id) setLogoDraft(next)
-      else onOverlayChange(next) // history đã ghi 1 lần
+      overlayDragDraftRef.current = last
+      if (!raf) raf = requestAnimationFrame(() => {
+        raf = 0
+        paint(last)
+      })
     }
-    const commit = () => { window.removeEventListener('pointermove', update); window.removeEventListener('pointerup', commit) }
-    window.addEventListener('pointermove', update)
+    const onMove = (move: PointerEvent) => update(move.clientX, move.clientY)
+    const commit = (up: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', commit)
+      window.removeEventListener('pointercancel', commit)
+      if (raf) cancelAnimationFrame(raf)
+      update(up.clientX, up.clientY)
+      if (raf) cancelAnimationFrame(raf)
+      paint(last)
+      if (Math.abs(last.x - original.x) > 1 || Math.abs(last.y - original.y) > 1) {
+        pushHistory()
+        if (logoDraft?.id === overlay.id) setLogoDraft(last)
+        else onOverlayChange(last)
+      }
+      overlayDragDraftRef.current = null
+    }
+    window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', commit, { once: true })
+    window.addEventListener('pointercancel', commit, { once: true })
   }
 
   function relayoutCaptionSegment(
@@ -2767,11 +2837,20 @@ export default function LivePreviewEditor({
     setTrackFocus(overlayTrack)
     setPropTab(watermark ? 'mask' : 'overlay')
     if (watermark) setTool('cover')
-    const histGate = { current: false }
-
-    const update = (move: PointerEvent) => {
-      const dx = ((move.clientX - event.clientX) / rect.width) * crop.w
-      const dy = ((move.clientY - event.clientY) / rect.height) * crop.h
+    let last = overlay
+    let raf = 0
+    const paint = (next: TextOverlay) => {
+      const element = overlayElementRefs.current.get(next.id)
+      if (!element) return
+      const style = sourceToDisplayStyle(next, crop)
+      element.style.left = String(style.left)
+      element.style.top = String(style.top)
+      element.style.width = String(style.width)
+      element.style.height = String(style.height)
+    }
+    const update = (clientX: number, clientY: number) => {
+      const dx = ((clientX - event.clientX) / rect.width) * crop.w
+      const dy = ((clientY - event.clientY) / rect.height) * crop.h
       let { x, y, w, h } = orig
       const minW = 24
       const minH = 16
@@ -2796,27 +2875,41 @@ export default function LivePreviewEditor({
       y = Math.max(0, Math.min(sourceHeight - h, Math.round(y)))
       w = Math.round(Math.min(w, sourceWidth - x))
       h = Math.round(Math.min(h, sourceHeight - y))
-      const next = { ...overlay, x, y, w, h }
-      if (
-        Math.abs(next.x - orig.x) > 1
-        || Math.abs(next.y - orig.y) > 1
-        || Math.abs(next.w - orig.w) > 1
-        || Math.abs(next.h - orig.h) > 1
-      ) {
-        pushHistoryOnce(histGate)
-      }
-      if (logoDraft?.id === overlay.id) setLogoDraft(next)
-      else onOverlayChange(next)
+      last = { ...overlay, x, y, w, h }
+      overlayDragDraftRef.current = last
+      if (!raf) raf = requestAnimationFrame(() => {
+        raf = 0
+        paint(last)
+      })
     }
-    const commit = () => {
-      window.removeEventListener('pointermove', update)
+    const onMove = (move: PointerEvent) => update(move.clientX, move.clientY)
+    const commit = (up: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', commit)
+      window.removeEventListener('pointercancel', commit)
+      if (raf) cancelAnimationFrame(raf)
+      update(up.clientX, up.clientY)
+      if (raf) cancelAnimationFrame(raf)
+      paint(last)
+      if (
+        Math.abs(last.x - orig.x) > 1
+        || Math.abs(last.y - orig.y) > 1
+        || Math.abs(last.w - orig.w) > 1
+        || Math.abs(last.h - orig.h) > 1
+      ) {
+        pushHistory()
+        if (logoDraft?.id === overlay.id) setLogoDraft(last)
+        else onOverlayChange(last)
+      }
+      overlayDragDraftRef.current = null
     }
-    window.addEventListener('pointermove', update)
+    window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', commit, { once: true })
+    window.addEventListener('pointercancel', commit, { once: true })
   }
 
   function focusCaption(seg: Segment, opts?: { additive?: boolean; range?: boolean }) {
+    setActiveBboxId(seg.id)
     setSelectedOverlayId(null)
     setSelectedMediaId(null)
     setTrackFocus('caption')
@@ -4345,6 +4438,15 @@ export default function LivePreviewEditor({
                         >
                           Default text
                         </button>
+                        <button
+                          type="button"
+                          className="w-full h-12 rounded-md border border-fuchsia-400/50 bg-fuchsia-500/10 hover:bg-fuchsia-500/15 transition-colors flex items-center justify-center gap-2 text-sm font-semibold text-fuchsia-700 dark:text-fuchsia-200 mb-2"
+                          title={t('Thêm vùng blur tại playhead; kéo trực tiếp trên video để đổi vị trí và kích thước.', 'Add a blur region at the playhead; drag it on the video to move and resize.')}
+                          onClick={() => addEffectOverlay(EFFECT_PRESETS[0])}
+                        >
+                          <TabSvg><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M8 9h8M8 12h8M8 15h8" /></TabSvg>
+                          {t('Thêm vùng làm mờ', 'Add blur region')}
+                        </button>
                         <div className="flex flex-col gap-0.5">
                           {overlays.map((overlay) => (
                             <div
@@ -4355,7 +4457,7 @@ export default function LivePreviewEditor({
                                   ? 'bg-secondary text-secondary-foreground'
                                   : 'hover:bg-accent text-muted-foreground hover:text-accent-foreground',
                               )}
-                              onClick={() => { setSelectedOverlayId(overlay.id); setPropTab('overlay') }}
+                              onClick={() => { setActiveBboxId(null); setSelectedOverlayId(overlay.id); setPropTab('overlay') }}
                             >
                               <span className="flex-1 truncate">{overlay.text}</span>
                               <span className="tabular-nums opacity-60 shrink-0">{formatTime(overlay.start)}</span>
@@ -4839,41 +4941,43 @@ export default function LivePreviewEditor({
                         />
                       ))}
 
-                      {/* Bbox kéo — suốt thanh vàng Mid [start,end); không ẩn sớm vì selected cũ */}
-                      {bboxSeg && selectedBox && showBboxAtPlayhead && tool !== 'text' && (
+                      {/* Bbox caption: same thin, unobtrusive frame as manual blur. */}
+                      {bboxSeg && selectedBox && bboxInteractiveAtPlayhead && tool !== 'text' && (
                         <div
                           className={cn(
-                            'group/bbox absolute border-2 border-violet-400 cursor-move z-10 overflow-visible',
-                            !showCoverBlur && 'bg-violet-900/10 border-dashed',
-                            draggingBox && 'opacity-80 ring-2 ring-violet-300',
-                            (tool === 'cover' || effectivePropTab === 'mask') && 'border-yellow-400 ring-1 ring-yellow-400/50',
+                            // Preview subtitles render above the mask. Keep its editable hitbox
+                            // above them as well, otherwise a transparent caption layer swallows clicks.
+                            'group/bbox absolute border cursor-move z-[30] overflow-visible touch-none',
+                            showBboxAtPlayhead ? 'border-white/75 border-dashed' : 'border-transparent bg-transparent',
+                            showBboxAtPlayhead && !showCoverBlur && 'bg-white/5',
+                            draggingBox && 'opacity-80',
                           )}
                           style={{
                             ...sourceToDisplayStyle(selectedBox, crop),
-                            ...(!maskBoxes.length && showCoverBlur
+                            ...(showBboxAtPlayhead && !maskBoxes.length && showCoverBlur
                               ? coverMaskPreviewStyle(coverMaskStyle, coverMaskColor, coverMaskOpacity)
                               : {}),
                           }}
-                          onPointerDown={(e) => beginBboxDrag(e, 'move', bboxSeg)}
+                          onPointerDown={(e) => { setActiveBboxId(bboxSeg.id); beginBboxDrag(e, 'move', bboxSeg) }}
                         >
+                          {/* 8 resize handles — invisible hit areas, only cursor changes on hover */}
                           {(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map((handle) => (
                             <span
                               key={handle}
                               className={cn(
-                                'absolute w-3.5 h-3.5 rounded-sm bg-white border-2 border-violet-500 shadow-sm z-20 touch-none opacity-0 hover:opacity-100 transition-opacity',
-                                handle === 'nw' && 'top-[-6px] left-[-6px] cursor-nwse-resize',
-                                handle === 'n'  && 'top-[-6px] left-[calc(50%-6px)] cursor-ns-resize',
-                                handle === 'ne' && 'top-[-6px] right-[-6px] cursor-nesw-resize',
-                                handle === 'e'  && 'top-[calc(50%-6px)] right-[-6px] cursor-ew-resize',
-                                handle === 'se' && 'bottom-[-6px] right-[-6px] cursor-nwse-resize',
-                                handle === 's'  && 'bottom-[-6px] left-[calc(50%-6px)] cursor-ns-resize',
-                                handle === 'sw' && 'bottom-[-6px] left-[-6px] cursor-nesw-resize',
-                                handle === 'w'  && 'top-[calc(50%-6px)] left-[-6px] cursor-ew-resize',
+                                'absolute z-[31] size-3',
+                                handle === 'nw' && '-left-1.5 -top-1.5 cursor-nwse-resize',
+                                handle === 'n'  && 'left-1/2 -translate-x-1/2 -top-1.5 cursor-ns-resize',
+                                handle === 'ne' && '-right-1.5 -top-1.5 cursor-nesw-resize',
+                                handle === 'e'  && 'top-1/2 -translate-y-1/2 -right-1.5 cursor-ew-resize',
+                                handle === 'se' && '-right-1.5 -bottom-1.5 cursor-nwse-resize',
+                                handle === 's'  && 'left-1/2 -translate-x-1/2 -bottom-1.5 cursor-ns-resize',
+                                handle === 'sw' && '-left-1.5 -bottom-1.5 cursor-nesw-resize',
+                                handle === 'w'  && 'top-1/2 -translate-y-1/2 -left-1.5 cursor-ew-resize',
                               )}
-                              onPointerDown={(e) => { e.stopPropagation(); beginBboxDrag(e, handle, bboxSeg) }}
+                              onPointerDown={(e) => { e.stopPropagation(); setActiveBboxId(bboxSeg.id); beginBboxDrag(e, handle, bboxSeg) }}
                             />
                           ))}
-
                         </div>
                       )}
 
@@ -5104,9 +5208,12 @@ export default function LivePreviewEditor({
                           return (
                             <div
                               key={overlay.id}
+                              ref={(element) => {
+                                if (element) overlayElementRefs.current.set(overlay.id, element)
+                                else overlayElementRefs.current.delete(overlay.id)
+                              }}
                               className={cn(
-                                'absolute z-[15] cursor-move overflow-visible',
-                                sel && 'ring-2 ring-fuchsia-400',
+                                'group/effect absolute z-[15] cursor-move overflow-visible',
                               )}
                               style={sourceToDisplayStyle(overlay, crop)}
                               onPointerDown={(e) => {
@@ -5119,35 +5226,12 @@ export default function LivePreviewEditor({
                               ) : (
                                 <div
                                   className={cn(
-                                    'absolute inset-0 overflow-hidden rounded-sm border border-dashed',
-                                    sel ? 'border-fuchsia-200/90' : 'border-transparent',
+                                    'absolute inset-0 overflow-hidden rounded-sm border border-dashed border-transparent transition-opacity',
+                                    // Giữ khung chọn mảnh như bbox; resize dùng Rộng/Cao ở panel.
+                                    sel && 'border-white/75',
                                   )}
                                   style={coverMaskPreviewStyle(style, color, opacity)}
                                 />
-                              )}
-                              {sel && (
-                                <>
-
-                                  {(['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'] as const).map((edge) => {
-                                    const pos: Record<string, string> = {
-                                      nw: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize',
-                                      ne: 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize',
-                                      sw: 'left-0 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize',
-                                      se: 'right-0 bottom-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize',
-                                      n: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize',
-                                      s: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-ns-resize',
-                                      e: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2 cursor-ew-resize',
-                                      w: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize',
-                                    }
-                                    return (
-                                      <span
-                                        key={edge}
-                                        className={cn('absolute z-30 size-4 rounded-sm bg-fuchsia-400 border border-white shadow-sm', pos[edge])}
-                                        onPointerDown={(e) => beginOverlayResize(e, overlay, edge)}
-                                      />
-                                    )
-                                  })}
-                                </>
                               )}
                             </div>
                           )
@@ -5637,6 +5721,9 @@ export default function LivePreviewEditor({
                   <div className="w-px h-5 bg-border mx-0.5" />
                   <TlButton title="Thêm text overlay tại playhead" onClick={() => addTextOverlay()}>
                     <TabSvg><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></TabSvg>
+                  </TlButton>
+                  <TlButton title={t('Thêm vùng làm mờ tại playhead', 'Add blur region at playhead')} onClick={() => addEffectOverlay(EFFECT_PRESETS[0])}>
+                    <TabSvg><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M8 9h8M8 12h8M8 15h8" /></TabSvg>
                   </TlButton>
                   <TlButton
                     title={'Phím tắt:\nCtrl+Z — Hoàn tác · Space — Play\nCtrl+G — Group · Alt+G — Ghép\nDelete — Xóa'}

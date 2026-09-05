@@ -95,6 +95,35 @@ def test_sanitize_windows_path_removes_all_normalized_duplicates(monkeypatch) ->
     assert rs.sanitize_windows_path(value) == r"C:\Tools;C:\Windows\System32"
 
 
+def test_sanitize_windows_path_bounds_oversized_environment(monkeypatch) -> None:
+    monkeypatch.setattr(rs.sys, "platform", "win32")
+    value = ";".join(fr"C:\\long\segment-{i:04d}" + "x" * 120 for i in range(400))
+    bounded = rs.sanitize_windows_path(value)
+    assert len(bounded) <= rs._WINDOWS_PATH_LIMIT
+    assert bounded.startswith(r"C:\\long\segment-0000")
+    assert bounded.endswith("x" * 120)
+
+
+def test_sanitize_process_environment_repairs_inherited_path(monkeypatch) -> None:
+    monkeypatch.setattr(rs.sys, "platform", "win32")
+    env = {"PATH": ";".join(fr"C:\\tool-{i:04d}" + "x" * 120 for i in range(400))}
+    result = rs.sanitize_process_environment(env)
+    assert result is env
+    assert len(env["PATH"]) <= rs._WINDOWS_PATH_LIMIT
+
+
+def test_subprocess_environment_keeps_runtime_and_system_entries_when_path_is_oversized(monkeypatch) -> None:
+    monkeypatch.setattr(rs.sys, "platform", "win32")
+    runtime = r"C:\\Users\\Windows\\AppData\\Local\\VideoClone\\.venv-runtime\\Scripts"
+    system = r"C:\\Windows\\System32"
+    env = {"PATH": ";".join([runtime, *[fr"C:\\long-{i:04d}" + "x" * 120 for i in range(400)], system])}
+    monkeypatch.setattr(rs, "_WINDOWS_PATH_LIMIT", 1200)
+    bounded = rs.subprocess_environment(env)
+    assert len(bounded["PATH"]) <= 1200
+    assert runtime in bounded["PATH"]
+    assert system in bounded["PATH"]
+
+
 def test_prepare_runtime_torch_dlls_registers_handle_once(monkeypatch, tmp_path: Path) -> None:
     site = tmp_path / "site-packages"
     torch_lib = site / "torch" / "lib"

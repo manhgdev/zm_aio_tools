@@ -33,7 +33,11 @@ export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
 
   const filteredTemplates = useMemo(() => {
     return FLOW_PROMPT_TEMPLATES.filter((tpl) => {
-      if (categoryFilter !== 'all' && tpl.category !== categoryFilter) return false
+      // The Audio-First 2D engines define the visual language for both
+      // keyframe images and the videos built from those images. Keep the same
+      // two bilingual templates available from the Video filter so a video
+      // prompt cannot silently drift from its image style.
+      if (categoryFilter !== 'all' && tpl.category !== categoryFilter && !(categoryFilter === 'video' && tpl.category === 'image')) return false
       if (langFilter !== 'all' && tpl.lang !== langFilter) return false
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase()
@@ -194,7 +198,7 @@ export function FlowTemplatesPanel({ onClose, embedded = false }: Props) {
                     {tpl.lang === 'vi' ? '🇻🇳 Tiếng Việt' : '🌐 English'}
                   </span>
                   <span className="flow-template-badge flow-template-badge--cat">
-                    {tpl.category === 'image' ? '🎨 2D Image' : tpl.category === 'video' ? '🎬 Video' : '📚 Series'}
+                    {categoryFilter === 'video' && tpl.category === 'image' ? t('🎬 Video', '🎬 Video') : tpl.category === 'image' ? t('🎨 Ảnh 2D', '🎨 2D Image') : tpl.category === 'video' ? t('🎬 Video', '🎬 Video') : t('📚 Series', '📚 Series')}
                   </span>
                   <span className="flow-template-badge flow-template-badge--ver">{tpl.version}</span>
                 </div>

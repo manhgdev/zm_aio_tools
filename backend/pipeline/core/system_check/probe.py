@@ -14,6 +14,16 @@ import time
 from pathlib import Path
 
 
+def _safe_subprocess_env() -> dict[str, str]:
+    """Use the bounded desktop environment for every runtime probe."""
+    try:
+        from pipeline.core.runtime_site import subprocess_environment
+
+        return subprocess_environment()
+    except Exception:
+        return os.environ.copy()
+
+
 def _which(name: str) -> str | None:
     result = shutil.which(name)
     # Windows PATH entries đôi khi có trailing space/CR → strip để tránh
@@ -29,6 +39,7 @@ def _run_ver(cmd: list[str], *, timeout: float = 4.0) -> str:
             text=True,
             stderr=subprocess.STDOUT,
             timeout=timeout,
+            env=_safe_subprocess_env(),
         ).strip()
         return out.splitlines()[0][:120] if out else "ok"
     except (FileNotFoundError, subprocess.SubprocessError, OSError) as e:
@@ -87,6 +98,7 @@ def _runtime_modules_batch_ok(names: list[str]) -> dict[str, tuple[bool, str]]:
             capture_output=True,
             text=True,
             timeout=120,
+            env=_safe_subprocess_env(),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
         )
     except subprocess.TimeoutExpired:
@@ -371,6 +383,7 @@ def _ocr_directml_check() -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=120,
+            env=_safe_subprocess_env(),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -391,6 +404,7 @@ def _ocr_cuda_check_fresh(python: str | Path = sys.executable) -> tuple[bool, st
             capture_output=True,
             text=True,
             timeout=120,
+            env=_safe_subprocess_env(),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
         )
     except subprocess.TimeoutExpired:
@@ -423,6 +437,7 @@ def _demucs_venv_python() -> Path | None:
                 [str(exe), "-c", "import demucs, soundfile"],
                 capture_output=True,
                 timeout=25,
+                env=_safe_subprocess_env(),
             )
             if r.returncode == 0:
                 return True
@@ -430,6 +445,7 @@ def _demucs_venv_python() -> Path | None:
                 [str(exe), "-c", "import demucs_mlx, soundfile"],
                 capture_output=True,
                 timeout=25,
+                env=_safe_subprocess_env(),
             )
             return r2.returncode == 0
         except (OSError, subprocess.SubprocessError):
@@ -478,6 +494,7 @@ def _demucs_check_uncached() -> tuple[bool, str]:
                 capture_output=True,
                 text=True,
                 timeout=45,
+                env=_safe_subprocess_env(),
             )
         except (OSError, subprocess.SubprocessError) as e:
             return False, str(e)[:160]
@@ -503,6 +520,7 @@ def _demucs_check_uncached() -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=45,
+            env=_safe_subprocess_env(),
         )
     except (OSError, subprocess.SubprocessError) as e:
         return False, str(e)[:160]

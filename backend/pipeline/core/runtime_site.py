@@ -17,6 +17,11 @@ from pathlib import Path
 # add_dll_directory() trả handle — phải giữ sống hoặc GC sẽ xóa dir khỏi DLL search path!
 _dll_handles: dict[str, object] = {}
 
+# Windows environment blocks are limited to 32,767 characters. Keep margin
+# for process-spawn wrappers and preserve both app/runtime and system entries
+# when an inherited PATH is oversized.
+_WINDOWS_PATH_LIMIT = 32_700
+
 _RUNTIME_ROOTS = frozenset(
     {
         "accelerate",
@@ -93,7 +98,7 @@ def _windows_path_key(value: str) -> str:
 
 
 def sanitize_windows_path(value: str) -> str:
-    """Remove empty and normalized duplicate entries from a Windows PATH."""
+    """Remove duplicates and bound a Windows PATH before DLL/process calls."""
     if sys.platform != "win32":
         return value
     seen: set[str] = set()
@@ -106,21 +111,58 @@ def sanitize_windows_path(value: str) -> str:
             continue
         seen.add(key)
         parts.append(part)
-    return ";".join(parts)
+    joined = ";".join(parts)
+    if len(joined) <= _WINDOWS_PATH_LIMIT:
+        return joined
+
+    # Keep a prefix (bundle/runtime DLLs) and suffix (system tools). Do not
+    # truncate individual entries: a shortened directory is never usable.
+    head: list[str] = []
+    head_len = 0
+    last = parts[-1] if parts else ""
+    for part in parts:
+        next_len = len(part) + (1 if head else 0)
+        if head_len + next_len + (1 if part != last else 0) + len(last) > _WINDOWS_PATH_LIMIT:
+            break
+        head.append(part)
+        head_len += next_len
+    tail: list[str] = []
+    for part in reversed(parts[len(head):]):
+        candidate = [part, *tail]
+        size = head_len + (1 if head else 0) + len(";".join(candidate))
+        if size > _WINDOWS_PATH_LIMIT:
+            break
+        tail.insert(0, part)
+    return ";".join([*head, *tail])
+
+
+def sanitize_process_environment(
+    env: MutableMapping[str, str] | None = None,
+) -> MutableMapping[str, str]:
+    """Normalize the current process environment before Windows spawns.
+
+    Frozen desktop launches inherit PATH from Explorer, shell integrations and
+    package managers.  Keep the process itself bounded as well as child
+    environments; otherwise native imports (notably torch) can fail before a
+    child has a chance to receive ``subprocess_environment``.
+    """
+    target = env if env is not None else os.environ
+    if sys.platform == "win32":
+        target["PATH"] = sanitize_windows_path(target.get("PATH", ""))
+    return target
 
 
 def subprocess_environment(
     overrides: Mapping[str, str | None] | None = None,
 ) -> dict[str, str]:
     """Copy the process environment and bound Windows PATH before spawning."""
-    env = os.environ.copy()
+    env = dict(sanitize_process_environment(os.environ.copy()))
     for name, value in (overrides or {}).items():
         if value is None:
             env.pop(name, None)
         else:
             env[name] = str(value)
-    if sys.platform == "win32":
-        env["PATH"] = sanitize_windows_path(env.get("PATH", ""))
+    sanitize_process_environment(env)
     return env
 
 
@@ -136,7 +178,7 @@ def prepend_windows_path(path: str | Path, env: MutableMapping[str, str] = os.en
         for part in sanitize_windows_path(env.get("PATH", "")).split(";")
         if part and _windows_path_key(part) != target
     ]
-    env["PATH"] = ";".join([value, *rest])
+    env["PATH"] = sanitize_windows_path(";".join([value, *rest]))
 
 
 def prepare_runtime_torch_dlls(site: Path) -> None:
@@ -144,6 +186,9 @@ def prepare_runtime_torch_dlls(site: Path) -> None:
     torch_lib = site / "torch" / "lib"
     if not torch_lib.is_dir():
         return
+    # Keep the venv path as supplied.  Resolving junctions can expand a short
+    # user path into a long network/store path on Windows (and triggers
+    # WinError 206 inside torch's own DLL bootstrap).
     lib_s = str(torch_lib)
     prepend_windows_path(lib_s)
     add_dir = getattr(os, "add_dll_directory", None)
@@ -304,6 +349,7 @@ def install_runtime_meta_path(site: Path | None = None, *, gpu_in_process: bool 
     """
     if not getattr(sys, "frozen", False):
         return
+    sanitize_process_environment()
     root = site or runtime_site_packages()
     if not root or not root.is_dir():
         return

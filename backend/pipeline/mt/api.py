@@ -30,7 +30,7 @@ def translate_segments(
     ollama_local_tier: str = "balanced",
     durations: list[float] | None = None,
 ) -> list[str]:
-    """google | mymemory | tiktok | ollama | openai | gemini | deepseek | openrouter | grok | nvidia.
+    """google | mymemory | tiktok | ollama | openai | gemini | deepseek | openrouter | grok | groq | nvidia.
 
     Free MT fallback cứng: Google → TikTok → MyMemory (bỏ engine đã thử).
     """
@@ -148,45 +148,20 @@ def translate_segments(
             raise last_err
         return list(texts)
 
-    # Cloud LLM — lỗi → free chain Google→TikTok→MyMemory
-    if eng in ("openai", "gemini", "deepseek", "openrouter", "grok", "nvidia"):
-        try:
-            raw = translate_cloud(
-                texts,
-                target_lang,
-                eng,
-                project_id=project_id,
-                source_lang=source_lang,
-                workers=w,
-            )
-            out = _clean_all(raw)
-            need = [
-                i
-                for i, (s, t) in enumerate(zip(texts, out))
-                if _needs_google_fallback(s, t, target_lang=target_lang)
-            ]
-            if not need:
-                return out
-            # vá free chain cho chỗ hỏng
-            if eng == "nvidia":
-                raise RuntimeError("NVIDIA Riva không trả bản dịch hợp lệ; không tự chuyển sang Google.")
-            free = _free_chain("google")
-            for i in need:
-                if i < len(free):
-                    out[i] = free[i]
-            return out
-        except (httpx.HTTPError, RuntimeError, ValueError, TypeError, IndexError) as e:
-            if eng == "nvidia":
-                raise RuntimeError(f"NVIDIA NIM lỗi: {e}") from e
-            if project_id:
-                set_status(
-                    project_id,
-                    step="translate",
-                    progress=58,
-                    message=f"{eng} lỗi — free MT… ({e})",
-                    running=True,
-                )
-            eng = "google"
+    # Cloud provider is an explicit user choice: retry/rotate only inside it.
+    if eng in ("openai", "gemini", "deepseek", "openrouter", "grok", "groq", "nvidia"):
+        raw = translate_cloud(
+            texts,
+            target_lang,
+            eng,
+            project_id=project_id,
+            source_lang=source_lang,
+            workers=w,
+        )
+        out = _clean_all(raw)
+        if any(_needs_google_fallback(s, t, target_lang=target_lang) for s, t in zip(texts, out)):
+            raise RuntimeError(f"CLOUD_TRANSLATION_{eng.upper()}_INVALID_RESPONSE")
+        return out
 
     if eng in ("ollama", "local", "llm"):
         # Ollama là lựa chọn chủ động: lỗi phải nổi lên UI, tuyệt đối không âm thầm

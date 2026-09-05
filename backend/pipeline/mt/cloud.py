@@ -18,7 +18,6 @@ from pipeline.core.resources import progress_msg
 
 
 from .text import *  # noqa: F403
-from .free import translate_google_free
 
 _NVIDIA_RPM = 40
 _nvidia_rate_lock = threading.Lock()
@@ -27,6 +26,26 @@ _gemini_rate_lock = threading.Lock()
 _gemini_next_request_at = 0.0
 _gemini_rate_limited_until = 0.0
 _KEY_FAILOVER = {401, 403, 429, 500, 502, 503, 504}
+
+
+def _cloud_error(provider: str, reason: str) -> RuntimeError:
+    return RuntimeError(f"CLOUD_TRANSLATION_{provider.upper().replace('-', '_')}_{reason}")
+
+
+def _http_error(provider: str, status: int) -> RuntimeError:
+    reason = {
+        400: "MODEL_OR_REQUEST_INVALID",
+        401: "AUTH_FAILED",
+        403: "ACCESS_DENIED",
+        404: "MODEL_OR_REQUEST_INVALID",
+        422: "MODEL_OR_REQUEST_INVALID",
+        429: "RATE_LIMITED_OR_QUOTA",
+        500: "SERVICE_UNAVAILABLE",
+        502: "SERVICE_UNAVAILABLE",
+        503: "SERVICE_UNAVAILABLE",
+        504: "SERVICE_UNAVAILABLE",
+    }.get(status, "REQUEST_FAILED")
+    return _cloud_error(provider, reason)
 
 
 def _usable_keys(*, api_key: str = "", api_keys: list[str] | None = None) -> list[str]:
@@ -130,6 +149,7 @@ def _openai_compatible_chat(
     max_output_tokens: int = 512,
     max_input_tokens: int = 200_000,
     system_msg: str = "You translate video subtitles. Output numbered lines only.",
+    provider: str = "cloud",
 ) -> str:
     """Cap input+output ≤ max_input_tokens; raise ValueError if prompt too big."""
     in_est = _estimate_tokens(prompt) + _estimate_tokens(system_msg)
@@ -154,27 +174,30 @@ def _openai_compatible_chat(
             # does not stall the others; single-key keeps the 40 RPM slot.
             if is_nvidia and not multi:
                 _wait_for_nvidia_request()
-            r = client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {keys[key_index]}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://localhost/videoclone",
-                    "X-Title": "VideoClone",
-                },
-                json={
-                    "model": model,
-                    "temperature": 0,
-                    "max_tokens": max_output_tokens,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": system_msg,
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                },
-            )
+            try:
+                r = client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {keys[key_index]}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://localhost/videoclone",
+                        "X-Title": "VideoClone",
+                    },
+                    json={
+                        "model": model,
+                        "temperature": 0,
+                        "max_tokens": max_output_tokens,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": system_msg,
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                    },
+                )
+            except httpx.HTTPError:
+                raise _cloud_error(provider, "NETWORK_UNAVAILABLE") from None
             if r.status_code == 429:
                 if first_429 is None:
                     first_429 = key_index
@@ -208,7 +231,7 @@ def _openai_compatible_chat(
         if r.status_code >= 400:
             # Never propagate httpx's URL here: Gemini auth is carried in the
             # query string and its repr can expose an API key in job logs.
-            raise RuntimeError(f"GEMINI_HTTP_{r.status_code}")
+            raise _http_error(provider, r.status_code)
         data = r.json()
         return (
             (((data.get("choices") or [{}])[0].get("message") or {}).get("content"))
@@ -279,7 +302,7 @@ def _gemini_generate(
                 # DNS/connect/reset errors have no HTTP status, so they used
                 # to skip the retry policy and fail the whole Review at once.
                 if transport_attempt >= 2:
-                    raise RuntimeError("GEMINI_TRANSPORT_UNAVAILABLE") from None
+                    raise _cloud_error("gemini", "NETWORK_UNAVAILABLE") from None
                 time.sleep(2 ** transport_attempt)
                 transport_attempt += 1
                 continue
@@ -316,7 +339,7 @@ def _gemini_generate(
         if r.status_code >= 400:
             # Keep the Review error safe to show in queue logs: an httpx
             # exception includes Gemini's query-string API key.
-            raise RuntimeError(f"GEMINI_HTTP_{r.status_code}")
+            raise _http_error("gemini", r.status_code)
         data = r.json()
         cands = data.get("candidates") or []
         if not cands:
@@ -343,8 +366,14 @@ def translate_cloud(
         pid = "openrouter"
     if pid == "xai":
         pid = "grok"
-    cred = provider_credentials(pid)
-    api_keys, base_url, model = provider_api_keys(pid), cred["baseUrl"], cred["model"]
+    try:
+        cred = provider_credentials(pid)
+        api_keys = provider_api_keys(pid)
+    except RuntimeError as exc:
+        if "API key" in str(exc):
+            raise _cloud_error(pid, "API_KEY_MISSING") from None
+        raise
+    base_url, model = cred["baseUrl"], cred["model"]
     out: list[str] = [""] * len(texts)
     if not texts:
         return out
@@ -359,6 +388,7 @@ def translate_cloud(
         "deepseek": "DeepSeek",
         "openrouter": "OpenRouter",
         "grok": "Grok",
+        "groq": "Groq",
         "nvidia": "NVIDIA NIM",
     }.get(pid, pid)
     if project_id:
@@ -382,14 +412,7 @@ def translate_cloud(
             riva_input = chunk[0]
             riva_pair = f"{source_code}-{target_code}"
             if source_code != "en" and target_code != "en":
-                # Riva v2 requires English as one endpoint. Google is an explicit
-                # first hop here (not an error fallback), saving one NVIDIA request.
-                riva_input = translate_google_free(
-                    [chunk[0]], "en", source_code, workers=1, project_id=None
-                )[0]
-                if not riva_input.strip():
-                    raise RuntimeError("Google không trả bản dịch trung gian sang tiếng Anh cho NVIDIA Riva.")
-                riva_pair = f"en-{target_code}"
+                raise _cloud_error("nvidia", "UNSUPPORTED_LANGUAGE_PAIR")
             raw = _openai_compatible_chat(
                 base_url=base_url,
                 api_keys=api_keys,
@@ -398,8 +421,12 @@ def translate_cloud(
                 system_msg=riva_pair,
                 max_output_tokens=512,
                 max_input_tokens=8_192,
+                provider=pid,
             )
-            return start, [_clean_burn_text(raw, target_lang=target_lang) or raw.strip()]
+            cleaned = _clean_burn_text(raw, target_lang=target_lang)
+            if not cleaned:
+                raise _cloud_error(pid, "INVALID_RESPONSE")
+            return start, [cleaned]
         prompt = _cloud_batch_prompt(chunk, target_lang=target_lang, source_lang=source_lang)
         try:
             if pid == "gemini":
@@ -408,7 +435,7 @@ def translate_cloud(
                 )
             else:
                 raw = _openai_compatible_chat(
-                    base_url=base_url, api_keys=api_keys, model=model, prompt=prompt
+                    base_url=base_url, api_keys=api_keys, model=model, prompt=prompt, provider=pid
                 )
         except ValueError:
             # Input too large for context window — send 1-by-1 instead
@@ -434,9 +461,12 @@ def translate_cloud(
                         model=model,
                         prompt=one,
                         max_output_tokens=256,
+                        provider=pid,
                     )
-                line = (line or "").strip().splitlines()[0].strip() if line else text
-                parsed.append(line or text)
+                line = (line or "").strip().splitlines()[0].strip()
+                if not line:
+                    raise _cloud_error(pid, "INVALID_RESPONSE")
+                parsed.append(line)
         else:
             parsed = _parse_numbered_batch(raw, len(chunk), chunk)
             if parsed is None:
@@ -463,13 +493,18 @@ def translate_cloud(
                             model=model,
                             prompt=one,
                             max_output_tokens=256,
+                            provider=pid,
                         )
-                    line = (line or "").strip().splitlines()[0].strip() if line else text
-                    parsed.append(line or text)
+                    line = (line or "").strip().splitlines()[0].strip()
+                    if not line:
+                        raise _cloud_error(pid, "INVALID_RESPONSE")
+                    parsed.append(line)
         cleaned = []
         for text, line in zip(chunk, parsed):
             line = _clean_burn_text(line, target_lang=target_lang) or line
-            cleaned.append((line or "").strip() or text)
+            if not (line or "").strip():
+                raise _cloud_error(pid, "INVALID_RESPONSE")
+            cleaned.append(line.strip())
         return start, cleaned
 
     with ThreadPoolExecutor(max_workers=w, thread_name_prefix=f"cloud-{pid}") as pool:

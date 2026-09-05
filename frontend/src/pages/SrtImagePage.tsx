@@ -782,8 +782,8 @@ export default function SrtImagePage({ onBack, initialMediaFolder = '' }: { onBa
               <div className="siv-help-scroll-content">
                 <p style={{ padding: '12px 0 8px', margin: 0, lineHeight: 1.55 }}>
                   {t(
-                    'File timeline xác định thời điểm và độ dài từng cảnh. Ảnh/clip trong thư mục media sẽ tự động khớp lần lượt theo thứ tự tên file (001, 002, 003…). Hỗ trợ đa dạng các định dạng timecode sau:',
-                    'The timeline specifies the start and duration of each scene. Media files are matched sequentially in alphabetical order (001, 002, 003...). Supports the following timecode formats:',
+                    'File timeline xác định thời điểm và độ dài từng cảnh. Ảnh/clip trong thư mục media sẽ tự động khớp lần lượt theo thứ tự tên file (001, 002, 003…). Hỗ trợ TXT, SRT, VTT, ASS/SSA, CSV, TSV, JSON và LRC cùng nhiều dạng timecode:',
+                    'The timeline specifies the start and duration of each scene. Media files are matched sequentially in alphabetical order (001, 002, 003...). Supports TXT, SRT, VTT, ASS/SSA, CSV, TSV, JSON and LRC with several timecode formats:',
                   )}
                 </p>
 

@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 BACKEND = Path(__file__).resolve().parents[3] / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
@@ -32,26 +34,13 @@ def test_nvidia_riva_uses_language_pair_prompt() -> None:
     assert _nvidia_riva_language_codes("zh", "vi", "xin chao") == ("zh-cn", "vi")
 
 
-def test_nvidia_riva_uses_google_only_for_the_english_pivot(monkeypatch) -> None:
+def test_nvidia_riva_rejects_non_english_pair_without_google_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         "pipeline.core.app_config.provider_credentials",
         lambda _provider: {"apiKey": "key", "baseUrl": "https://integrate.api.nvidia.com/v1", "model": "nvidia/riva-translate-4b-instruct-v2"},
     )
-    google_calls = []
-    riva_calls = []
-    monkeypatch.setattr(
-        cloud,
-        "translate_google_free",
-        lambda texts, target, source, **_kwargs: google_calls.append((texts, target, source)) or ["clean phone"],
-    )
-    monkeypatch.setattr(
-        cloud,
-        "_openai_compatible_chat",
-        lambda **kwargs: riva_calls.append((kwargs["prompt"], kwargs["system_msg"])) or "dien thoai sach",
-    )
-    assert cloud.translate_cloud(["中文"], "vi", "nvidia", source_lang="zh", workers=1) == ["dien thoai sach"]
-    assert google_calls == [(["中文"], "en", "zh-cn")]
-    assert riva_calls == [("clean phone", "en-vi")]
+    with pytest.raises(RuntimeError, match="CLOUD_TRANSLATION_NVIDIA_UNSUPPORTED_LANGUAGE_PAIR"):
+        cloud.translate_cloud(["中文"], "vi", "nvidia", source_lang="zh", workers=1)
 
 
 def test_gemini_retries_transient_503(monkeypatch) -> None:

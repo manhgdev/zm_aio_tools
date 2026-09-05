@@ -25,6 +25,25 @@ def test_ollama_error_never_falls_back_to_google(monkeypatch: pytest.MonkeyPatch
     assert not google_called
 
 
+def test_explicit_cloud_error_never_falls_back_to_free_translation(monkeypatch: pytest.MonkeyPatch) -> None:
+    google_called = False
+
+    def fail_cloud(*_args, **_kwargs):
+        raise RuntimeError("CLOUD_TRANSLATION_DEEPSEEK_RATE_LIMITED_OR_QUOTA")
+
+    def fake_google(*_args, **_kwargs):
+        nonlocal google_called
+        google_called = True
+        return ["incorrect fallback"]
+
+    monkeypatch.setattr(api, "translate_cloud", fail_cloud)
+    monkeypatch.setattr(api, "translate_google_free", fake_google)
+
+    with pytest.raises(RuntimeError, match="CLOUD_TRANSLATION_DEEPSEEK_RATE_LIMITED_OR_QUOTA"):
+        api.translate_segments(["hello"], "vi", translator="deepseek")
+    assert not google_called
+
+
 def test_local_tiers_choose_installed_model_size() -> None:
     models = ["qwen:3b", "qwen:8b", "qwen:14b"]
     assert _ollama_model(models, tier="fast") == "qwen:3b"

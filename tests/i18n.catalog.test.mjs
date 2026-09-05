@@ -197,6 +197,7 @@ test('SRT exporter CapCut translation UI is bilingual', () => {
     'CapCut dịch (không dùng Whisper)': 'CapCut Translate (no Whisper)',
     'CapCut nhận dạng và dịch trực tiếp trên cloud, rồi trả SRT có timecode. Không chạy Whisper hoặc API dịch khác.': 'CapCut recognizes and translates in the cloud, then returns a timed SRT. Whisper and other translation APIs are not used.',
     'CapCut dịch & tải SRT': 'Translate with CapCut & download SRT',
+    'CapCut cloud chỉ hỗ trợ dịch cùng nhận dạng CapCut. Chọn nhận dạng CapCut hoặc công cụ dịch khác.': 'CapCut cloud translation requires CapCut recognition. Choose CapCut recognition or another translation provider.',
   }
   for (const [vietnamese, english] of Object.entries(expected)) assert.equal(catalog[vietnamese], english, vietnamese)
 })
@@ -223,12 +224,30 @@ test('Review quality-first duration and scene-indexing copy are bilingual', asyn
   assert.match(panel, /không kéo dài bằng lời hoặc cảnh đệm/)
   assert.match(panel, /Review · AI Cloud/)
   assert.match(panel, /Review · Cloud AI/)
+  assert.match(panel, /Cloud AI/)
+  assert.match(panel, /The model is selected for this Review project/)
+  assert.doesNotMatch(panel, /Set its API key and model in Settings → Cloud/)
+  const config = await readFile(new URL('../frontend/src/features/configuration/ConfigModal.tsx', import.meta.url), 'utf8')
+  const configCss = await readFile(new URL('../frontend/src/features/configuration/ConfigModal.css', import.meta.url), 'utf8')
+  const reviewRoute = await readFile(new URL('../backend/api/routes/review.py', import.meta.url), 'utf8')
+  assert.doesNotMatch(config, /AI phân tích Review/)
+  assert.match(configCss, /\.cfg-cloud-panels\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/)
+  assert.match(reviewRoute, /sourceLang: str = "auto"/)
+  assert.match(film, /snap\.sourceLang/)
   assert.match(panel, /không gửi khung hình/)
   assert.match(batch, /reviewProvider: reviewSettings\.reviewProvider/)
   assert.match(i18n, /Indexing scenes and attaching transcript/)
   assert.match(i18n, /Summarizing speech beats/)
   assert.match(i18n, /Gemini rejected this request/)
+  assert.match(i18n, /Gemini has no API key/)
+  assert.match(i18n, /Gemini Review analysis model is invalid/)
   assert.match(film, /REVIEW_CLOUD_GEMINI_HTTP_403/)
+  assert.match(film, /REVIEW_CLOUD_GEMINI_MODEL_OR_REQUEST_INVALID/)
+  const css = await readFile(new URL('../frontend/src/pages/FilmPage.css', import.meta.url), 'utf8')
+  assert.match(film, /className="rv-job-summary"/)
+  assert.match(film, /className="rv-job-actions"/)
+  assert.match(css, /\.rv-job-summary\s*\{[\s\S]*?display:\s*flex/)
+  assert.match(css, /\.rv-job-actions\s*\{[\s\S]*?justify-content:\s*space-between/)
 })
 
 test('CapCut pipeline progress logs are localized to English', async () => {
@@ -257,6 +276,87 @@ test('Drawing tab uses bilingual localized UI', async () => {
   assert.match(source, /Centre outward/)
   assert.match(source, /OutputFolderField/)
   assert.match(source, /appFolder="drawing"/)
+})
+
+test('Automation queue UI is bilingual and keeps per-job controls', async () => {
+  const [page, mode, header, styles] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/AutomationPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/app/appMode.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/shared/components/Header.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/pages/AutomationPage.css', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /localize\(locale,/)
+  assert.match(page, /Chạy nhiều job từ ý tưởng đến MP4/)
+  assert.match(page, /Run multiple jobs from idea to MP4/)
+  assert.match(page, /Chạy lại chặng lỗi/)
+  assert.match(page, /Retry failed stage/)
+  assert.match(page, /Xoá job/)
+  assert.match(page, /Delete job/)
+  assert.doesNotMatch(page, /automation-heading"><div><p className="automation-eyebrow">ZM AIO TOOL/)
+  assert.match(page, /Tạo 5 chủ đề/)
+  assert.match(page, /Generate 5 topics/)
+  assert.match(page, /Ngôn ngữ đầu ra/)
+  assert.match(page, /Output language/)
+  assert.match(page, /Tiếng Anh/)
+  assert.match(page, /Chưa có provider khả dụng/)
+  assert.match(page, /model khả dụng/)
+  assert.match(page, /!selectedTextProvider\?\.models\.length/)
+  assert.match(page, /automation-settings-tabs/)
+  assert.match(page, /automation-settings-layout/)
+  assert.match(page, /aria-orientation="horizontal"/)
+  assert.match(page, /automation-settings-panel/)
+  assert.match(styles, /\.automation-settings-layout\{[\s\S]*display:block/)
+  assert.match(styles, /\.automation-settings-tabs\{[\s\S]*overflow-x:auto/)
+  assert.match(styles, /\.automation-settings-tabs button\.active\{[\s\S]*border-bottom-color/)
+  assert.match(page, /role="tab"/)
+  assert.match(page, /t\('Ghép video', 'Compose video'\)/)
+  assert.match(page, /t\('Cài đặt ghép video', 'Video composition settings'\)/)
+  assert.match(page, /Chất lượng xuất/)
+  assert.match(page, /Output quality/)
+  assert.match(page, /Chất lượng nén \(CRF\)/)
+  assert.match(page, /Compression quality \(CRF\)/)
+  assert.match(page, /Bộ mã hóa/)
+  assert.match(page, /Encoder/)
+  assert.match(page, /Tốc độ \(%\)/)
+  assert.match(page, /Speed \(%\)/)
+  assert.match(page, /Âm lượng \(%\)/)
+  assert.match(page, /Volume \(%\)/)
+  assert.match(page, /Preview \(giây\)/)
+  assert.match(page, /Preview \(seconds\)/)
+  assert.match(page, /Chèn phụ đề SRT/)
+  assert.match(page, /Burn SRT subtitles/)
+  assert.match(page, /Xóa metadata file xuất/)
+  assert.match(page, /Remove output metadata/)
+  assert.match(page, /settingsTab === 'compose'/)
+  assert.doesNotMatch(page, /Chưa có provider miễn phí|Chỉ model miễn phí|No free provider|free models only/)
+  assert.doesNotMatch(page, /window\.(confirm|alert|prompt)/)
+  assert.match(page, /Xem log/)
+  assert.match(page, /View logs/)
+  assert.match(mode, /automation: '\/automation'/)
+  assert.match(header, /nav\.automation/)
+})
+
+test('Chat is a secondary Tools menu item instead of a primary navigation button', async () => {
+  const header = await readFile(new URL('../frontend/src/shared/components/Header.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(header, /\{ id: 'chat', label: 'nav\.chat', Icon: IconBook, mode: 'chat' \}/)
+  assert.match(header, /mode === 'chat'/)
+  assert.match(header, /mode === 'drawing' \|\| mode === 'chat'/)
+  assert.match(header, /onModeChange\?\.\('chat'\)/)
+  assert.match(header, /t\('nav\.chat'\)/)
+})
+
+test('Header compact layout keeps primary and secondary tab labels available', async () => {
+  const styles = await readFile(new URL('../frontend/src/shared/components/Header.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.nav > button span,[\s\S]*\.nav > \.nav-tools > button span\s*\{[\s\S]*?display:\s*inline(?:-block)?;/)
+  assert.match(styles, /\.nav-tools-menu button span\s*\{[\s\S]*?display:\s*inline(?:-block)?;/)
+  assert.doesNotMatch(styles, /\.nav button span\s*\{\s*display:\s*none;/)
+})
+
+test('Flow tab uses a distinct workflow icon from the render list', async () => {
+  const header = await readFile(new URL('../frontend/src/shared/components/Header.tsx', import.meta.url), 'utf8')
+  assert.match(header, /\bIconLayers\b/)
+  assert.match(header, /\{ id: 'flow', label: 'nav\.flow', Icon: IconLayers, mode: 'flow' \}/)
+  assert.match(header, /\{ id: 'renders', label: 'nav\.renders', Icon: IconVideo, mode: 'renders' \}/)
 })
 
 test('APP outputs share one documented root with feature subfolders', async () => {
@@ -775,8 +875,12 @@ test('Flow exposes live-account models through the authenticated UI path', async
     assert.match(source, new RegExp(model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
   assert.doesNotMatch(source, /Imagen 4/)
-  assert.match(service, /await client\.generate_image\(/)
-  assert.match(service, /await client\.generate_video\(/)
+  // Generation intentionally goes through the authenticated Flow UI.  The
+  // current flow-py client no longer exposes stable generate_image/video
+  // methods, so the regression guards the actual submit path instead.
+  assert.match(service, /await self\._click_flow_submit\(page\)/)
+  assert.match(service, /await self\._prepare_ui_model\(page, "image", model/)
+  assert.doesNotMatch(service, /client\.generate_(?:image|video)\(/)
   assert.doesNotMatch(service, /batchAsyncGenerateVideoText/)
   assert.match(service, /await self\._prepare_ui_model\(page, "video", model/)
   assert.match(service, /Image\|(?:Hình ảnh|H\\u00ecnh \\u1ea3nh)/)
@@ -791,10 +895,11 @@ test("Flow queue renders each job's persisted generation settings", async () => 
 })
 
 test('Flow WEB output saves automatically into a user-authorized folder', async () => {
-  const [source, styles, field] = await Promise.all([
+  const [source, styles, field, helpers] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/FlowPage.css', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/shared/components/OutputFolderField.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/flow/flow.helpers.ts', import.meta.url), 'utf8'),
   ])
   assert.match(source, /function defaultFlowOutputFolder/)
   assert.match(source, /outputDir: defaultFlowOutputFolder\(\)/)
@@ -808,8 +913,8 @@ test('Flow WEB output saves automatically into a user-authorized folder', async 
   assert.doesNotMatch(source, /outputDir: flowKindOutputFolder/)
   assert.match(source, /function flowConfiguredOutputFolder/)
   assert.match(source, /if \(\/\^\(\?:\[A-Za-z\]:\[\\\\\/\]\|\[\\\\\/\]\)\/\.test\(outputDir\)\) return `\$\{outputDir\}\/\$\{kind\}`/)
-  assert.match(source, /`ZM_AIO_TOOL\/flow\/\$\{kind\}\/\$\{outputDir/)
-  assert.match(source, /function flowOutputParentPath/)
+  assert.match(helpers, /`ZM_AIO_TOOL\/flow\/\$\{kind\}\/\$\{outputDir/)
+  assert.match(helpers, /export function flowOutputParentPath/)
   assert.match(source, /isDesktopApp \? flowOutputParentPath/)
   assert.match(source, /t\("Tiến độ tổng", "Overall progress"\)/)
   assert.match(source, /role="progressbar"/)
@@ -826,9 +931,9 @@ test('Flow WEB output saves automatically into a user-authorized folder', async 
   assert.match(source, /const cancelFolderJobs/)
   assert.match(source, /\/api\/flow\/jobs\/delete-folder/)
   assert.match(source, /\/api\/flow\/jobs\/cancel-folder/)
-  assert.match(source, /async function writeFlowOutputToDirectory/)
-  assert.match(source, /ZM_AIO_TOOL/)
-  assert.match(source, /root\.name === "ZM_AIO_TOOL"/)
+  assert.match(helpers, /export async function writeFlowOutputToDirectory/)
+  assert.match(helpers, /ZM_AIO_TOOL/)
+  assert.match(helpers, /root\.name === "ZM_AIO_TOOL"/)
   assert.match(source, /showDirectoryPicker/)
   assert.match(source, /saveWebOutputRoot/)
   assert.match(source, /loadWebOutputRoot/)
@@ -836,11 +941,11 @@ test('Flow WEB output saves automatically into a user-authorized folder', async 
   assert.match(source, /setWebOutputRootReady\(true\)/)
   assert.match(source, /Đã lưu output Flow vào thư mục đã chọn\./)
   assert.match(source, /Flow output saved to the selected folder\./)
-  assert.match(source, /flowOutputDirectory\(root, job\.kind, outputFolder, true\)/)
+  assert.match(helpers, /flowOutputDirectory\(root, job\.kind, outputFolder, true\)/)
   assert.match(source, /writeFlowOutputToDirectory\(item\.job, item\.outputIndex, root, item\.job\.settings\.outputDir\)/)
-  assert.match(source, /async function deleteFlowOutputFromDirectory/)
-  assert.match(source, /await file\.getFile\(\)/)
-  assert.match(source, /await target\.removeEntry\(sourceName\)/)
+  assert.match(helpers, /export async function deleteFlowOutputFromDirectory/)
+  assert.match(helpers, /await file\.getFile\(\)/)
+  assert.match(helpers, /await target\.removeEntry\(sourceName\)/)
   assert.match(source, /await deleteWebFlowOutputs\(job\)/)
   assert.match(source, /onChoose=\{isDesktopApp \? pickOutputFolder : (?:pickWebOutputFolder|\(\) => void pickWebOutputFolder\(\))\}/)
   assert.match(field, /const webPathPrefix/)
@@ -1022,14 +1127,15 @@ test('Flow Series offers a bilingual guide and server-side Cloud TXT drafting', 
 })
 
 test('Flow Series panel is addressable and keeps legacy Series rows safe', async () => {
-  const [page, panel, series] = await Promise.all([
+  const [page, panel, helpers, series] = await Promise.all([
     readFile(new URL('../frontend/src/pages/FlowPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../frontend/src/pages/FlowSeriesPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/flow/flowSeries.helpers.ts', import.meta.url), 'utf8'),
     readFile(new URL('../backend/pipeline/flow/series.py', import.meta.url), 'utf8'),
   ])
   assert.match(page, /URLSearchParams\(window\.location\.search\)\.get\("p"\)/)
   assert.match(page, /writeFlowRoutePanel\("series"\)/)
-  assert.match(panel, /function normalizeSeries/)
+  assert.match(helpers, /export function normalizeSeries/)
   assert.match(series, /normalized\.setdefault\("assets", \[\]\)/)
 })
 
@@ -1067,4 +1173,71 @@ test('Flow offers bilingual prompt guides, templates showcase, preview, copy, an
   assert.match(tplData, /v1\.0-base-vietnam-2D-image\.txt/)
   assert.match(tplData, /v1\.0-base-english-2D-image\.txt/)
   assert.match(tplData, /ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE V1\.0/)
+})
+
+test('Chat tab is bilingual and keeps provider secrets behind the backend', async () => {
+  const [page, route, service] = await Promise.all([
+    readFile(new URL('../frontend/src/pages/ChatPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/api/routes/chat.py', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/chat/service.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(page, /t\('Chat mới', 'New chat'\)/)
+  assert.match(page, /t\('Dừng tạo', 'Stop generating'\)/)
+  assert.match(page, /t\('Đang trả lời…', 'Answering…'\)/)
+  assert.match(page, /chat-generating/)
+  assert.match(page, /m\.status === 'streaming'/)
+  assert.match(page, /t\('Sao chép phản hồi', 'Copy response'\)/)
+  assert.match(page, /t\('Tải phản hồi', 'Download response'\)/)
+  assert.match(page, /downloadResponse/)
+  assert.match(page, /copyText\(m\.content/)
+  assert.match(page, /t\('Đang dừng tạo câu trả lời…', 'Stopping response…'\)/)
+  assert.match(page, /t\('Đã dừng tạo câu trả lời\.', 'Generation stopped\.'\)/)
+  assert.match(page, /stopGeneration/)
+  assert.match(page, /const modelCache = new Map/)
+  assert.match(page, /modelCache\.get\(provider\)/)
+  assert.match(page, /modelCache\.set\(provider, available\)/)
+  assert.match(page, /modelCache\.delete\('chatgpt_web'\)/)
+  assert.match(page, /!activeAccount \? <button type="button" onClick=\{\(\) => void addAccount\(\)\}/)
+  assert.match(page, /t\('Tìm kiếm web','Web search'\)/)
+  assert.match(page, /t\('Nghiên cứu sâu','Deep research'\)/)
+  assert.match(page, /t\('Tạo ảnh','Create image'\)/)
+  assert.match(page, /t\('Đổi tên cuộc trò chuyện', 'Rename conversation'\)/)
+  assert.match(page, /renameConversation/)
+  assert.match(page, /PromptDialog/)
+  assert.doesNotMatch(page, /window\.prompt/)
+  assert.match(page, /ChatGPT Web/)
+  assert.match(page, /Đăng nhập ChatGPT Web/)
+  assert.match(page, /Cài đặt tài khoản ChatGPT Web/)
+  assert.match(page, /Phiên Web đang hoạt động/)
+  assert.match(page, /activeAccount\.configured \? <button type="button" onClick=\{\(\) => void signOut\(activeAccount\.id\)\}/)
+  assert.match(page, /t\('model khả dụng', 'available model\(s\)'\)/)
+  assert.doesNotMatch(page, /t\('model miễn phí', 'free model\(s\)'\)/)
+  assert.doesNotMatch(page, /Chọn provider và model miễn phí/)
+  assert.doesNotMatch(page, /t\(' · Miễn phí', ' · Free'\)/)
+  assert.match(page, /configured: false, status: 'reauth_required'/)
+  assert.doesNotMatch(page, /activeAccount\?\.configured \? <><button type="button" onClick=\{\(\) => void signIn\(activeAccount\.id\)\}/)
+  assert.match(page, /chat-model-picker-bottom/)
+  assert.doesNotMatch(page, /chat-saved-accounts|chat-account-picker|chat-account-add/)
+  assert.doesNotMatch(page, /apiKey|access_token|refresh_token/)
+  assert.match(route, /text\/event-stream/)
+  assert.match(service, /Tool execution is disabled in Chat V1/)
+})
+
+test('Chat API providers do not require the ChatGPT Web window', async () => {
+  const page = await readFile(new URL('../frontend/src/pages/ChatPage.tsx', import.meta.url), 'utf8')
+  assert.match(page, /if \(provider !== 'chatgpt_web' \|\| !account\) return/) // health polling is Web-only
+  assert.match(page, /provider === 'chatgpt_web' \? \(/)
+  assert.match(page, /groq: 'Groq'/)
+})
+
+test('Chat menu is labeled Chat AI in both locales', async () => {
+  const i18n = await readFile(new URL('../frontend/src/app/i18n.tsx', import.meta.url), 'utf8')
+  assert.match(i18n, /'nav\.chat': \{ vi: 'Chat AI', en: 'AI Chat' \}/)
+})
+
+test('Chat browser activates a requested tool or returns an explicit availability error', async () => {
+  const browser = await readFile(new URL('../backend/pipeline/chat/browser.py', import.meta.url), 'utf8')
+  assert.match(browser, /async def _activate_mode/)
+  assert.match(browser, /CHAT_BROWSER_MODE_\{mode\.upper\(\)\}_UNAVAILABLE/)
+  assert.doesNotMatch(browser, /if await choice\.count\(\): await choice\.click\(\)/)
 })

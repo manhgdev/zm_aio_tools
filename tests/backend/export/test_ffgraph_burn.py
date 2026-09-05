@@ -130,6 +130,35 @@ def test_solid_mask_region_covered(rendered):
     assert np.abs(a[y0:y1, x0:x1] - b[y0:y1, x0:x1]).mean() < 40
 
 
+def test_cover_keeps_an_automatic_caption_in_the_requested_outside_lane(clip, tmp_path, monkeypatch):
+    """Masking source glyphs must not pull a below-caption back into that mask."""
+    import pipeline.export.burn_parts.pipeline as burn_pipeline
+
+    source_box = (60, 160, 580, 210)
+    monkeypatch.setattr(burn_pipeline, "_rapidocr_labels", lambda: object())
+    monkeypatch.setattr(
+        burn_pipeline,
+        "_precompute_cue_boxes",
+        lambda *_args, **_kwargs: [[source_box]],
+    )
+    out = tmp_path / "automatic-below.mp4"
+    segments = [{
+        "id": "automatic", "start": 1.0, "end": 3.0,
+        "source": "old hard subtitle", "translation": "Bản dịch phải ở phía dưới",
+        "layout": "horizontal", "bbox": {"x": 60, "y": 160, "w": 520, "h": 50},
+        "bboxInherited": True,
+    }]
+    cover_and_burn(
+        clip, segments, out, cover=True, burn=True, caption_placement="below",
+        cover_mask_style="solid", cover_mask_opacity=100, project_id=None, workers=1,
+    )
+
+    src, rendered = _grab(clip, 2.0), _grab(out, 2.0)
+    # Source bbox is masked; translated glyphs are visibly drawn below it.
+    assert np.abs(rendered[160:210, 60:580] - src[160:210, 60:580]).mean() > 15
+    assert np.abs(rendered[215:270, 20:620] - src[215:270, 20:620]).mean() > 2
+
+
 def test_outside_regions_untouched(rendered):
     """Ngoài cửa sổ cue: khung phải giống video nguồn (không vẽ nhầm)."""
     clip, ff, _legacy = rendered
@@ -184,6 +213,8 @@ def test_segmented_path_exact_frames_and_untouched_gaps(gop_clip, tmp_path):
     chk = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-f", "null", "-"],
                          capture_output=True, text=True)
     assert chk.returncode == 0 and not chk.stderr.strip(), chk.stderr[:200]
+    from pipeline.export.burn_parts.ffgraph import _video_stream_decodes_cleanly
+    assert _video_stream_decodes_cleanly(out), "concat output has a broken H.264 stream"
     # giữa cue: chữ được vẽ; xa cue (t=15): giống nguồn gần như tuyệt đối (copy)
     src_mid, out_mid = _grab(gop_clip, 2.0), _grab(out, 2.0)
     assert np.abs(out_mid[280:330, 60:580] - src_mid[280:330, 60:580]).mean() > 8

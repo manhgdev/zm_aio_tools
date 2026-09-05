@@ -1,6 +1,8 @@
 .header {
   display: grid;
-  grid-template-columns: minmax(200px, 280px) 1fr auto;
+  /* Keep the navigation track shrinkable so it cannot paint underneath the
+     status controls when the window is narrower than the desktop layout. */
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr) auto;
   align-items: stretch;
   gap: 12px;
   padding: 0 20px;
@@ -78,6 +80,14 @@
   overflow: visible;
 }
 
+.header > .brand,
+.header > .nav,
+.header > .hw,
+.nav > button,
+.nav > .nav-tools {
+  min-width: 0;
+}
+
 .nav button {
   display: inline-flex;
   align-items: center;
@@ -90,6 +100,13 @@
   font-size: 0.84rem;
   font-weight: 500;
   white-space: nowrap;
+}
+
+.nav > button span,
+.nav > .nav-tools > button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nav button svg {
@@ -153,6 +170,8 @@
   color: var(--muted-foreground);
   white-space: nowrap;
   padding: 0 4px;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 .hw-usage {
@@ -177,6 +196,9 @@
   font: inherit;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .license-expiry:hover { text-decoration: underline; }
@@ -276,9 +298,82 @@ html.platform-macos select.locale-select:not([multiple]) {
   .brand-text span { display: none; }
 }
 
+@media (max-width: 1300px) {
+  .header {
+    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-inline: 14px;
+  }
+  .nav {
+    justify-content: flex-start;
+  }
+  .nav > button,
+  .nav > .nav-tools > button {
+    gap: 5px;
+    padding-inline: 8px;
+    font-size: .78rem;
+  }
+  .nav > button span,
+  .nav > .nav-tools > button span {
+    max-width: 11ch;
+  }
+  .hw {
+    gap: 6px;
+    font-size: .72rem;
+  }
+  .license-expiry {
+    max-width: 10ch;
+  }
+}
+
 @media (max-width: 900px) {
-  .nav button span { display: none; }
-  .nav button { padding: 0 10px; }
+  /* Keep tab names visible on compact windows; only menu items may be
+     nested under a button, so do not hide their labels with a broad selector. */
+  .header {
+    grid-template-columns: minmax(130px, 165px) minmax(0, 1fr) auto;
+    gap: 6px;
+    padding-inline: 12px;
+  }
+  .brand-text strong {
+    font-size: .92rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav {
+    justify-content: flex-start;
+    min-width: 0;
+  }
+  .nav-tools { min-width: 0; }
+  .nav > button,
+  .nav > .nav-tools > button {
+    min-width: 0;
+    flex: 0 1 auto;
+    gap: 4px;
+    padding-inline: 6px;
+    font-size: .72rem;
+  }
+  .nav > button span,
+  .nav > .nav-tools > button span {
+    display: inline-block;
+    min-width: 0;
+    max-width: 8ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nav-tools-menu button span {
+    display: inline-block;
+    max-width: none;
+  }
+  .hw {
+    gap: 5px;
+    font-size: .7rem;
+  }
+  .license-expiry {
+    max-width: 9ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   /* TTS hẹp: ☰ thay logo — sidebar drawer, không nửa trên */
   .header--tts .header-menu-btn {
@@ -286,5 +381,19 @@ html.platform-macos select.locale-select:not([multiple]) {
   }
   .header--tts .header-logo-wrap {
     display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  /* Give the tab rail the space that was previously lost to branding and
+     license text; menu labels remain visible when a secondary menu opens. */
+  .header {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+  .brand-text { display: none; }
+  .license-expiry { display: none; }
+  .nav > button,
+  .nav > .nav-tools > button {
+    padding-inline: 4px;
   }
 }

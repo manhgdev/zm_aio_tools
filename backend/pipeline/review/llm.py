@@ -17,6 +17,17 @@ def _cloud_failure_code(provider: str, exc: Exception) -> str:
     """Stable, secret-free Cloud Review error for the queue/UI."""
     safe_provider = re.sub(r"[^a-z0-9_-]", "", str(provider or "cloud").lower()) or "cloud"
     message = str(exc or "")
+    reason = re.search(
+        rf"\bCLOUD_TRANSLATION_{re.escape(safe_provider.upper())}_("
+        r"API_KEY_MISSING|AUTH_FAILED|ACCESS_DENIED|RATE_LIMITED_OR_QUOTA|"
+        r"MODEL_OR_REQUEST_INVALID|NETWORK_UNAVAILABLE|SERVICE_UNAVAILABLE|"
+        r"INVALID_RESPONSE|REQUEST_FAILED)\b",
+        message,
+    )
+    if reason:
+        return f"REVIEW_CLOUD_{safe_provider.upper()}_{reason.group(1)}"
+    if "REVIEW_CLOUD_KEY_REQUIRED" in message:
+        return f"REVIEW_CLOUD_{safe_provider.upper()}_API_KEY_MISSING"
     match = re.search(r"(?:GEMINI_HTTP_|HTTP\s*)(\d{3})", message)
     suffix = f"_HTTP_{match.group(1)}" if match else "_UNAVAILABLE"
     return f"REVIEW_CLOUD_{safe_provider.upper()}{suffix}"
@@ -72,9 +83,9 @@ def generate_json(
             keys = provider_api_keys(provider)
             if not keys:
                 raise RuntimeError(f"REVIEW_CLOUD_KEY_REQUIRED:{provider}")
-            actual_model = configured_model or str(cloud.get("reviewModel") or "")
+            actual_model = configured_model
             chat_kw = dict(
-                base_url=str(cloud.get("reviewBaseUrl") or ""),
+                base_url=str(cloud.get("baseUrl") or ""),
                 api_keys=keys, model=actual_model, prompt=prompt, timeout=timeout,
             )
             if provider == "gemini":

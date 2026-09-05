@@ -400,6 +400,24 @@ def _run_ffmpeg(
     return proc.returncode
 
 
+def _video_stream_decodes_cleanly(video: Path) -> bool:
+    """Reject a concat that has a nominal duration but broken H.264 headers."""
+    try:
+        probe = subprocess.run(
+            ["ffmpeg", "-v", "error", "-xerror", "-i", str(video), "-map", "0:v:0", "-f", "null", "-"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=1800,
+            creationflags=(
+                int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
+                if sys.platform == "win32" else 0
+            ),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0 and not probe.stderr.strip()
+
+
 def _hardware_label() -> str:
     """Human-readable encoder label for render progress."""
     args = h264_encoder_args(throughput=True)
@@ -677,15 +695,23 @@ def _render_segmented(
     )
     # Nối + ghép audio MỘT lệnh — video ~nửa GB chỉ ghi đĩa một lần
     # (trước đây concat→vcat rồi vcat→out là hai lượt ghi).
-    rc = _run_ffmpeg(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-         "-f", "concat", "-safe", "0", "-i", str(lst), "-i", str(audio_source or video),
-         "-map", "0:v", "-map", "1:a?",
-         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-         "-map_metadata", "-1", "-map_chapters", "-1", str(out)],
-        project_id,
-    )
-    return rc == 0
+    base = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", str(lst), "-i", str(audio_source or video),
+        "-map", "0:v", "-map", "1:a?",
+    ]
+    tail = ["-c:a", "aac", "-b:a", "192k", "-map_metadata", "-1", "-map_chapters", "-1", str(out)]
+    rc = _run_ffmpeg(base + ["-c:v", "copy", *tail], project_id)
+    if rc == 0 and _video_stream_decodes_cleanly(out):
+        return True
+    # VideoToolbox/NVENC can assign different PPS ids to independently encoded
+    # chunks. MP4 stream-copy concat preserves only one avcC header, yielding
+    # a file that reports the right duration but glitches at chunk joins.
+    # Re-encode this final join only; the expensive mask work stays segmented.
+    _log("[ffgraph] concat stream có lỗi H.264 → mã hóa lại bước nối")
+    out.unlink(missing_ok=True)
+    rc = _run_ffmpeg(base + [*h264_encoder_args(throughput=True), *tail], project_id)
+    return rc == 0 and _video_stream_decodes_cleanly(out)
 
 
 def try_render_ffmpeg(

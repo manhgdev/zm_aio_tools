@@ -87,10 +87,11 @@ export function fitHardsubCover(
   const w = Math.min(frameW, Math.max(oldW, autoW))
   const cx = seed.x + seed.w / 2
 
-  // Dọc: thu trống trên OCR (ít hơn — tránh kéo phụ đề xuống), nới đáy che stroke
-  const topSlack = Math.round(seed.h * 0.14)
-  const y = Math.max(0, seed.y + topSlack - pad.top)
-  const botExtra = Math.max(pad.bottom, Math.round(seed.h * 0.15), Math.round(fontPx * 0.22))
+  // OCR commonly returns the bright glyph body only.  Never trim its top:
+  // that was cutting through white/black subtitle outlines in the preview.
+  const topBleed = Math.max(pad.top, Math.round(seed.h * 0.18))
+  const y = Math.max(0, seed.y - topBleed)
+  const botExtra = Math.max(pad.bottom, Math.round(seed.h * 0.4), Math.round(fontPx * 0.7))
   const bottom = seed.y + seed.h + botExtra
   const h = Math.max(12, Math.min(frameH - y, bottom - y))
 
@@ -162,6 +163,25 @@ export function unionBox(a: PixelBox, b: PixelBox): PixelBox {
   const x2 = Math.max(a.x + a.w, b.x + b.w)
   const y2 = Math.max(a.y + a.h, b.y + b.h)
   return { x: Math.round(x), y: Math.round(y), w: Math.round(x2 - x), h: Math.round(y2 - y) }
+}
+
+/**
+ * Hai cue OCR cùng hàng thường là hai mảnh của một phụ đề cứng hai dòng.
+ * OCR cũ đôi khi chỉ trả dòng dưới; nới lên đúng một hàng để Live Preview
+ * không lộ dòng trên, đồng thời giữ nguyên bề ngang hợp của các mảnh.
+ */
+export function expandOverlappingSubtitleBand(
+  boxes: PixelBox[],
+  frameW: number,
+  frameH: number,
+  fontPx = AUTO_SUBTITLE_FONT,
+): PixelBox | null {
+  if (!boxes.length) return null
+  const band = boxes.reduce(unionBox)
+  const rowH = Math.max(...boxes.map((box) => box.h), 1)
+  const topExtra = Math.max(Math.round(rowH * 0.85), Math.round(fontPx * 1.25))
+  const y = Math.max(0, band.y - topExtra)
+  return clampCoverBox({ ...band, y, h: band.y + band.h - y }, frameW, frameH)
 }
 
 export function coverMaxHeight(frameH: number, fontSizePx = AUTO_SUBTITLE_FONT) {

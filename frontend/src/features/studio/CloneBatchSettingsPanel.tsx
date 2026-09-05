@@ -1,5 +1,5 @@
 import { localize, useLocale } from '@/app/i18n'
-import { applyEngineProfile, snapshotEngineProfile } from '@/app/appSettings'
+import { applyEngineProfile, availableTranslators, normalizeTranslatorForEngine, snapshotEngineProfile } from '@/app/appSettings'
 import type { ProjectSettings } from '@/features/project/project.types'
 
 type Voice = { id: string; name: string }
@@ -33,7 +33,8 @@ export function CloneBatchSettingsPanel({ settings, voices, onChange }: Props) {
     : [...fontSizes, settings.subtitleFontSize].sort((a, b) => a - b)
 
   function selectEngine(engine: ProjectSettings['engine']) {
-    onChange(applyEngineProfile(snapshotEngineProfile(settings), engine))
+    const next = applyEngineProfile(snapshotEngineProfile(settings), engine)
+    onChange({ ...next, translator: normalizeTranslatorForEngine(engine, next.translator) })
   }
 
   function setCaptionMode(mode: string) {
@@ -83,14 +84,7 @@ export function CloneBatchSettingsPanel({ settings, voices, onChange }: Props) {
             <option value="google">Google Translate</option>
             <option value="mymemory">MyMemory</option>
             <option value="tiktok">TikTok Translate</option>
-            <option value="capcut">{t('CapCut cloud', 'CapCut cloud')}</option>
-            <option value="ollama">Ollama</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="grok">Grok (xAI)</option>
-            <option value="nvidia">NVIDIA NIM</option>
+            {availableTranslators(settings.engine).map((id) => <option key={id} value={id}>{id === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : id === 'grok' ? 'Grok (xAI)' : id === 'groq' ? 'Groq' : id === 'nvidia' ? 'NVIDIA NIM' : id}</option>)}
           </select>
         </label>
 

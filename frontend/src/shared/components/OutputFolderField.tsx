@@ -126,8 +126,7 @@ export function OutputFolderField({
   async function chooseOutputFolder() {
     const selected = await onChoose?.()
     if (!isDesktopApp || !selected) return
-    const next = `${selected.replace(/[\\/]+$/, '')}/`
-    onChange(next)
+    onChange(`${selected.replace(/[\\/]+$/, '')}/`)
     // ponytail: auto-save on picker select — no need to press Lưu manually
     await onSave?.()
     setMessage(t('Đã lưu thư mục.', 'Folder saved.'))

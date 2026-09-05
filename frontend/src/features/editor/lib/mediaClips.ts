@@ -9,6 +9,40 @@ export function fullMediaClip(end: number): MediaClip {
 }
 
 /**
+ * Cho timeline theo file hiện tại, trừ khi người dùng đã thật sự trim Video.
+ * Khi đổi Preview 20s → full, clip Video mặc định từng chạm mép 20s phải nở
+ * theo file full; nếu không timeline tự khóa ở 20s dù video đã là full.
+ */
+export function resolveTimelineDuration({
+  sourceDuration,
+  lastSegmentEnd = 0,
+  videoTrackEnd = 0,
+  previousMediaDuration = 0,
+  workClipSec = 0,
+  videoSourceStart = 0,
+}: {
+  sourceDuration: number
+  lastSegmentEnd?: number
+  videoTrackEnd?: number
+  previousMediaDuration?: number
+  workClipSec?: number
+  videoSourceStart?: number
+}): number {
+  const sourceWindow = Math.max(0, sourceDuration - videoSourceStart)
+  const windowCap = workClipSec > 0
+    ? Math.max(0, Math.min(workClipSec - videoSourceStart, sourceWindow || workClipSec - videoSourceStart))
+    : 0
+  const available = windowCap > 0
+    ? Math.min(Math.max(sourceWindow, lastSegmentEnd, 1), windowCap)
+    : Math.max(sourceWindow, lastSegmentEnd, 1)
+  const defaultClipAtPreviousEdge = previousMediaDuration > 0
+    && Math.abs(videoTrackEnd - previousMediaDuration) <= 0.51
+  const sourceExpanded = available > previousMediaDuration + 0.25
+  if (videoTrackEnd > 0 && defaultClipAtPreviousEdge && sourceExpanded) return available
+  return videoTrackEnd > 0 ? Math.min(videoTrackEnd, available) : available
+}
+
+/**
  * Clamp media clips trong cửa sổ làm việc.
  * Không kéo clip đã trim right/left về full span.
  * Chỉ stretch khi cửa sổ phình (preview N→full) và clip từng chạm mép duration cũ.

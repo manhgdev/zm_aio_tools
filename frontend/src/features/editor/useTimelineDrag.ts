@@ -694,10 +694,13 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
   ) {
     const seg = targetSeg ?? selected
     if (!seg || busy || tool === 'text' || trackLocked.caption) return
-    if (seg.id !== selected?.id) {
-      setSelectedId(seg.id)
-      setTrackFocus('caption')
-    }
+    // One visual editor target at a time: selecting a caption bbox must not
+    // leave a manual blur/effect looking active underneath it.
+    setSelectedOverlayId(null)
+    setSelectedOverlayIds([])
+    setSelectedId(seg.id)
+    setSelectedIds([seg.id])
+    setTrackFocus('caption')
     const canvas = canvasRef.current
     if (!canvas) return
     event.preventDefault()

@@ -8,6 +8,7 @@ import {
   IconFilm,
   IconBatch,
   IconGear,
+  IconLayers,
   IconLogo,
   IconMic,
   IconVideo,
@@ -16,7 +17,7 @@ import {
 import './Header.css'
 import { translate, type AppLocale } from '@/app/i18n'
 
-export type AppMode = 'clone' | 'live-preview' | 'tts' | 'download' | 'film' | 'batch' | 'flow' | 'renders' | 'cleaner' | 'srt-image' | 'srt-export' | 'drawing' | 'license'
+export type AppMode = 'clone' | 'live-preview' | 'tts' | 'download' | 'film' | 'batch' | 'flow' | 'chat' | 'automation' | 'renders' | 'cleaner' | 'srt-image' | 'srt-export' | 'drawing' | 'license'
 
 function IconSun({ size = 16 }: { size?: number }) {
   return (
@@ -35,15 +36,15 @@ function IconMoon({ size = 16 }: { size?: number }) {
 }
 
 const NAV: {
-  id: AppMode | 'tools' | 'config' | 'clone-menu'
-  label: 'nav.clone' | 'nav.batch' | 'nav.flow' | 'nav.livePreview' | 'nav.renders' | 'nav.tts' | 'nav.tools' | 'nav.settings'
+  id: AppMode | 'tools' | 'config' | 'clone-menu' | 'batch-menu'
+  label: 'nav.clone' | 'nav.batch' | 'nav.flow' | 'nav.chat' | 'nav.automation' | 'nav.livePreview' | 'nav.renders' | 'nav.tts' | 'nav.tools' | 'nav.settings'
   Icon: typeof IconCam
   mode?: AppMode
-  action?: 'config' | 'tools' | 'clone-menu'
+  action?: 'config' | 'tools' | 'clone-menu' | 'batch-menu'
 }[] = [
   { id: 'clone-menu', label: 'nav.clone', Icon: IconCam, action: 'clone-menu' },
-  { id: 'batch', label: 'nav.batch', Icon: IconBatch, mode: 'batch' },
-  { id: 'flow', label: 'nav.flow', Icon: IconVideo, mode: 'flow' },
+  { id: 'batch-menu', label: 'nav.batch', Icon: IconBatch, action: 'batch-menu' },
+  { id: 'flow', label: 'nav.flow', Icon: IconLayers, mode: 'flow' },
   { id: 'renders', label: 'nav.renders', Icon: IconVideo, mode: 'renders' },
   { id: 'tts', label: 'nav.tts', Icon: IconMic, mode: 'tts' },
   { id: 'tools', label: 'nav.tools', Icon: IconWand, action: 'tools' },
@@ -93,15 +94,16 @@ export default function Header({
   const t = (key: Parameters<typeof translate>[1], values?: Record<string, string | number>) => translate(locale, key, values)
   const hardwareDisplay = HARDWARE_SHORT[hardware.accel] ?? hardware.accel.toUpperCase()
   const showTtsMenu = mode === 'tts' && typeof onMenuClick === 'function'
-  const [openMenu, setOpenMenu] = useState<null | 'clone' | 'tools'>(null)
+  const [openMenu, setOpenMenu] = useState<null | 'clone' | 'batch' | 'tools'>(null)
   const cloneRef = useRef<HTMLDivElement>(null)
+  const batchRef = useRef<HTMLDivElement>(null)
   const toolsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!openMenu) return
     const close = (event: MouseEvent) => {
       const node = event.target as Node
-      if (cloneRef.current?.contains(node) || toolsRef.current?.contains(node)) return
+      if (cloneRef.current?.contains(node) || batchRef.current?.contains(node) || toolsRef.current?.contains(node)) return
       setOpenMenu(null)
     }
     const escape = (event: KeyboardEvent) => {
@@ -154,6 +156,7 @@ export default function Header({
                 <button
                   type="button"
                   className={mode === 'clone' || mode === 'film' ? 'active' : undefined}
+                  title={t(item.label)}
                   aria-haspopup="menu"
                   aria-expanded={openMenu === 'clone'}
                   onClick={() => setOpenMenu((cur) => (cur === 'clone' ? null : 'clone'))}
@@ -192,14 +195,54 @@ export default function Header({
               </div>
             )
           }
+          if (item.action === 'batch-menu') {
+            return (
+              <div key={item.id} className="nav-tools" ref={batchRef}>
+                <button
+                  type="button"
+                  className={mode === 'batch' || mode === 'automation' ? 'active' : undefined}
+                  title={t(item.label)}
+                  aria-haspopup="menu"
+                  aria-expanded={openMenu === 'batch'}
+                  onClick={() => setOpenMenu((cur) => (cur === 'batch' ? null : 'batch'))}
+                >
+                  <item.Icon size={16} />
+                  <span>{t(item.label)}</span>
+                </button>
+                {openMenu === 'batch' ? (
+                  <div className="nav-tools-menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={mode === 'batch' ? 'active' : undefined}
+                      onClick={() => { setOpenMenu(null); onModeChange?.('batch') }}
+                    >
+                      <IconBatch size={16} />
+                      <span>{t('nav.batch')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={mode === 'automation' ? 'active' : undefined}
+                      onClick={() => { setOpenMenu(null); onModeChange?.('automation') }}
+                    >
+                      <IconWand size={16} />
+                      <span>{t('nav.automation')}</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            )
+          }
           if (item.action === 'tools') {
             return (
               <div key={item.id} className="nav-tools" ref={toolsRef}>
                 <button
                   type="button"
-                  className={mode === 'download' || mode === 'cleaner' || mode === 'srt-image' || mode === 'srt-export' || mode === 'drawing'
+                  className={mode === 'download' || mode === 'cleaner' || mode === 'srt-image' || mode === 'srt-export' || mode === 'drawing' || mode === 'chat'
                     ? 'active'
                     : undefined}
+                  title={t(item.label)}
                   aria-haspopup="menu"
                   aria-expanded={openMenu === 'tools'}
                   onClick={() => setOpenMenu((cur) => (cur === 'tools' ? null : 'tools'))}
@@ -266,6 +309,18 @@ export default function Header({
                       <IconWand size={16} />
                       <span>{t('tools.drawing')}</span>
                     </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={mode === 'chat' ? 'active' : undefined}
+                      onClick={() => {
+                        setOpenMenu(null)
+                        onModeChange?.('chat')
+                      }}
+                    >
+                      <IconBook size={16} />
+                      <span>{t('nav.chat')}</span>
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -282,6 +337,7 @@ export default function Header({
               key={item.id}
               type="button"
               className={active ? 'active' : undefined}
+              title={t(item.label)}
               onClick={() => {
                 if (item.action === 'config') {
                   onOpenConfig?.()

@@ -36,7 +36,7 @@ class Settings(BaseModel):
     coverMaskColor: str = "#4c1d95"
     coverMaskOpacity: int = 40
     burnSubs: bool = True
-    captionPlacement: str = "below"
+    captionPlacement: str = "above"
     subtitleFontSize: int = 0
     subtitleFontFamily: str = "system"
     captionTextColor: str = "#ffffff"
@@ -173,8 +173,6 @@ class CloudBlock(BaseModel):
     apiKeys: str | None = None
     baseUrl: str | None = None
     model: str | None = None
-    reviewBaseUrl: str | None = None
-    reviewModel: str | None = None
 
 
 class ElevenLabsBlock(BaseModel):

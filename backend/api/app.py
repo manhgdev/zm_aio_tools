@@ -71,6 +71,12 @@ def create_app() -> FastAPI:
             flow_service.start()
         except Exception:
             pass
+        try:
+            from pipeline.automation import service as automation_service
+
+            automation_service.start()
+        except Exception:
+            pass
 
         threading.Thread(
             target=run_public_cleanup_periodically,

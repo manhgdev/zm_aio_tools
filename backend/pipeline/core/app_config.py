@@ -22,7 +22,6 @@ PROVIDERS: dict[str, dict[str, str]] = {
         "env": "GEMINI_API_KEY",
         "base": "https://generativelanguage.googleapis.com/v1beta",
         "model": "gemini-3.1-flash-lite",
-        "review_model": "gemini-2.5-flash",
         "label": "Gemini",
     },
     "deepseek": {
@@ -43,6 +42,12 @@ PROVIDERS: dict[str, dict[str, str]] = {
         "model": "grok-3-mini",
         "label": "Grok",
     },
+    "groq": {
+        "env": "GROQ_API_KEY",
+        "base": "https://api.groq.com/openai/v1",
+        "model": "openai/gpt-oss-20b",
+        "label": "Groq",
+    },
     "nvidia": {
         "env": "NVIDIA_API_KEY",
         "base": "https://integrate.api.nvidia.com/v1",
@@ -56,7 +61,6 @@ def _default_cloud() -> dict[str, dict[str, str]]:
     return {
         pid: {
             "apiKey": "", "apiKeys": "", "baseUrl": meta["base"], "model": meta["model"],
-            "reviewBaseUrl": meta["base"], "reviewModel": meta.get("review_model", meta["model"]),
         }
         for pid, meta in PROVIDERS.items()
     }
@@ -102,20 +106,15 @@ def load_app_config() -> dict[str, Any]:
         env_keys = _clean_keys(os.environ.get(meta["env"]))
         keys = file_keys or env_keys
         saved_model = str(block.get("model") or "").strip()
-        saved_review_model = str(block.get("reviewModel") or "").strip()
         if pid == "nvidia" and saved_model == "meta/llama-3.1-8b-instruct":
             saved_model = meta["model"]
         if saved_model in {"gemini-2.0-flash", "google/gemini-2.0-flash-001"}:
             saved_model = meta["model"]
-        if saved_review_model in {"gemini-2.0-flash", "google/gemini-2.0-flash-001"}:
-            saved_review_model = meta.get("review_model", meta["model"])
         cloud[pid] = {
             "apiKey": next((key.strip() for key in keys.split(",") if key.strip()), ""),
             "apiKeys": keys,
             "baseUrl": str(block.get("baseUrl") or meta["base"]).strip() or meta["base"],
             "model": saved_model or meta["model"],
-            "reviewBaseUrl": str(block.get("reviewBaseUrl") or meta["base"]).strip() or meta["base"],
-            "reviewModel": saved_review_model or meta.get("review_model", meta["model"]),
         }
 
     tts = _default_tts()
@@ -129,7 +128,7 @@ def load_app_config() -> dict[str, Any]:
 
 
 def save_app_config(patch: dict[str, Any]) -> dict[str, Any]:
-    """Merge patch into app_config.json. Empty apiKey keeps previous."""
+    """Merge patch into app_config.json; explicit ``apiKeys=""`` clears keys."""
     cur = load_app_config()
     cloud_in = patch.get("cloud") if isinstance(patch.get("cloud"), dict) else {}
     for pid in PROVIDERS:
@@ -148,9 +147,7 @@ def save_app_config(patch: dict[str, Any]) -> dict[str, Any]:
             key = prev["apiKey"]
         base = str(b.get("baseUrl") or prev["baseUrl"]).strip() or prev["baseUrl"]
         model = str(b.get("model") or prev["model"]).strip() or prev["model"]
-        review_base = str(b.get("reviewBaseUrl") or prev["reviewBaseUrl"]).strip() or prev["reviewBaseUrl"]
-        review_model = str(b.get("reviewModel") or prev["reviewModel"]).strip() or prev["reviewModel"]
-        cur["cloud"][pid] = {"apiKey": next((x.strip() for x in key.split(",") if x.strip()), ""), "apiKeys": key, "baseUrl": base, "model": model, "reviewBaseUrl": review_base, "reviewModel": review_model}
+        cur["cloud"][pid] = {"apiKey": next((x.strip() for x in key.split(",") if x.strip()), ""), "apiKeys": key, "baseUrl": base, "model": model}
 
     tts_in = patch.get("tts") if isinstance(patch.get("tts"), dict) else {}
     el_in = tts_in.get("elevenlabs") if isinstance(tts_in.get("elevenlabs"), dict) else None
@@ -169,8 +166,6 @@ def save_app_config(patch: dict[str, Any]) -> dict[str, Any]:
                 "apiKeys": cur["cloud"][pid].get("apiKeys", cur["cloud"][pid]["apiKey"]),
                 "baseUrl": cur["cloud"][pid]["baseUrl"],
                 "model": cur["cloud"][pid]["model"],
-                "reviewBaseUrl": cur["cloud"][pid]["reviewBaseUrl"],
-                "reviewModel": cur["cloud"][pid]["reviewModel"],
             }
             for pid in PROVIDERS
         },
@@ -202,8 +197,6 @@ def public_app_config() -> dict[str, Any]:
             "keyCount": len(parts),
             "baseUrl": b["baseUrl"],
             "model": b["model"],
-            "reviewBaseUrl": b["reviewBaseUrl"],
-            "reviewModel": b["reviewModel"],
             "label": meta["label"],
             "env": meta["env"],
         }

@@ -471,13 +471,18 @@ html.dark .rv-page {
   box-shadow: var(--rv-shadow);
   margin-bottom: 12px;
 }
-.rv-job-top { display: flex; justify-content: space-between; gap: 12px; }
+.rv-job-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rv-job-summary { display: flex; min-width: 0; align-items: baseline; gap: 7px 10px; flex-wrap: wrap; }
 .rv-num { color: var(--rv-muted); font-size: .72rem; font-weight: 800; margin-right: 6px; }
-.rv-job h3 { display: inline; margin: 0 0 4px; font-size: .92rem; font-weight: 750; }
+.rv-job h3 { margin: 0; font-size: .92rem; font-weight: 750; }
 .rv-meta { color: var(--rv-muted); font-size: .75rem; }
-.rv-tags { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 6px; font-size: .75rem; color: var(--rv-muted); }
+.rv-job-summary .rv-tags { display: flex; gap: 8px; flex-wrap: wrap; margin: 0; font-size: .75rem; color: var(--rv-muted); }
 .rv-bar { height: 5px; border-radius: 99px; background: var(--rv-input-line); overflow: hidden; margin: 4px 0 8px; }
 .rv-bar > i { display: block; height: 100%; background: #3b82f6; }
+.rv-job-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; margin-top: 9px; }
+.rv-job-actions .rv-row { gap: 6px; }
+.rv-job-actions .rv-ghost { height: 30px; padding: 0 8px; }
+.rv-job-actions .rv-log-h { flex: 0 0 auto; }
 .rv-ok { color: #16a34a; font-weight: 700; font-size: .8rem; white-space: nowrap; }
 .rv-warn { color: var(--rv); font-size: .78rem; font-weight: 700; white-space: nowrap; }
 .rv-run-badge { color: #2563eb; font-size: .78rem; font-weight: 700; white-space: nowrap; }
@@ -639,4 +644,5 @@ html.dark .rv-page {
 @media (max-width: 1080px) {
   .rv-grid, .rv-video-row, .rv-tts-head, .rv-style, .rv-narr, .rv-choices, .rv-two, .rv-series-grid, .rv-presets { grid-template-columns: 1fr; }
   .rv-inline { flex-direction: column; align-items: stretch; }
+  .rv-job-actions .rv-log-h { width: 100%; }
 }

@@ -4,6 +4,11 @@ from io import BytesIO
 from fastapi import UploadFile
 
 from api.routes import projects
+from api.deps import Settings
+
+
+def test_settings_default_places_translated_caption_above() -> None:
+    assert Settings().captionPlacement == "above"
 
 
 def test_new_upload_returns_fresh_video_transform_settings(monkeypatch, tmp_path):

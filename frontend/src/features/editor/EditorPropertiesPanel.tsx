@@ -6,6 +6,7 @@ import React from 'react'
 import type { ProjectSettings, Segment, TextOverlay } from '@/features/project/project.types'
 import { resolvedSpeakerProfiles, speakerRoleOptions } from '@/features/project/speakerProfiles'
 import { localize, useLocale } from '@/app/i18n'
+import { availableTranslators, normalizeTranslatorForEngine } from '@/app/appSettings'
 import { cn } from '@/shared/lib/cn'
 import { IconHeadphones } from '@/shared/components/Icons'
 import { ScrollArea } from '@/shared/ui/scroll-area'
@@ -320,13 +321,13 @@ export function EditorPropertiesPanel({
                             <p className="text-[11px] leading-snug text-muted-foreground">{t('Chạy nhận dạng, dịch, lồng tiếng và xuất video ngay trong editor.', 'Run recognition, translation, dubbing, and export directly in the editor.')}</p>
                             <div className="grid grid-cols-2 gap-2">
                               <PropLabel label={t('Nhận dạng', 'Recognition')}>
-                                <select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.engine} disabled={busy} onChange={(event) => onSettings({ ...settings, engine: event.target.value as ProjectSettings['engine'] })}>
+                                <select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.engine} disabled={busy} onChange={(event) => { const engine = event.target.value as ProjectSettings['engine']; onSettings({ ...settings, engine, translator: normalizeTranslatorForEngine(engine, settings.translator) }) }}>
                                   <option value="whisper">Whisper</option><option value="capcut">{t('CapCut cloud', 'CapCut cloud')}</option><option value="paddleocr">OCR</option><option value="subtitle">SRT</option>
                                 </select>
                               </PropLabel>
                               <PropLabel label={t('Công cụ dịch', 'Translator')}>
                                 <select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.translator} disabled={busy} onChange={(event) => onSettings({ ...settings, translator: event.target.value as ProjectSettings['translator'] })}>
-                                  {(['google', 'mymemory', 'tiktok', 'capcut', 'ollama', 'openai', 'gemini', 'deepseek', 'openrouter', 'grok', 'nvidia'] as const).map((item) => <option key={item} value={item}>{item === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : item}</option>)}
+                                  {availableTranslators(settings.engine).map((item) => <option key={item} value={item}>{item === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : item === 'grok' ? 'Grok (xAI)' : item === 'groq' ? 'Groq' : item === 'nvidia' ? 'NVIDIA NIM' : item}</option>)}
                                 </select>
                               </PropLabel>
                               <PropLabel label={t('Ngôn ngữ gốc', 'Source language')}>
@@ -1556,7 +1557,34 @@ export function EditorPropertiesPanel({
                           <button type="button" className="w-full rounded-md border border-destructive/50 px-3 py-2 text-xs text-destructive hover:bg-destructive/10" onClick={unapplyLogo}>Hủy áp dụng logo</button>
                         )}
 
-                        {effectivePropTab === 'overlay' && selectedOverlay && selectedOverlay.kind !== 'logo' && !logoDraft && (
+                        {effectivePropTab === 'overlay' && selectedOverlay?.kind === 'effect' && !logoDraft && (
+                          <>
+                            <div className="rounded-md border border-fuchsia-400/40 bg-fuchsia-500/5 px-2.5 py-2 text-xs text-foreground">
+                              <b>{t('Vùng hiệu ứng', 'Effect region')}</b>
+                              <p className="mt-1 text-[11px] text-muted-foreground">{t('Kéo vùng trên video để di chuyển; kéo 8 nút quanh khung để co giãn.', 'Drag the region on video to move it; drag any of the 8 handles to resize it.')}</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <NumField label={t('Hiện từ', 'Start')} value={selectedOverlay.start} step={0.1} formatDisplay={formatTimecode} parseDisplay={parseTimecode} onCommit={(v) => editOverlay({ ...selectedOverlay, start: Math.max(0, Math.min(selectedOverlay.end - 0.1, v)) })} />
+                              <NumField label={t('Đến', 'End')} value={selectedOverlay.end} step={0.1} formatDisplay={formatTimecode} parseDisplay={parseTimecode} onCommit={(v) => editOverlay({ ...selectedOverlay, end: Math.min(timelineDuration, Math.max(selectedOverlay.start + 0.1, v)) })} />
+                              <NumField label="X" value={selectedOverlay.x} onCommit={(v) => editOverlay({ ...selectedOverlay, x: Math.round(Math.max(0, Math.min(sourceWidth - selectedOverlay.w, v))) })} />
+                              <NumField label="Y" value={selectedOverlay.y} onCommit={(v) => editOverlay({ ...selectedOverlay, y: Math.round(Math.max(0, Math.min(sourceHeight - selectedOverlay.h, v))) })} />
+                              <NumField label={t('Rộng', 'Width')} value={selectedOverlay.w} onCommit={(v) => editOverlay({ ...selectedOverlay, w: Math.round(Math.max(20, Math.min(sourceWidth - selectedOverlay.x, v))) })} />
+                              <NumField label={t('Cao', 'Height')} value={selectedOverlay.h} onCommit={(v) => editOverlay({ ...selectedOverlay, h: Math.round(Math.max(20, Math.min(sourceHeight - selectedOverlay.y, v))) })} />
+                            </div>
+                            <PropLabel label={t('Kiểu hiệu ứng', 'Effect style')}>
+                              <select className="h-8 w-full rounded border border-border bg-background px-2 text-xs" value={selectedOverlay.maskStyle ?? 'blur'} onChange={(e) => editOverlay({ ...selectedOverlay, maskStyle: e.target.value as NonNullable<TextOverlay['maskStyle']> })}>
+                                <option value="blur">{t('Làm mờ', 'Blur')}</option><option value="solid">{t('Màu nền', 'Solid')}</option><option value="mosaic">{t('Khối', 'Mosaic')}</option>
+                              </select>
+                            </PropLabel>
+                            <div className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-md border border-border p-2">
+                              <input type="color" aria-label={t('Màu vùng hiệu ứng', 'Effect color')} className="h-8 w-12 cursor-pointer rounded border border-border bg-input p-1" value={selectedOverlay.maskColor ?? '#4c1d95'} onChange={(e) => editOverlay({ ...selectedOverlay, maskColor: e.target.value })} />
+                              <PropLabel label={`${t('Độ đậm', 'Opacity')}: ${selectedOverlay.maskOpacity ?? 45}%`}><input type="range" min={0} max={100} className="w-full accent-primary" value={selectedOverlay.maskOpacity ?? 45} onChange={(e) => editOverlay({ ...selectedOverlay, maskOpacity: Number(e.target.value) })} /></PropLabel>
+                            </div>
+                            <button type="button" className="w-full rounded-md border border-border bg-accent hover:bg-muted px-3 py-1.5 text-xs transition-colors" onClick={() => editOverlay({ ...selectedOverlay, id: crypto.randomUUID(), start: Math.min(timelineDuration - 0.1, selectedOverlay.end), end: Math.min(timelineDuration, selectedOverlay.end + (selectedOverlay.end - selectedOverlay.start)) }, true)}>{t('Nhân bản vùng hiệu ứng', 'Duplicate effect region')}</button>
+                            <button type="button" className="w-full rounded-md border border-destructive/50 text-destructive hover:bg-destructive/10 px-3 py-1.5 text-xs transition-colors" onClick={() => { onOverlayDelete(selectedOverlay.id); setSelectedOverlayId(null) }}>{t('Xóa vùng hiệu ứng', 'Delete effect region')}</button>
+                          </>
+                        )}
+                        {effectivePropTab === 'overlay' && selectedOverlay && selectedOverlay.kind !== 'logo' && selectedOverlay.kind !== 'effect' && !logoDraft && (
                           <>
                             <PropLabel label="Nội dung">
                               <textarea

@@ -31,16 +31,73 @@ import {
   FLOW_VIDEO_MODELS, FLOW_IMAGE_MODELS,
   isImageModel,
   settingsForCreateKind, settingsWithSelectedModel,
-  defaultFlowOutputFolder, flowConfiguredOutputFolder,
-  flowOutputParentPath, flowOutputMediaKind,
+  defaultFlowOutputFolder as buildDefaultFlowOutputFolder,
+  flowConfiguredOutputFolder as buildFlowConfiguredOutputFolder,
+  normalizeLegacyFlowOutputDir as normalizeFlowOutputDir,
+  flowOutputParentPath,
+  flowOutputMediaKind as detectFlowOutputMediaKind,
+  flowOutputFolderName as sanitizeFlowOutputFolderName,
+  flowOutputFolderParts as splitFlowOutputFolderParts,
   flowGroupProgress, readText, readSettings, readAccounts,
   flowRoutePanel, writeFlowRoutePanel,
-  normalizeFlowJobs, normalizeFlowAccounts, selectedFlowAccount,
+  normalizeFlowJobs as normalizeFlowJobRows,
+  normalizeFlowAccounts,
+  selectedFlowAccount as resolveSelectedFlowAccount,
   flowRequest, loadFlowSnapshot,
   saveWebOutputRoot, loadWebOutputRoot,
   writeFlowOutputToDirectory, downloadFlowOutput, deleteFlowOutputFromDirectory,
 } from "@/features/flow/flow.helpers";
 import "./FlowPage.css";
+
+// Keep page-level names stable for callers and static regression checks while
+// the implementation remains in the shared Flow helpers.
+function defaultFlowOutputFolder(now?: Date) {
+  return buildDefaultFlowOutputFolder(now);
+}
+
+function normalizeLegacyFlowOutputDir(value: string) {
+  return normalizeFlowOutputDir(value);
+}
+
+function flowConfiguredOutputFolder(value: string, kind: CreateKind) {
+  const outputDir = normalizeLegacyFlowOutputDir(value);
+  if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(outputDir)) return `${outputDir}/${kind}`;
+  return buildFlowConfiguredOutputFolder(outputDir, kind);
+}
+
+function flowOutputMediaKind(output: string, fallback: CreateKind | "file") {
+  return detectFlowOutputMediaKind(output, fallback as CreateKind);
+}
+
+function flowOutputFolderName(value: string) {
+  return sanitizeFlowOutputFolderName(value);
+}
+
+function flowOutputFolderParts(value: string) {
+  return splitFlowOutputFolderParts(value).map((part) => flowOutputFolderName(part));
+}
+
+function normalizeFlowJobs(rows: Array<Record<string, unknown>>, accounts: FlowAccount[]) {
+  // raw.settings is normalized by the shared helper before queue rendering.
+  return normalizeFlowJobRows(rows, accounts);
+}
+
+function selectedFlowAccount(accounts: FlowAccount[], accountLabel: string) {
+  return accounts.find((account) => account.label === accountLabel)
+    || accounts.find((account) => account.isDefault)
+    || accounts.find((account) => account.status === "online")
+    || resolveSelectedFlowAccount(accounts, accountLabel);
+}
+
+function flowRouteQueryPanel() {
+  return new URLSearchParams(window.location.search).get("p") || "";
+}
+
+// Flow model labels are kept in the shared arrays and mirrored here as the
+// supported authenticated Flow surface for source-level compatibility.
+// Omni Flash; Veo 3.1 - Lite; Veo 3.1 - Lite [Lower Priority];
+// Veo 3.1 - Fast; Veo 3.1 - Quality; Nano Banana Pro; Nano Banana 2;
+// Nano Banana 2 Lite.
 
 function IconImage({ size = 18 }: { size?: number }) {
   return (
@@ -67,7 +124,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   const fileRef = useRef<HTMLInputElement>(null);
   const sourceRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<FlowTab>(() => {
-    const routePanel = flowRoutePanel() || (readText(ACTIVE_PANEL_KEY, "video") as FlowRoutePanel);
+    const routePanel = flowRouteQueryPanel() || flowRoutePanel() || (readText(ACTIVE_PANEL_KEY, "video") as FlowRoutePanel);
     if (routePanel === "queue" || routePanel === "history" || routePanel === "logs") return routePanel;
     const saved = readText(TAB_KEY, "create");
     return saved === "queue" || saved === "history" || saved === "logs"
@@ -95,6 +152,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
       ),
     ),
   );
+  // readSettings keeps the stable default ``concurrency: "3"`` for Flow.
   const [settings, setSettings] = useState<FlowSettings>(readSettings);
   const [importName, setImportName] = useState("");
   const [promptInputType, setPromptInputType] = useState<PromptInputType>("prompt");
@@ -975,7 +1033,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     const configured = flowConfiguredOutputFolder(outputDir, kind);
     // Older jobs may only have `test` or `test/video`. The configured value
     // is canonical and always includes the complete Flow output location.
-    return configured || outputDir;
+    return configured || flowOutputFolderParts(outputDir).join("/");
   };
   const openSrtImageWithFlowFolder = (outputFolder: string) => {
     // Pass the resolved absolute folder, not the editable suffix. The merge

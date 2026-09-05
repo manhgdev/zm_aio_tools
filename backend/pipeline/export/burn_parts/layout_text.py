@@ -497,10 +497,15 @@ def _layout_caption(
     elif ocr_box:
         # below/above: sát mép dải che (OCR), căn giữa ngang theo bbox
         cx = (ocr_box[0] + ocr_box[2]) // 2
+        below_y = ocr_box[3] + gap
+        above_y = ocr_box[1] - gap - box_h
         if place == "below":
-            y0 = min(frame_h - box_h, ocr_box[3] + gap)
+            # Do not clamp into the original subtitle when it already sits at
+            # the lower edge.  The requested side wins when it fits; otherwise
+            # use the only clear side of the same subtitle.
+            y0 = below_y if below_y <= frame_h - box_h else max(0, above_y)
         elif place == "above":
-            y0 = max(0, ocr_box[1] - gap - box_h)
+            y0 = above_y if above_y >= 0 else min(frame_h - box_h, below_y)
         else:
             cy = (ocr_box[1] + ocr_box[3]) // 2
             y0 = max(0, min(frame_h - box_h, cy - box_h // 2))

@@ -28,6 +28,8 @@ import VideoCleanerPage from '@/pages/VideoCleanerPage'
 import SrtImagePage from '@/pages/SrtImagePage'
 import SrtExportPage from '@/pages/SrtExportPage'
 import DrawingPage from '@/pages/DrawingPage'
+import ChatPage from '@/pages/ChatPage'
+import AutomationPage from '@/pages/AutomationPage'
 import LicensePage from '@/features/license/LicensePage'
 import { licenseApi, readCachedStatus, type LicenseStatus } from '@/features/license/license.api'
 import { ExportSuccessModal } from '@/features/editor/ExportSuccessModal'
@@ -948,6 +950,10 @@ export default function App() {
           setSrtImageInitialMediaFolder(mediaFolder)
           navigateToMode('srt-image')
         }} />
+      ) : appMode === 'chat' ? (
+        <ChatPage onOpenConfig={() => { setConfigSection('cloud'); setConfigOpen(true) }} />
+      ) : appMode === 'automation' ? (
+        <AutomationPage />
       ) : appMode === 'cleaner' ? (
         <VideoCleanerPage onBack={goBackTab} />
       ) : appMode === 'srt-image' ? (
@@ -1194,10 +1200,10 @@ export default function App() {
         }
         message={
           // error code ngắn ("dub") → đừng thay message; đã xử lý trong ProgressPopup
-          status.message
+          localizePipelineMessage(locale, status.message || '')
           || (
             status.error && status.error !== 'cancelled' && status.error.length > 24
-              ? status.error
+              ? localizePipelineMessage(locale, status.error)
               : status.error === 'dub'
                 ? 'Lồng tiếng thất bại — xem log backend hoặc thử lại'
                 : undefined
@@ -1207,7 +1213,7 @@ export default function App() {
         error={
           status.error === 'dub' && !(status.message || '').trim()
             ? 'Lồng tiếng thất bại'
-            : status.error
+            : localizePipelineMessage(locale, status.error || '')
         }
         onMinimize={() => {
           // Job đang chạy: chỉ thu nhỏ (chạy nền). Lỗi xong: dismiss hẳn.

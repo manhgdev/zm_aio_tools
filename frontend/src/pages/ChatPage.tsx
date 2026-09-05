@@ -1,0 +1,479 @@
+import { useEffect, useRef, useState } from 'react'
+import { localize, useLocale } from '@/app/i18n'
+import { copyText } from '@/shared/lib/clipboard'
+import { PromptDialog } from '@/shared/components/PromptDialog'
+import './ChatPage.css'
+
+type Conversation = { id: string; title: string; account_id: string; provider_id?: string; model: string }
+type ChatArtifact = { id: string; name: string; kind: string; content_type: string; url: string }
+type Message = { id: string; role: 'user' | 'assistant'; content: string; status: string; error?: string; attachments?: ChatArtifact[] }
+type Account = { id: string; label: string; configured: boolean; experimental: boolean; status: string; email?: string; last_model?: string; browser_family?: string; error?: string; errorCode?: string }
+type ChatModel = { id: string; label: string; provider: string; free: boolean; capabilities: string[]; available: boolean; reason?: string }
+type ChatProvider = { id: string; label: string; kind: 'api' | 'browser'; configured: boolean; status: string; capabilities: string[]; models: ChatModel[]; errorCode?: string; reason?: string }
+type ChatMode = 'chat' | 'search' | 'research' | 'image'
+
+const API = '/api/chat'
+const LAST_ACCOUNT = 'videoclone.chat.account'
+const LAST_PROVIDER = 'videoclone.chat.provider'
+const LAST_MODEL = 'videoclone.chat.model'
+const DEFAULT_MODEL = 'GPT-5.6 Sol'
+const DEFAULT_PROVIDER = 'openrouter'
+const modelCache = new Map<string, ChatModel[]>()
+const modelRequests = new Map<string, Promise<ChatModel[]>>()
+
+function fetchChatModels(provider: string) {
+  const pending = modelRequests.get(provider)
+  if (pending) return pending
+  const request = fetch(`${API}/models?provider=${encodeURIComponent(provider)}`).then(async response => {
+    if (!response.ok) throw new Error('models')
+    return response.json() as Promise<{ models?: unknown; errorCode?: string; reason?: string }>
+  }).then(data => {
+    if (data.errorCode) throw new Error(data.errorCode)
+    const available = Array.isArray(data.models) ? data.models.reduce<ChatModel[]>((result, item) => {
+      if (!item || typeof item !== 'object') return result
+      const row = item as Record<string, unknown>
+      const id = String(row.id || '').trim()
+      if (!id || result.some(current => current.id.toLowerCase() === id.toLowerCase())) return result
+      result.push({ id, label: String(row.label || id), provider: String(row.provider || provider), free: row.free !== false, capabilities: Array.isArray(row.capabilities) ? row.capabilities.map(String) : ['text'], available: row.available !== false, reason: row.reason ? String(row.reason) : undefined })
+      return result
+    }, []) : []
+    modelCache.set(provider, available)
+    return available
+  }).finally(() => { modelRequests.delete(provider) })
+  modelRequests.set(provider, request)
+  return request
+}
+
+function MessageBody({ content }: { content: string }) {
+  const parts = content.split(/(```[\s\S]*?```)/g)
+  return <>{parts.map((part, index) => part.startsWith('```')
+    ? <pre key={index}><code>{part.replace(/^```[^\n]*\n?/, '').replace(/```$/, '')}</code><button type="button" onClick={() => navigator.clipboard.writeText(part.replace(/^```[^\n]*\n?/, '').replace(/```$/, ''))}>Copy</button></pre>
+    : <span key={index} className="chat-text">{part.split(/(https?:\/\/[^\s]+)/g).map((text, linkIndex) => /^https?:\/\//.test(text)
+      ? <a key={linkIndex} href={text} target="_blank" rel="noopener noreferrer">{text}</a>
+      : text)}</span>)}</>
+}
+
+export default function ChatPage({ onOpenConfig: _onOpenConfig }: { onOpenConfig: () => void }) {
+  const { locale } = useLocale()
+  const t = (vi: string, en: string) => localize(locale, vi, en)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [active, setActive] = useState<string>('')
+  const [messages, setMessages] = useState<Message[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [providers, setProviders] = useState<ChatProvider[]>([])
+  const [account, setAccount] = useState(() => {
+    const saved = localStorage.getItem(LAST_ACCOUNT) || ''
+    // `openai_api` belonged to the removed multi-provider skeleton. Keeping
+    // it here makes the first health check target a non-existent account and
+    // looks like the Web session was reset.
+    return saved === 'openai_api' ? '' : saved
+  })
+  const [provider, setProvider] = useState(() => localStorage.getItem(LAST_PROVIDER) || '')
+  const [models, setModels] = useState<ChatModel[]>([])
+  const [model, setModel] = useState(() => {
+    const saved = localStorage.getItem(LAST_MODEL) || ''
+    // GPT-5.5 was the old built-in fallback. Migrate that stale default while
+    // preserving any model the user explicitly saved afterwards.
+    return saved === 'GPT-5.5' ? DEFAULT_MODEL : saved
+  })
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsError, setModelsError] = useState(false)
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [mode, setMode] = useState<ChatMode>('chat')
+  const [attachmentIds, setAttachmentIds] = useState<string[]>([])
+  const [attachmentNames, setAttachmentNames] = useState<string[]>([])
+  const [railOpen, setRailOpen] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<Conversation | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const autoScroll = useRef(true)
+  const healthInFlight = useRef(false)
+  const accountName = (_item: Account) => t('ChatGPT Web', 'ChatGPT Web')
+  const accountState = (item: Account) => item.status === 'connected' && item.configured
+    ? t('Phiên Web đang hoạt động', 'Web session active')
+    : item.errorCode === 'CHAT_BROWSER_WINDOW_CLOSED'
+      ? t('Cửa sổ ChatGPT Web đã đóng', 'ChatGPT Web window closed')
+    : item.status === 'browser_only'
+      ? t('Đang chờ đăng nhập trong trình duyệt', 'Waiting for browser sign-in')
+      : item.status === 'reauth_required'
+      ? t('Chưa đăng nhập hoặc phiên đã hết hạn', 'Not signed in or session expired')
+      : item.status === 'unavailable'
+        ? t('Kiểm tra phiên thất bại', 'Session check failed')
+        : t('Chưa đăng nhập', 'Not signed in')
+  const accountError = (item: Account) => item.errorCode === 'CHAT_BROWSER_WINDOW_CLOSED'
+    ? t('Cửa sổ ChatGPT Web đã đóng. Hãy mở lại để tiếp tục.', 'The ChatGPT Web window is closed. Reopen it to continue.')
+    : item.errorCode === 'CHAT_BROWSER_PROFILE_LOCKED'
+    ? t('Cửa sổ ChatGPT Web vẫn đang mở. Hãy đóng nó rồi kiểm tra lại.', 'The ChatGPT Web window is still open. Close it and check again.')
+    : item.errorCode === 'CHAT_BROWSER_HEALTH_FAILED'
+      ? t('Không kiểm tra được phiên browser.', 'Could not check the browser session.')
+      : item.errorCode === 'CHAT_BROWSER_BUSY'
+        ? t('Đang kiểm tra phiên, hãy thử lại sau ít giây.', 'Session check is running; try again in a few seconds.')
+      : item.errorCode
+        ? t(`Phiên ChatGPT Web không khả dụng.${item.error ? ` Chi tiết: ${item.error.slice(0, 220)}` : ''}`, `ChatGPT Web session is unavailable.${item.error ? ` Details: ${item.error.slice(0, 220)}` : ''}`)
+        : ''
+  const errorText = (value: unknown) => {
+    const code = String(value || '')
+    if (code.includes('CHAT_BROWSER_WINDOW_CLOSED')) return t('Cửa sổ ChatGPT Web đã đóng. Hãy mở lại để tiếp tục.', 'The ChatGPT Web window is closed. Reopen it to continue.')
+    if (code.includes('CHAT_BROWSER_PROFILE_LOCKED')) return t('Cửa sổ ChatGPT Web vẫn đang mở. Hãy đóng nó rồi kiểm tra lại.', 'The ChatGPT Web window is still open. Close it and check again.')
+    if (code.includes('CHAT_BROWSER_BUSY')) return t('ChatGPT Web đang bận xử lý yêu cầu khác.', 'ChatGPT Web is busy with another request.')
+    if (code.includes('CHAT_BROWSER_CANCELLED')) return t('Đã dừng tạo câu trả lời.', 'Generation stopped.')
+    if (code.includes('CHAT_BROWSER_NO_OUTPUT')) return t('ChatGPT Web không trả về câu trả lời.', 'ChatGPT Web returned no answer.')
+    if (code.includes('CHAT_BROWSER_NOT_AUTHENTICATED')) return t('Phiên ChatGPT Web chưa đăng nhập hoặc đã hết hạn. Hãy đăng nhập lại ở cửa sổ profile ZMTool.', 'The ChatGPT Web session is not signed in or has expired. Sign in again in the ZMTool profile window.')
+    if (code.includes('CHAT_BROWSER_INVALID_THREAD')) return t('Thread ChatGPT Web đã hết hạn hoặc không hợp lệ. Hãy tạo chat mới.', 'The ChatGPT Web thread has expired or is invalid. Start a new chat.')
+    if (code.includes('CHAT_BROWSER_MODEL_PICKER_UNAVAILABLE')) return t('Không mở được bộ chọn model của ChatGPT Web. Hãy tải lại trang rồi thử lại.', 'Could not open the ChatGPT Web model picker. Reload the page and try again.')
+    if (code.includes('CHAT_BROWSER_MODEL_UNAVAILABLE')) return t('Model đã chọn không khả dụng với tài khoản này. Hãy chọn model khác.', 'The selected model is not available for this account. Choose another model.')
+    if (code.includes('CHAT_BROWSER_MODEL_SELECT_FAILED')) return t('Không chọn được model trong ChatGPT Web. Hãy đóng menu model rồi thử lại.', 'Could not select the model in ChatGPT Web. Close the model menu and try again.')
+    if (code.includes('CHAT_PROVIDER_KEY_MISSING')) return t('Provider chưa có API key trong Cấu hình → Cloud.', 'This provider has no API key in Settings → Cloud.')
+    if (code.includes('CHAT_FREE_MODEL_UNAVAILABLE')) return t('Provider này hiện không có model khả dụng.', 'This provider has no available model.')
+    if (code.includes('CHAT_ATTACHMENT_UNSUPPORTED')) return t('Model đã chọn không hỗ trợ loại file đính kèm này.', 'The selected model does not support this attachment type.')
+    if (code.includes('CHAT_PROVIDER_CAPABILITY_UNAVAILABLE')) return t('Tính năng này chỉ khả dụng với ChatGPT Web trong phiên bản hiện tại.', 'This feature is currently available only with ChatGPT Web.')
+    if (code.includes('CHAT_PROVIDER_HTTP_429')) return t('Provider đã hết quota hoặc đang giới hạn tốc độ. Hãy chọn model khả dụng khác rồi thử lại.', 'The provider is rate-limited or out of quota. Choose another available model and retry.')
+    if (code.includes('CHAT_PROVIDER_HTTP_401') || code.includes('CHAT_PROVIDER_HTTP_403')) return t('API key hoặc quyền provider không hợp lệ. Kiểm tra lại Cấu hình → Cloud.', 'The provider API key or permission is invalid. Check Settings → Cloud.')
+    if (code.includes('CHAT_PROVIDER_MODELS_UNAVAILABLE')) return t('Không tải được danh sách model của provider. Hãy bấm làm mới rồi thử lại.', 'Could not load this provider’s model list. Refresh and try again.')
+    if (code.includes('CHAT_PROVIDER_STREAM_UNAVAILABLE')) return t('Provider không trả được luồng phản hồi. Hãy chọn model khác rồi thử lại.', 'The provider did not return a response stream. Choose another model and retry.')
+    if (code.includes('CHATGPT_LOGIN_REQUIRED') || code.includes('CHAT_MODEL_UNAVAILABLE')) return t('Phiên ChatGPT Web hoặc model đã chọn không khả dụng. Hãy kiểm tra đăng nhập và chọn lại model.', 'The ChatGPT Web session or selected model is unavailable. Check sign-in and choose another model.')
+    if (code.includes('CHAT_BROWSER_MODE_SEARCH_UNAVAILABLE')) return t('Tìm kiếm web chưa khả dụng với tài khoản hoặc giao diện ChatGPT Web hiện tại.', 'Web search is unavailable for this account or the current ChatGPT Web interface.')
+    if (code.includes('CHAT_BROWSER_MODE_RESEARCH_UNAVAILABLE')) return t('Nghiên cứu sâu chưa khả dụng với tài khoản hoặc gói ChatGPT hiện tại.', 'Deep research is unavailable for this account or ChatGPT plan.')
+    if (code.includes('CHAT_BROWSER_MODE_IMAGE_UNAVAILABLE')) return t('Tạo ảnh chưa khả dụng với tài khoản hoặc model ChatGPT hiện tại.', 'Image creation is unavailable for this account or ChatGPT model.')
+    if (code.includes('CHAT_CONVERSATION_SETTINGS_FAILED')) return t('Không lưu được model cho cuộc trò chuyện này. Hãy thử lại.', 'Could not save the model for this conversation. Try again.')
+    if (code.includes('ACCOUNT_NOT_FOUND')) return t('Không tìm thấy phiên ChatGPT Web.', 'ChatGPT Web session was not found.')
+    const detail = code.replace(/^Error:\s*/i, '').replace(/\s+/g, ' ').slice(0, 320)
+    const providerLabel = ({
+      chatgpt_web: t('ChatGPT Web', 'ChatGPT Web'), openai: t('OpenAI API', 'OpenAI API'),
+      gemini: 'Gemini', deepseek: 'DeepSeek', openrouter: 'OpenRouter', grok: 'Grok (xAI)', groq: 'Groq', nvidia: t('NVIDIA NIM', 'NVIDIA NIM'),
+    } as Record<string, string>)[provider] || t('provider AI', 'AI provider')
+    return detail
+      ? t(`Không thể xử lý yêu cầu với ${providerLabel}. Chi tiết: ${detail}`, `Could not process the request with ${providerLabel}. Details: ${detail}`)
+      : t(`Không thể xử lý yêu cầu với ${providerLabel}.`, `Could not process the request with ${providerLabel}.`)
+  }
+  const activeAccount = accounts[0]
+  const accountReady = activeAccount?.id === account && activeAccount.configured
+  const activeProvider = providers.find(item => item.id === provider)
+  const providerReady = provider === 'chatgpt_web' ? accountReady : Boolean(activeProvider?.configured && activeProvider.status === 'ready')
+
+  const loadList = () => fetch(`${API}/conversations`).then(r => r.json()).then(setConversations)
+  const openConversation = (id: string) => {
+    setActive(id)
+    fetch(`${API}/conversations/${id}`).then(r => r.json()).then(data => {
+      setMessages(data.messages || [])
+      const savedProvider = data.provider_id || (data.account_id === accounts[0]?.id ? 'chatgpt_web' : (data.account_id === 'openai_api' ? 'openai' : data.account_id))
+      if (savedProvider) setProvider(savedProvider)
+      if (data.account_id === accounts[0]?.id && accounts[0]?.id) setAccount(accounts[0].id)
+      setModel(String(data.model || ''))
+    })
+  }
+  const refreshAccounts = () => fetch(`${API}/accounts`).then(async r => {
+    if (!r.ok) throw new Error(await r.text())
+    return r.json() as Promise<Account[]>
+  }).then(items => {
+    setAccounts(items)
+    setAccount(current => items.some(item => item.id === current) ? current : (items[0]?.id || ''))
+    return items
+  })
+  const refreshProviders = (force = false) => fetch(`${API}/providers${force ? '?refresh=true' : ''}`).then(async response => {
+    if (!response.ok) throw new Error(await response.text())
+    return response.json() as Promise<{ providers?: ChatProvider[] }>
+  }).then(data => {
+    const items = Array.isArray(data.providers) ? data.providers : []
+    setProviders(items)
+    setProvider(current => {
+      const remembered = items.find(item => item.id === current && (item.status === 'ready' || (item.id === 'chatgpt_web' && item.configured)))
+      if (remembered) return remembered.id
+      const web = items.find(item => item.id === 'chatgpt_web' && item.configured)
+      const fallback = items.find(item => item.id === DEFAULT_PROVIDER && item.status === 'ready') || items.find(item => item.status === 'ready')
+      return web?.id || fallback?.id || current || ''
+    })
+    return items
+  })
+  const refreshProviderModels = async () => {
+    if (!provider || modelsLoading) return
+    setModelsLoading(true)
+    setModelsError(false)
+    try {
+      const items = await refreshProviders(true)
+      const next = items.find(item => item.id === provider)?.models || []
+      modelCache.set(provider, next)
+      setModels(next)
+      setModel(current => next.some(item => item.id === current) ? current : (next[0]?.id || ''))
+    } catch {
+      setModels([])
+      setModelsError(true)
+    } finally {
+      setModelsLoading(false)
+    }
+  }
+  const refreshHealth = (accountId = account) => {
+    if (!accountId || healthInFlight.current) return
+    healthInFlight.current = true
+    void fetch(`${API}/accounts/${accountId}/health`).then(response => response.ok ? response.json() : { status: 'unavailable', errorCode: 'CHAT_BROWSER_HEALTH_FAILED' }).then(health => {
+      setAccounts(items => items.map(item => item.id === accountId ? { ...item, ...health } : item))
+      if (health.status === 'connected') { setError(''); setNotice(''); void refreshProviders() }
+    }).catch(() => undefined).finally(() => { healthInFlight.current = false })
+  }
+  useEffect(() => {
+    void Promise.all([
+      refreshAccounts(),
+      refreshProviders(),
+      fetch(`${API}/conversations`).then(r => r.json()).then((items: Conversation[]) => { setConversations(items); if (items[0]) openConversation(items[0].id) }),
+    ])
+  }, [])
+  useEffect(() => {
+    // API providers (Groq, Gemini, OpenRouter, …) do not use the isolated
+    // ChatGPT browser profile. Avoid probing it and surfacing a misleading
+    // “window closed” error while an API model is selected.
+    if (provider !== 'chatgpt_web' || !account) return
+    refreshHealth()
+    // Keep probing until the isolated profile is actually authenticated. A
+    // browser may briefly report `unavailable` while Chrome is starting; if
+    // that switched to the long interval we could miss a login for 30s.
+    const interval = activeAccount?.configured ? 30_000 : 3_000
+    const timer = window.setInterval(() => refreshHealth(), interval)
+    return () => window.clearInterval(timer)
+  }, [provider, account, activeAccount?.status])
+  useEffect(() => {
+    localStorage.setItem(LAST_ACCOUNT, account)
+    localStorage.setItem(LAST_PROVIDER, provider)
+    if (!provider || !providerReady) {
+      setModels([]); setModelsLoading(false); setModelsError(false); return
+    }
+    let activeRequest = true
+    const remembered = provider === 'chatgpt_web' ? accounts.find(item => item.id === account)?.last_model : ''
+    const applyModels = (available: ChatModel[]) => {
+      if (!activeRequest) return
+      setModels(available)
+      setModel(current => available.some(item => item.id === current) ? current : (remembered && available.some(item => item.id === remembered) ? remembered : (provider === 'chatgpt_web' && available.some(item => item.id === DEFAULT_MODEL) ? DEFAULT_MODEL : (available[0]?.id || ''))))
+    }
+    const cached = modelCache.get(provider)
+    if (cached) {
+      setModelsLoading(false)
+      setModelsError(false)
+      applyModels(cached)
+      return () => { activeRequest = false }
+    }
+    setModels([])
+    setModelsLoading(true)
+    setModelsError(false)
+    fetchChatModels(provider).then(applyModels).catch(() => {
+      if (!activeRequest) return
+      setModels([])
+      setModelsError(true)
+    }).finally(() => { if (activeRequest) setModelsLoading(false) })
+    return () => { activeRequest = false }
+  }, [provider, providerReady, account, accountReady])
+  useEffect(() => { localStorage.setItem(LAST_MODEL, model) }, [model])
+  useEffect(() => { if (autoScroll.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages])
+
+  const create = async () => {
+    if (!providerReady) { setError(provider === 'chatgpt_web' ? (activeAccount ? accountError(activeAccount) || t('Hãy đăng nhập ChatGPT Web trước.', 'Sign in to ChatGPT Web first.') : t('Hãy đăng nhập ChatGPT Web trước.', 'Sign in to ChatGPT Web first.')) : t('Hãy chọn một provider có model khả dụng.', 'Choose a provider with an available model.')); return }
+    const storedProvider = provider === 'chatgpt_web' ? account : provider
+    const response = await fetch(`${API}/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: t('Cuộc trò chuyện mới', 'New chat'), provider, accountId: storedProvider, model }) })
+    const conv = await response.json(); await loadList(); openConversation(conv.id)
+  }
+  const remove = async (id: string) => {
+    await fetch(`${API}/conversations/${id}`, { method: 'DELETE' })
+    setActive(''); setMessages([]); await loadList()
+  }
+  const renameConversation = (conversation: Conversation) => {
+    setRenameTarget(conversation)
+  }
+  const confirmRename = async (rawTitle: string) => {
+    const conversation = renameTarget
+    setRenameTarget(null)
+    const title = rawTitle.trim()
+    if (!conversation || !title || title === conversation.title) return
+    try {
+      const response = await fetch(`${API}/conversations/${conversation.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })
+      if (!response.ok) throw new Error(await response.text())
+      await loadList()
+      setNotice(t('Đã đổi tên cuộc trò chuyện.', 'Conversation renamed.'))
+      window.setTimeout(() => setNotice(''), 3_000)
+    } catch (e) { setError(errorText(e instanceof Error ? e.message : e)) }
+  }
+  const updateSettings = async (nextProvider: string, nextModel: string) => {
+    setProvider(nextProvider); setModel(nextModel)
+    const storedProvider = nextProvider === 'chatgpt_web' ? account : nextProvider
+    if (active) await fetch(`${API}/conversations/${active}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: nextProvider, accountId: storedProvider, model: nextModel }) })
+  }
+  const downloadResponse = (message: Message) => {
+    const blob = new Blob([message.content], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `chatgpt-response-${message.id.slice(0, 12)}.md`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    setNotice(t('Đã bắt đầu tải phản hồi.', 'Response download started.'))
+    window.setTimeout(() => setNotice(''), 3_000)
+  }
+  const stopGeneration = async () => {
+    if (!active || !busy || stopping) return
+    setStopping(true)
+    setNotice(t('Đang dừng tạo câu trả lời…', 'Stopping response…'))
+    try {
+      const response = await fetch(`${API}/conversations/${active}/cancel`, { method: 'POST' })
+      if (!response.ok) throw new Error(await response.text())
+    } catch (e) {
+      setStopping(false)
+      setNotice('')
+      setError(errorText(e instanceof Error ? e.message : e))
+    }
+  }
+  const consume = async (response: Response) => {
+    if (!response.ok || !response.body) throw new Error((await response.text()) || `HTTP ${response.status}`)
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let assistantId = ''
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const blocks = buffer.split('\n\n'); buffer = blocks.pop() || ''
+      for (const block of blocks) {
+        const event = block.match(/^event: (.+)$/m)?.[1]
+        const raw = block.match(/^data: (.+)$/m)?.[1]; if (!raw) continue
+        const data = JSON.parse(raw)
+        if (event === 'message.started') { assistantId = data.messageId; setMessages(cur => [...cur, { id: assistantId, role: 'assistant', content: '', status: 'streaming' }]) }
+        if (event === 'content.delta') setMessages(cur => cur.map(m => m.id === assistantId ? { ...m, content: m.content + data.delta } : m))
+        if (event === 'artifact.completed') setMessages(cur => cur.map(m => m.id === assistantId ? { ...m, attachments: [...(m.attachments || []), data.artifact] } : m))
+        if (event === 'message.completed') setMessages(cur => cur.map(m => m.id === assistantId ? { ...m, content: data.content, status: data.status } : m))
+        if (event === 'message.failed') {
+          if (String(data.error || '').includes('CHAT_BROWSER_NOT_AUTHENTICATED')) {
+            setAccounts(items => items.map(item => item.id === account ? { ...item, configured: false, status: 'reauth_required' } : item))
+          }
+          const messageError = errorText(data.error)
+          setError(messageError)
+          setMessages(cur => cur.map(m => m.id === assistantId ? { ...m, status: 'failed', error: messageError } : m))
+        }
+      }
+    }
+  }
+  const send = async () => {
+    const content = input.trim(); if (!content || busy) return
+    if (!providerReady) { setError(provider === 'chatgpt_web' ? (activeAccount ? accountError(activeAccount) || t('Hãy đăng nhập ChatGPT Web trước khi gửi.', 'Sign in to ChatGPT Web before sending a message.') : t('Hãy đăng nhập ChatGPT Web trước khi gửi.', 'Sign in to ChatGPT Web before sending a message.')) : t('Provider chưa sẵn sàng hoặc không có model khả dụng.', 'The provider is not ready or has no available model.')); return }
+    const storedProvider = provider === 'chatgpt_web' ? account : provider
+    let id = active
+    if (!id) { const r = await fetch(`${API}/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: content.slice(0, 60), provider, accountId: storedProvider, model }) }); id = (await r.json()).id; setActive(id) }
+    setInput(''); setError(''); setNotice(''); setStopping(false); setBusy(true); setMessages(cur => [...cur, { id: `local-${Date.now()}`, role: 'user', content, status: 'completed' }])
+    try {
+      // Keep the value shown in the composer authoritative for older
+      // conversations whose database row predates model selection.
+      if (id && active) {
+        const settings = await fetch(`${API}/conversations/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, accountId: storedProvider, model }) })
+        if (!settings.ok) throw new Error('CHAT_CONVERSATION_SETTINGS_FAILED')
+      }
+      await consume(await fetch(`${API}/conversations/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, mode, provider, model, attachmentIds }) })); setAttachmentIds([]); setAttachmentNames([]); await loadList()
+    }
+    catch (e) { setError(errorText(e instanceof Error ? e.message : e)) } finally { setStopping(false); setBusy(false) }
+  }
+  const retry = async (messageId: string) => {
+    if (!active || busy) return
+    if (!providerReady) { setError(provider === 'chatgpt_web' ? (activeAccount ? accountError(activeAccount) || t('Hãy đăng nhập ChatGPT Web trước khi thử lại.', 'Sign in to ChatGPT Web before retrying.') : t('Hãy đăng nhập ChatGPT Web trước khi thử lại.', 'Sign in to ChatGPT Web before retrying.')) : t('Provider chưa sẵn sàng hoặc không có model khả dụng.', 'The provider is not ready or has no available model.')); return }
+    const storedProvider = provider === 'chatgpt_web' ? account : provider
+    setError(''); setNotice(''); setStopping(false); setBusy(true)
+    try {
+      const settings = await fetch(`${API}/conversations/${active}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, accountId: storedProvider, model }) })
+      if (!settings.ok) throw new Error('CHAT_CONVERSATION_SETTINGS_FAILED')
+      await consume(await fetch(`${API}/conversations/${active}/messages/${messageId}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, provider, model }) }))
+    }
+    catch (e) { setError(errorText(e instanceof Error ? e.message : e)) } finally { setStopping(false); setBusy(false) }
+  }
+  const uploadFiles = async (files: File[]) => {
+    if (!files.length) return
+    if (!active) { setError(t('Hãy tạo chat trước khi đính kèm.', 'Create a chat before attaching files.')); return }
+    for (const file of files.slice(0, Math.max(0, 10 - attachmentIds.length))) {
+      const body = new FormData(); body.append('file', file)
+      const response = await fetch(`${API}/conversations/${active}/attachments`, { method: 'POST', body })
+      if (!response.ok) { setError(errorText(await response.text())); return }
+      const saved = await response.json(); setAttachmentIds(value => [...value, saved.id]); setAttachmentNames(value => [...value, file.name])
+    }
+  }
+  const signIn = async (accountId = account) => {
+    setError(''); setNotice('')
+    try {
+      const response = await fetch(`${API}/accounts/${accountId}/login`, { method: 'POST' })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail?.message || data.detail || t('Không mở được đăng nhập.', 'Could not open sign-in.'))
+      await refreshAccounts()
+      setNotice(t('Cửa sổ đăng nhập riêng đã mở. Hãy đăng nhập ChatGPT trong cửa sổ đó; ZMTool sẽ tự nhận phiên.', 'The isolated sign-in window is open. Sign in to ChatGPT there; ZMTool will detect the session automatically.'))
+      window.setTimeout(() => setNotice(''), 8_000)
+      window.setTimeout(() => refreshHealth(accountId), 1500)
+    } catch (e) { setNotice(''); setError(errorText(e instanceof Error ? e.message : e)) }
+  }
+  const signOut = async (accountId = account) => {
+    const response = await fetch(`${API}/accounts/${accountId}/logout`, { method: 'POST' })
+    modelCache.delete('chatgpt_web')
+    if (!response.ok) setError(t('Không đăng xuất được ChatGPT Web.', 'Could not sign out from ChatGPT Web.'))
+    await Promise.all([refreshAccounts(), refreshProviders()])
+  }
+  const addAccount = async () => {
+    setError('')
+    const current = accounts[0]
+    if (current) { setAccount(current.id); setProvider('chatgpt_web'); await signIn(current.id); return }
+    const response = await fetch(`${API}/accounts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'chatgpt_account', label: t('Tài khoản ChatGPT', 'ChatGPT account') }) })
+    const data = await response.json()
+    if (!response.ok) { setError(data.detail?.message || data.detail || t('Không thêm được tài khoản.', 'Could not add account.')); return }
+    await refreshAccounts(); setAccount(data.id); setProvider('chatgpt_web'); await signIn(data.id)
+  }
+  const modelSelection = `${provider}::${model}`
+  const providerName = (id: string) => ({
+    chatgpt_web: t('ChatGPT Web', 'ChatGPT Web'), openai: t('OpenAI API', 'OpenAI API'), gemini: 'Gemini',
+    deepseek: 'DeepSeek', openrouter: 'OpenRouter', grok: 'Grok (xAI)', groq: 'Groq', nvidia: t('NVIDIA NIM', 'NVIDIA NIM'),
+  } as Record<string, string>)[id] || id
+  const selectModel = (value: string) => {
+    const separator = value.indexOf('::')
+    if (separator < 0) return
+    void updateSettings(value.slice(0, separator), value.slice(separator + 2))
+  }
+  const selectableProviders = providers.filter(item => (item.id === 'chatgpt_web' ? item.configured : item.status === 'ready'))
+  const availableModelsCount = providers.reduce((total, item) => total + item.models.filter(option => option.available && option.free).length, 0)
+  const availableProviderCount = providers.filter(item => item.models.some(option => option.available && option.free)).length
+  const currentProviderModelCount = models.filter(option => option.available && option.free).length
+
+  return <main className="chat-page">
+    <aside className={`chat-sidebar${railOpen ? ' open' : ''}`}><button type="button" className="chat-rail-close" onClick={() => setRailOpen(false)} aria-label={t('Đóng lịch sử', 'Close history')}>×</button><button type="button" className="chat-new" onClick={create}>＋ {t('Chat mới', 'New chat')}</button>
+      <div className="chat-history">{conversations.map(c => <div className={`chat-history-item${active === c.id ? ' active' : ''}`} key={c.id}><button type="button" onClick={() => openConversation(c.id)}>{c.title}</button><button type="button" className="chat-history-action" title={t('Đổi tên cuộc trò chuyện', 'Rename conversation')} aria-label={t('Đổi tên cuộc trò chuyện', 'Rename conversation')} onClick={() => void renameConversation(c)}>✎</button><button type="button" className="chat-history-action" aria-label={t('Xóa cuộc trò chuyện', 'Delete conversation')} onClick={() => void remove(c.id)}>×</button></div>)}</div>
+      <section className="chat-account-dock" aria-label={t('Cài đặt tài khoản ChatGPT Web', 'ChatGPT Web account settings')}>
+        <div className="chat-account-dock-head"><span className="chat-account-avatar">C</span><div><strong>{activeAccount ? accountName(activeAccount) : t('ChatGPT Web', 'ChatGPT Web')}</strong><small>{activeAccount ? accountState(activeAccount) : t('Chưa đăng nhập', 'Not signed in')}</small></div><button type="button" className="chat-account-check" onClick={() => refreshHealth()} disabled={!activeAccount} aria-label={t('Kiểm tra phiên', 'Check session')}>↻</button></div>
+        {activeAccount?.email ? <small className="chat-account-email">{activeAccount.email}</small> : null}
+        {activeAccount && accountError(activeAccount) ? <p className="chat-account-error">{accountError(activeAccount)}</p> : null}
+        <div className="chat-account-actions">{!activeAccount ? <button type="button" onClick={() => void addAccount()}>{t('Đăng nhập ChatGPT Web', 'Sign in to ChatGPT Web')}</button> : activeAccount.configured ? <button type="button" onClick={() => void signOut(activeAccount.id)}>{t('Đăng xuất', 'Sign out')}</button> : <button type="button" onClick={() => void signIn(activeAccount.id)}>{activeAccount.status === 'browser_only' && activeAccount.errorCode !== 'CHAT_BROWSER_WINDOW_CLOSED' ? t('Kiểm tra phiên', 'Check session') : activeAccount.errorCode === 'CHAT_BROWSER_WINDOW_CLOSED' ? t('Mở lại ChatGPT Web', 'Reopen ChatGPT Web') : t('Đăng nhập lại', 'Sign in again')}</button>}</div>
+      </section>
+    </aside>
+    <section className="chat-main">
+      <header className="chat-toolbar"><button type="button" className="chat-rail-open" onClick={() => setRailOpen(true)} aria-label={t('Mở lịch sử', 'Open history')}>☰</button></header>
+      <div className="chat-modes" role="toolbar" aria-label={t('Chế độ AI', 'AI mode')}>{([['chat','Chat'],['search',t('Tìm kiếm web','Web search')],['research',t('Nghiên cứu sâu','Deep research')],['image',t('Tạo ảnh','Create image')]] as [ChatMode,string][]).map(([id,label]) => { const enabled = id === 'chat' || provider === 'chatgpt_web'; return <button type="button" key={id} className={mode === id ? 'active' : ''} aria-pressed={mode === id} disabled={!enabled} title={!enabled ? t('Chế độ này cần ChatGPT Web.', 'This mode requires ChatGPT Web.') : undefined} onClick={() => setMode(id)}>{label}</button> })}</div>
+      <div className="chat-messages" ref={scrollRef} onScroll={e => { const el = e.currentTarget; autoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
+        {!messages.length && <div className="chat-empty"><h1>{t('Tôi có thể giúp gì?', 'How can I help?')}</h1><p>{t('Chat nhiều lượt với provider bạn đã chọn; model khả dụng được lọc tự động.', 'Multi-turn chat with your selected provider; available models are filtered automatically.')}</p></div>}
+        {messages.map(m => <article key={m.id} className={`chat-message ${m.role}`}><div className="chat-avatar">{m.role === 'user' ? t('Bạn', 'You') : 'AI'}</div><div>
+          {m.status === 'streaming' && !m.content
+            ? <div className="chat-generating" role="status" aria-live="polite"><span>{t('Đang trả lời…', 'Answering…')}</span><span className="chat-generating-dots" aria-hidden="true"><i /><i /><i /></span></div>
+            : <MessageBody content={m.content} />}
+          {m.attachments?.length ? <div className="chat-artifacts">{m.attachments.map(item => item.content_type.startsWith('image/') ? <a key={item.id} href={item.url} target="_blank" rel="noopener noreferrer"><img src={item.url} alt={item.name}/><span>{item.name}</span></a> : <a key={item.id} href={item.url} download={item.name}>{item.name}</a>)}</div> : null}
+          {m.role === 'assistant' && m.status === 'completed' && m.content ? <div className="chat-message-actions"><button type="button" onClick={() => void copyText(m.content, t('Đã sao chép phản hồi.', 'Response copied.'))} aria-label={t('Sao chép phản hồi', 'Copy response')}>{t('Sao chép phản hồi', 'Copy response')}</button><button type="button" onClick={() => downloadResponse(m)} aria-label={t('Tải phản hồi', 'Download response')}>{t('Tải phản hồi', 'Download response')}</button></div> : null}
+          {m.role === 'assistant' && m.status === 'interrupted' ? <p className="chat-interrupted" role="status">{t('Đã dừng tạo câu trả lời.', 'Generation stopped.')}</p> : null}
+          {(m.status === 'failed' || m.status === 'interrupted') && <button type="button" className="chat-retry" onClick={() => void retry(m.id)}>{t('Thử lại', 'Retry')}</button>}
+        </div></article>)}
+        {busy && !messages.some(m => m.status === 'streaming') ? <article className="chat-message assistant chat-message-pending"><div className="chat-avatar">AI</div><div className="chat-generating" role="status" aria-live="polite"><span>{t('Đang trả lời…', 'Answering…')}</span><span className="chat-generating-dots" aria-hidden="true"><i /><i /><i /></span></div></article> : null}
+      </div>{notice && <div className="chat-notice" role="status">{notice}</div>}{error && <div className="chat-error" role="alert">{error}</div>}
+      {attachmentNames.length ? <div className="chat-attachment-tray">{attachmentNames.map((name, index) => <span key={`${name}-${index}`}>{name}<button type="button" aria-label={t(`Bỏ ${name}`, `Remove ${name}`)} onClick={() => { setAttachmentNames(v => v.filter((_, i) => i !== index)); setAttachmentIds(v => v.filter((_, i) => i !== index)) }}>×</button></span>)}</div> : null}
+      <div className="chat-composer" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void uploadFiles(Array.from(e.dataTransfer.files)) }}><textarea value={input} onChange={e => setInput(e.target.value)} onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); void uploadFiles(files) } }} placeholder={t('Nhắn tin cho AI…', 'Message AI…')} aria-label={t('Nội dung tin nhắn', 'Message content')} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }}/>
+        <div className="chat-composer-bar">
+          <label className="chat-attach" title={t('Đính kèm file', 'Attach file')}>＋<input type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/vtt,application/x-subrip,audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/aac,audio/flac,audio/ogg" onChange={e => void uploadFiles(Array.from(e.target.files || []))}/></label>
+          <label className="chat-model-picker chat-model-picker-bottom"><span className="sr-only">{t('Provider và model', 'Provider and model')}</span><select value={modelSelection} onChange={e => selectModel(e.target.value)} aria-label={t('Chọn provider và model', 'Choose provider and model')} aria-busy={modelsLoading} disabled={!selectableProviders.length || modelsLoading} title={modelsError ? t('Không tải được danh sách model.', 'Could not load models.') : undefined}>
+            {!selectableProviders.length && <option value="">{t('Chưa có provider/model khả dụng', 'No available provider/model')}</option>}
+            {selectableProviders.map(item => <optgroup key={item.id} label={`${providerName(item.id)} · ${item.models.length}`}>
+              {item.models.map(option => <option key={`${item.id}:${option.id}`} value={`${item.id}::${option.id}`}>{option.label || option.id}</option>)}
+            </optgroup>)}
+          </select></label>
+          <button type="button" className="chat-model-refresh" onClick={() => void refreshProviderModels()} disabled={!provider || modelsLoading} aria-label={t('Làm mới danh sách model', 'Refresh model list')} title={t('Làm mới danh sách model', 'Refresh model list')}>↻</button>
+          {modelsLoading ? <span className="chat-model-status" role="status">{t('Đang tải model…', 'Loading models…')}</span> : availableModelsCount ? <span className="chat-model-status" role="status" title={t(`${currentProviderModelCount} model từ provider đang chọn`, `${currentProviderModelCount} models from the selected provider`)}>{availableModelsCount} {t('model khả dụng', 'available model(s)')} · {availableProviderCount} {t('cloud', 'cloud providers')}{modelsError ? ` · ${t('provider đang chọn lỗi', 'selected provider unavailable')}` : ''}</span> : modelsError ? <span className="chat-model-status" role="status">{t('Không tải được model', 'Could not load models')}</span> : null}
+          <span className="chat-composer-spacer" />
+          {busy ? <button type="button" onClick={() => void stopGeneration()} disabled={stopping} aria-label={stopping ? t('Đang dừng tạo', 'Stopping generation') : t('Dừng tạo', 'Stop generating')}>{stopping ? '…' : '■'}</button> : <button type="button" onClick={() => void send()} disabled={!input.trim()} aria-label={t('Gửi tin nhắn', 'Send message')}>↑</button>}
+        </div>
+      </div><p className="chat-note">{t('AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng.', 'AI can make mistakes. Check important information.')}</p>
+    </section>
+    <PromptDialog open={Boolean(renameTarget)} title={t('Đổi tên cuộc trò chuyện', 'Rename conversation')} message={t('Nhập tên mới cho cuộc trò chuyện.', 'Enter a new name for this conversation.')} initialValue={renameTarget?.title || ''} placeholder={t('Tên cuộc trò chuyện', 'Conversation name')} cancelLabel={t('Quay lại', 'Go back')} confirmLabel={t('Lưu', 'Save')} onCancel={() => setRenameTarget(null)} onConfirm={(value) => void confirmRename(value)} />
+  </main>
+}

@@ -13,6 +13,7 @@ from pipeline.srt_image import (
     _cached_render,
     _text_logo_filter,
     _text_logo_position,
+    _prepare_media_inputs,
     LOGO_RANDOM_POSITIONS,
     _output_resolution,
     create_job,
@@ -46,6 +47,45 @@ def test_preview_only_prepares_media_needed_for_requested_output_duration():
     selected, durations = preview_media_window(media, [10.0, 10.0, 10.0], 15.0, 2.0)
     assert selected == media
     assert durations == [10.0, 10.0, 10.0]
+
+
+def test_invalid_webp_is_rejected_before_ffmpeg(tmp_path):
+    broken = tmp_path / "broken.webp"
+    broken.write_bytes(b"not a webp file")
+
+    with pytest.raises(RuntimeError, match=r"MEDIA_INVALID.*broken\.webp"):
+        _prepare_media_inputs("media-test", [broken], [2.0], tmp_path / "work", False)
+
+
+def test_invalid_webp_can_be_skipped_with_allow_missing(tmp_path):
+    broken = tmp_path / "broken.webp"
+    valid = tmp_path / "valid.png"
+    broken.write_bytes(b"not a webp file")
+    from PIL import Image
+    Image.new("RGB", (4, 4), "red").save(valid)
+
+    media, durations = _prepare_media_inputs(
+        "media-test", [broken, valid], [2.0, 3.0], tmp_path / "work", True,
+    )
+
+    assert media == [valid]
+    assert durations == [3.0]
+
+
+def test_valid_webp_is_normalized_to_png_for_ffmpeg(tmp_path):
+    webp = tmp_path / "valid.webp"
+    from PIL import Image
+    Image.new("RGBA", (4, 4), (255, 0, 0, 128)).save(webp, "WEBP")
+
+    media, durations = _prepare_media_inputs(
+        "media-test", [webp], [2.0], tmp_path / "work", False,
+    )
+
+    assert durations == [2.0]
+    assert media[0].suffix == ".png"
+    assert media[0].is_file()
+    with Image.open(media[0]) as image:
+        assert image.size == (4, 4)
 
 
 def test_parse_srt_times(tmp_path):

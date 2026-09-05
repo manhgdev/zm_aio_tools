@@ -1637,6 +1637,7 @@
   "CapCut dịch (không dùng Whisper)": "CapCut Translate (no Whisper)",
   "CapCut nhận dạng và dịch trực tiếp trên cloud, rồi trả SRT có timecode. Không chạy Whisper hoặc API dịch khác.": "CapCut recognizes and translates in the cloud, then returns a timed SRT. Whisper and other translation APIs are not used.",
   "CapCut dịch & tải SRT": "Translate with CapCut & download SRT",
+  "CapCut cloud chỉ hỗ trợ dịch cùng nhận dạng CapCut. Chọn nhận dạng CapCut hoặc công cụ dịch khác.": "CapCut cloud translation requires CapCut recognition. Choose CapCut recognition or another translation provider.",
   "CapCut cloud": "CapCut cloud",
   "Gửi video lên CapCut để nhận dạng; không chạy Whisper.": "Uploads the video to CapCut for recognition; Whisper is not used.",
   "Cần mạng. Transcript được cache riêng theo CapCut để không lẫn với Whisper.": "Requires internet. The transcript is cached separately from Whisper.",

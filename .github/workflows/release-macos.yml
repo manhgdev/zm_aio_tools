@@ -11,7 +11,15 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v6
@@ -32,7 +40,7 @@ jobs:
           npm install
           python -m venv backend/.venv
           backend/.venv/bin/python -m pip install --upgrade pip
-          backend/.venv/bin/python -m pip install -r backend/requirements-app.txt pyinstaller pywebview uv
+          backend/.venv/bin/python -m pip install -r backend/requirements-app.txt pyinstaller pywebview uv pytest
           echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
           echo "/usr/local/bin" >> "$GITHUB_PATH"
           brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
@@ -46,6 +54,13 @@ jobs:
           if [ -z "$VERSION" ]; then VERSION="$(cat build_app/VERSION 2>/dev/null || echo '0.0.0')"; fi
           echo "$VERSION" > build_app/VERSION
           echo "Building version: $VERSION"
+
+      - name: Chat regression checks
+        run: |
+          PYTHONPATH=backend backend/.venv/bin/python -m pytest tests/test_chat.py
+          PYTHONPATH=backend backend/.venv/bin/python -m pytest tests/test_chat_providers.py
+          PYTHONPATH=backend backend/.venv/bin/python -m pytest tests/test_automation.py
+          node --test --test-name-pattern="Chat tab is bilingual|Automation queue UI" tests/i18n.catalog.test.mjs
 
       - name: Build macOS app
         env:
@@ -125,10 +140,12 @@ jobs:
           exit 0
           SCRIPT
           chmod 755 "$scripts/postinstall"
-          pkg="build_app/release/ZM_AIO_TOOL_v${version}-macos-arm64.pkg"
+          pkg="build_app/release/ZM_AIO_TOOL_v${version}-macos-${ARCH}.pkg"
           pkgbuild --component "$payload" --scripts "$scripts" --install-location /Applications "$pkg"
           echo "app=$app" >> "$GITHUB_OUTPUT"
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+        env:
+          ARCH: ${{ matrix.arch }}
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')

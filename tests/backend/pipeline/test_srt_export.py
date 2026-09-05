@@ -1,9 +1,27 @@
+import hashlib
 import zipfile
 
 import httpx
 import pytest
 
 from pipeline.srt_export import _caption_cues, _pick_platform_language, _styled, _translated_cues, _write_outputs, _zip_outputs
+
+
+def test_capcut_completed_cues_skip_a_second_upload(monkeypatch, tmp_path):
+    from pipeline import capcut_stt
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"same video")
+    monkeypatch.setattr(capcut_stt, "_CAPCUT_CACHE_DIR", tmp_path / "capcut-cache")
+    md5 = hashlib.md5(source.read_bytes()).hexdigest()
+    rows = [{"start": 0.0, "end": 1.0, "text": "Hello"}]
+    translated = [{"start": 0.0, "end": 1.0, "text": "Xin chao"}]
+    capcut_stt._write_cached_cues(md5, "en", "vi", rows, translated)
+    monkeypatch.setattr(capcut_stt, "_upload", lambda *_args: (_ for _ in ()).throw(AssertionError("must not upload")))
+
+    assert capcut_stt.transcribe_and_translate(source, "en", "vi") == (rows, translated)
+    assert capcut_stt._load_cached_cues(md5, "en", "ja") is None
+    assert capcut_stt._load_cached_cues(hashlib.md5(b"changed video").hexdigest(), "en", "vi") is None
 
 
 def test_capcut_vod_transfer_ret_2000_is_success():
@@ -18,6 +36,84 @@ def test_capcut_vod_transfer_ret_2000_is_success():
         "ret": 2000,
         "errmsg": "Success",
     }
+
+
+def test_capcut_large_media_uses_a_small_proxy(monkeypatch, tmp_path):
+    from pipeline import capcut_stt
+
+    source = tmp_path / "source.mp4"
+    with source.open("wb") as stream:
+        stream.truncate(capcut_stt.CAPCUT_MAX_UPLOAD_BYTES + 1)
+    proxy = tmp_path / "proxy.mp4"
+    proxy.write_bytes(b"small proxy")
+    seen = {}
+
+    def make_proxy(path, check, progress):
+        seen["path"] = path
+        return proxy
+
+    monkeypatch.setattr(capcut_stt, "_create_media_proxy", make_proxy)
+    upload, temporary = capcut_stt._prepare_upload_media(source, None, None)
+
+    assert upload == proxy
+    assert temporary == proxy
+    assert seen["path"] == source
+
+
+def test_capcut_rejects_proxy_that_still_exceeds_limit(monkeypatch, tmp_path):
+    from pipeline import capcut_stt
+
+    source = tmp_path / "source.mp4"
+    with source.open("wb") as stream:
+        stream.truncate(capcut_stt.CAPCUT_MAX_UPLOAD_BYTES + 1)
+    proxy = tmp_path / "proxy.mp4"
+    with proxy.open("wb") as stream:
+        stream.truncate(capcut_stt.CAPCUT_MAX_UPLOAD_BYTES + 1)
+
+    monkeypatch.setattr(capcut_stt, "_create_media_proxy", lambda *_args: proxy)
+    with pytest.raises(capcut_stt.CapCutSttError, match="CAPCUT_MEDIA_TOO_LARGE"):
+        capcut_stt._prepare_upload_media(source, None, None)
+
+
+def test_capcut_chunked_audio_merges_cues_with_each_chunk_offset(monkeypatch, tmp_path):
+    from pipeline import capcut_stt
+
+    first = tmp_path / "chunk-000.m4a"
+    second = tmp_path / "chunk-001.m4a"
+    first.touch()
+    second.touch()
+    monkeypatch.setattr(capcut_stt, "_split_audio_chunks", lambda *_args: [(first, 900.06), (second, 12.0)])
+
+    def transcribe(chunk, *_args, **_kwargs):
+        if chunk == first:
+            return ([{"start": 1.0, "end": 2.0, "text": "one"}], [{"start": 1.0, "end": 2.0, "text": "một"}])
+        return ([{"start": 0.5, "end": 1.5, "text": "two"}], [{"start": 0.5, "end": 1.5, "text": "hai"}])
+
+    monkeypatch.setattr(capcut_stt, "transcribe_and_translate", transcribe)
+    source, translated = capcut_stt._transcribe_chunked_audio(tmp_path / "large.mp4", "en", "vi")
+
+    assert [(row["start"], row["end"], row["text"]) for row in source] == [
+        (1.0, 2.0, "one"), (900.5, 901.5, "two"),
+    ]
+    assert [row["text"] for row in translated] == ["một", "hai"]
+
+
+def test_capcut_large_input_uses_chunked_audio_and_caches_merged_result(monkeypatch, tmp_path):
+    from pipeline import capcut_stt
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"large")
+    rows = [{"start": 0.0, "end": 1.0, "text": "one"}]
+    translated = [{"start": 0.0, "end": 1.0, "text": "một"}]
+    stored = {}
+    monkeypatch.setattr(capcut_stt, "CAPCUT_MAX_UPLOAD_BYTES", 1)
+    monkeypatch.setattr(capcut_stt, "_file_hashes", lambda *_args: ("source-md5", "crc"))
+    monkeypatch.setattr(capcut_stt, "_load_cached_cues", lambda *_args: None)
+    monkeypatch.setattr(capcut_stt, "_transcribe_chunked_audio", lambda *_args, **_kwargs: (rows, translated))
+    monkeypatch.setattr(capcut_stt, "_write_cached_cues", lambda *args: stored.setdefault("value", args))
+
+    assert capcut_stt.transcribe_and_translate(source, "en", "vi") == (rows, translated)
+    assert stored["value"][0] == "source-md5"
 
 
 def test_capcut_poll_progress_reports_state_elapsed_and_poll_count():

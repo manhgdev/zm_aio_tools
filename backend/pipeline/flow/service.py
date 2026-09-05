@@ -30,12 +30,59 @@ _PROFILE_COPY_IGNORES = {
     "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache",
     "GraphiteDawnCache", "GPUPersistentCache", "ShaderCache", "GrShaderCache",
     "Crashpad", "SingletonCookie", "SingletonLock", "SingletonSocket", "LOCK",
+    # Chrome writes this file while starting and can remove it during shutdown;
+    # it is not part of the Google session state needed by Flow.
+    "RunningChromeVersion",
 }
 _IMAGE_UI_MODELS = {"Nano Banana Pro", "Nano Banana 2", "Nano Banana 2 Lite"}
 _VIDEO_UI_MODELS = {
     "Omni Flash", "Veo 3.1 - Lite", "Veo 3.1 - Fast",
     "Veo 3.1 - Quality", "Veo 3.1 - Lite [Lower Priority]",
 }
+
+
+def _flow_submit_button_score(text: str = "", aria_label: str = "") -> int:
+    """Score the current Flow submit control across locales and UI builds."""
+    text_value = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    aria_value = re.sub(r"\s+", " ", str(aria_label or "")).strip().lower()
+    if re.search(r"bắt đầu tạo|start creating|start generation|generate now", aria_value):
+        return 100
+    if text_value == "arrow_forward" or "arrow_forward" in text_value:
+        return 90
+    if re.search(r"\b(create|generate|submit|run)\b", aria_value):
+        return 80
+    if re.search(r"\b(create|generate|submit|run)\b", text_value):
+        return 70
+    return 0
+
+
+def _media_prompt_matches(media: dict[str, Any], prompt: str) -> bool:
+    """Match a Flow media record to the exact prompt that created it."""
+    expected = str(prompt or "").strip()
+    if not expected:
+        return False
+    request_data = ((media or {}).get("mediaMetadata") or {}).get("requestData") or {}
+    for item in request_data.get("promptInputs") or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("textInput") or "").strip()
+        if not text:
+            parts = ((item.get("structuredPrompt") or {}).get("parts") or [])
+            text = " ".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip()
+        if text == expected:
+            return True
+    return False
+
+
+def _media_created_timestamp(media: dict[str, Any]) -> float:
+    raw = str(((media or {}).get("mediaMetadata") or {}).get("createTime") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
 
 
 def _detect_plan(credit_info: Any) -> str | None:
@@ -88,6 +135,85 @@ def _match_model_choice(requested: str, text: str) -> bool:
 def _mode_tab_icon(kind: str) -> str:
     """Material symbols used by Flow's language-independent mode tabs."""
     return "image" if kind == "image" else "videocam"
+
+
+# Flow changed the generation settings controls from ``role=tab`` to
+# ``role=radio``.  Keep both selectors so existing and current builds work.
+_FLOW_CONTROL_SELECTOR = '[role="tab"], [role="radio"]'
+_DURATION_UNITS = r"(?:s|sec(?:ond)?s?|giây)"
+
+
+def _duration_pattern(duration: str) -> re.Pattern[str]:
+    """Match Flow duration labels in English and Vietnamese."""
+    return re.compile(
+        rf"(?<!\d){re.escape(str(duration).strip())}\s*{_DURATION_UNITS}(?!\w)",
+        re.IGNORECASE,
+    )
+
+
+def _flow_control_selected_from_attrs(
+    *, aria_selected: str | None, aria_checked: str | None, data_state: str | None,
+) -> bool:
+    """Return whether a Flow tab/radio reports the selected state."""
+    return (
+        aria_selected == "true"
+        or aria_checked == "true"
+        or data_state == "checked"
+    )
+
+
+def _selected_flow_folder(selected: Path, kind: str) -> Path:
+    """Map a picker path to one concrete Flow kind folder.
+
+    Desktop pickers return the actual absolute directory. Keep that path
+    intact, adding the image/video segment exactly once for the canonical
+    ``.../flow`` layout instead of silently remapping it to the default home
+    directory.
+    """
+    parts = selected.parts
+    lowered = [part.casefold() for part in parts]
+    kind_lower = kind.casefold()
+    for index, part in enumerate(lowered):
+        if part != "flow" or index + 1 >= len(parts):
+            continue
+        next_part = lowered[index + 1]
+        flow_root = Path(*parts[: index + 1])
+        tail = parts[index + 2 :]
+        if next_part in {"image", "video"}:
+            if next_part == kind_lower:
+                return selected
+            return flow_root / kind / Path(*tail) if tail else flow_root / kind
+        break
+    if selected.name.casefold() == "flow":
+        return selected / kind
+    if selected.parent.name.casefold() == "flow":
+        return selected.parent / kind / selected.name
+    return selected / kind
+
+
+async def _flow_control_is_selected(control) -> bool:
+    """Read selection state across Flow's old and new control markup."""
+    try:
+        return _flow_control_selected_from_attrs(
+            aria_selected=await control.get_attribute("aria-selected"),
+            aria_checked=await control.get_attribute("aria-checked"),
+            data_state=await control.get_attribute("data-state"),
+        )
+    except Exception:
+        return False
+
+
+def _is_settings_trigger(text: str, aria_label: str = "") -> bool:
+    """Identify the generation settings pill without clicking grid settings."""
+    text = str(text or "")
+    aria_label = str(aria_label or "")
+    if re.search(r"x[1-4]\b", text, re.IGNORECASE):
+        return True
+    return bool(re.search(
+        r"(?:điều kiện kích hoạt|generation settings|trigger settings)",
+        f"{aria_label} {text}",
+        re.IGNORECASE,
+    ))
 
 
 def _session_needs_login(error: Exception) -> bool:
@@ -555,14 +681,18 @@ class FlowService:
             r"LOGIN_REQUIRED|GENERATION_FAILED|GENERATION_REJECTED|FLOW_EMPTY_OUTPUT",
             re.I,
         )
+        profile_ready = False
         try:
             if job_id in self._cancelled:
                 return
-            runtime_profile = self._clone_runtime_profile(account_id, job_id)
+            runtime_profile: Path | None = None
             try:
+                runtime_profile = self._clone_runtime_profile(account_id, job_id)
+                profile_ready = True
                 asyncio.run(self._run(job_id, profile_dir=runtime_profile))
             finally:
-                shutil.rmtree(runtime_profile, ignore_errors=True)
+                if runtime_profile is not None:
+                    shutil.rmtree(runtime_profile, ignore_errors=True)
 
             # Check whether _run marked the job as a transient failure → auto-retry once
             finished = store.get_row("jobs", job_id) or {}
@@ -573,11 +703,41 @@ class FlowService:
                 )
                 time.sleep(3)
                 store.patch_row("jobs", job_id, {"status": "queued", "stage": "queued", "progress": 0, "error": None, "outputs": []})
-                runtime_profile2 = self._clone_runtime_profile(account_id, job_id)
+                runtime_profile2: Path | None = None
+                profile_ready = False
                 try:
+                    runtime_profile2 = self._clone_runtime_profile(account_id, job_id)
+                    profile_ready = True
                     asyncio.run(self._run(job_id, profile_dir=runtime_profile2))
                 finally:
-                    shutil.rmtree(runtime_profile2, ignore_errors=True)
+                    if runtime_profile2 is not None:
+                        shutil.rmtree(runtime_profile2, ignore_errors=True)
+        except Exception as exc:
+            # Profile copy and worker bootstrap happen outside Flow's async
+            # error boundary. Convert an unexpected failure here into a
+            # terminal job state so the API/queue never leaves a zombie job or
+            # an unhandled thread traceback (notably Windows profile races).
+            current = store.get_row("jobs", job_id) or {}
+            if current.get("status") not in _TERMINAL:
+                error = f"FLOW_WORKER_FAILED: {exc}"
+                store.patch_row(
+                    "jobs",
+                    job_id,
+                    {
+                        "status": "failed",
+                        "stage": "worker" if profile_ready else "profile",
+                        "error": error,
+                        "updatedAt": time.time(),
+                    },
+                )
+                self._log(
+                    "error",
+                    "job_failed",
+                    job_id=job_id,
+                    account_id=account_id,
+                    message=error,
+                    details={"stage": "worker" if profile_ready else "profile"},
+                )
         finally:
             with self._account_condition:
                 self._account_active[account_id] -= 1
@@ -589,11 +749,45 @@ class FlowService:
         target = store.root() / "runtime-profiles" / account_id / job_id
         shutil.rmtree(target, ignore_errors=True)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(
-            source,
-            target,
-            ignore=lambda _directory, names: sorted(_PROFILE_COPY_IGNORES.intersection(names)),
-        )
+        # A user can remove an account profile (or Chrome can remove an
+        # ephemeral file) between profile_dir() and copytree().  An empty
+        # isolated profile is safe: Flow will report LOGIN_REQUIRED and the
+        # account can be connected again instead of killing the worker thread.
+        if not source.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            return target
+        try:
+            shutil.copytree(
+                source,
+                target,
+                ignore=lambda _directory, names: sorted(_PROFILE_COPY_IGNORES.intersection(names)),
+                dirs_exist_ok=True,
+            )
+        except FileNotFoundError:
+            # The profile directory itself can disappear after the initial
+            # is_dir() check (account removal or Chrome cleanup race).
+            target.mkdir(parents=True, exist_ok=True)
+            _log.warning(
+                "Flow profile disappeared while copying account=%s job=%s; continuing with empty profile",
+                account_id,
+                job_id,
+            )
+        except shutil.Error as exc:
+            # copytree may encounter a file deleted during traversal. Keep the
+            # stable files already copied and let Flow's auth check decide
+            # whether a reconnect is required; propagate real permission or
+            # I/O failures so they remain visible in the job status.
+            errors = getattr(exc, "args", [[]])[0]
+            if not errors or not all(
+                "No such file or directory" in str(item) or "Errno 2" in str(item)
+                for item in errors
+            ):
+                raise
+            _log.warning(
+                "Flow profile changed while copying account=%s job=%s; continuing with stable files",
+                account_id,
+                job_id,
+            )
         return target
 
     async def _prepare_video_mode(self, page, model: str) -> None:
@@ -679,9 +873,10 @@ class FlowService:
             re.compile(r"Image|H\u00ecnh \u1ea3nh", re.I) if kind == "image"
             else re.compile(r"Video", re.I)
         )
+        controls = page.locator(_FLOW_CONTROL_SELECTOR)
 
         async def _visible_mode_tab():
-            loc = page.locator('[role="tab"]').filter(has_text=mode_pattern)
+            loc = controls.filter(has_text=mode_pattern)
             # 1. Prefer truly visible tab
             for index in range(await loc.count()):
                 candidate = loc.nth(index)
@@ -691,7 +886,7 @@ class FlowService:
             if await loc.count() > 0:
                 _log.warning("_visible_mode_tab: %s tab not visible but attached — DPI fallback", kind)
                 return loc.first
-            icon_tabs = page.locator('[role="tab"]').filter(
+            icon_tabs = controls.filter(
                 has=page.locator("i", has_text=re.compile(rf"^{_mode_tab_icon(kind)}$", re.I)),
             )
             for index in range(await icon_tabs.count()):
@@ -731,42 +926,32 @@ class FlowService:
                 except Exception:
                     pass
 
-                pills = page.locator("button")
+                # The settings trigger is hydrated after the project shell. Poll
+                # for its semantic label instead of clicking an unrelated toolbar
+                # button while the page is still rendering.
+                pills = page.locator("button, [role='button']")
                 trigger = None
-                # 1. Pill với x[1-4] (matches cả "x1" và "crop_16_9x1")
-                for index in range(await pills.count() - 1, -1, -1):
-                    candidate = pills.nth(index)
-                    text = (await candidate.inner_text()).strip()
-                    if (
-                        await candidate.is_visible()
-                        and await candidate.get_attribute("role") != "tab"
-                        and re.search(r"x[1-4]\b", text)
-                    ):
-                        trigger = candidate
-                        break
-                # 2. Pill có text chứa Image/Video/Hình ảnh/Imagen
-                if trigger is None:
-                    img_kw = re.compile(r"Image|Hình|Imagen|Photo|Nano Banana|Omni|Veo|Video", re.I)
+                trigger_deadline = time.monotonic() + 8
+                while trigger is None and time.monotonic() < trigger_deadline:
                     for index in range(await pills.count() - 1, -1, -1):
                         candidate = pills.nth(index)
-                        if (
-                            await candidate.is_visible()
-                            and await candidate.get_attribute("role") != "tab"
-                            and img_kw.search((await candidate.inner_text()).strip())
-                        ):
-                            trigger = candidate
-                            break
-                # 3. Bất kỳ button menu visible nào.
-                if trigger is None:
-                    for index in range(await pills.count() - 1, -1, -1):
-                        candidate = pills.nth(index)
-                        if await candidate.is_visible() and await candidate.get_attribute("role") != "tab":
-                            trigger = candidate
-                            break
+                        try:
+                            role = await candidate.get_attribute("role")
+                            if role in {"tab", "radio"} or not await candidate.is_visible():
+                                continue
+                            text = (await candidate.inner_text()).strip()
+                            aria_label = await candidate.get_attribute("aria-label") or ""
+                            if _is_settings_trigger(text, aria_label):
+                                trigger = candidate
+                                break
+                        except Exception:
+                            continue
+                    if trigger is None:
+                        await asyncio.sleep(0.25)
                 if trigger is None:
                     _log.warning("_prepare_ui_model attempt %d: no settings pill found", attempt + 1)
                 opened = await _open_flow_settings_panel(
-                    page, trigger, page.locator('[role="tab"]'), ui,
+                    page, trigger, controls, ui,
                 )
                 if not opened:
                     _log.warning(
@@ -778,7 +963,7 @@ class FlowService:
                 if mode_tab is not None:
                     break
 
-                all_tabs = page.locator('[role="tab"]')
+                all_tabs = controls
                 tab_texts: list[str] = []
                 for idx in range(min(10, await all_tabs.count())):
                     try:
@@ -798,8 +983,8 @@ class FlowService:
                 )
             else:
                 raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
-        elif await mode_tab.get_attribute("aria-selected") != "true":
-            await mode_tab.click()
+        elif not await _flow_control_is_selected(mode_tab):
+            await mode_tab.click(force=True)
             await asyncio.sleep(0.6)
 
 
@@ -843,9 +1028,10 @@ class FlowService:
         Recent Flow builds label aspect tabs ``16:9``/``9:16``/``1:1`` rather
         than the older Landscape/Portrait/Square labels used by flow-py.
         """
-        async def visible_tab(label: str):
-            matches = page.locator('[role="tab"]').filter(
-                has_text=re.compile(re.escape(label))
+        async def visible_tab(label: str | re.Pattern[str]):
+            pattern = label if hasattr(label, "search") else re.compile(re.escape(label))
+            matches = page.locator(_FLOW_CONTROL_SELECTOR).filter(
+                has_text=pattern
             )
             for index in range(await matches.count()):
                 candidate = matches.nth(index)
@@ -899,24 +1085,193 @@ class FlowService:
             await asyncio.sleep(0.75)
         if ratio_tab is None:
             raise RuntimeError(f"FLOW_UI_CHANGED: aspect ratio {ratio_label} was not found")
-        if await ratio_tab.get_attribute("aria-selected") != "true":
-            await ratio_tab.click()
+        if not await _flow_control_is_selected(ratio_tab):
+            await ratio_tab.click(force=True)
             await asyncio.sleep(0.3)
-        if await ratio_tab.get_attribute("aria-selected") != "true":
+        if not await _flow_control_is_selected(ratio_tab):
             raise RuntimeError(f"FLOW_SETTING_MISMATCH: aspect ratio {ratio_label} was not selected")
 
 
         if duration is None:
             return
-        duration_label = f"{duration}s" if duration in {"4", "6", "8"} else "8s"
-        duration_tab = await visible_tab(duration_label)
+        duration_value = str(duration).strip() if str(duration).strip() in {"4", "6", "8", "10"} else "8"
+        duration_label = f"{duration_value}s"
+        duration_tab = await visible_tab(_duration_pattern(duration_value))
         if duration_tab is None:
             raise RuntimeError(f"FLOW_UI_CHANGED: duration {duration_label} was not found")
-        if await duration_tab.get_attribute("aria-selected") != "true":
-            await duration_tab.click()
+        if not await _flow_control_is_selected(duration_tab):
+            await duration_tab.click(force=True)
             await asyncio.sleep(0.3)
-        if await duration_tab.get_attribute("aria-selected") != "true":
+        if not await _flow_control_is_selected(duration_tab):
             raise RuntimeError(f"FLOW_SETTING_MISMATCH: duration {duration_label} was not selected")
+
+    async def _click_flow_submit(self, page) -> None:
+        """Click the submit control used by the current Flow project page.
+
+        Flow moved from an English ``Create`` button to a localized Material
+        icon button (``Bắt đầu tạo``/``arrow_forward``).  The upstream
+        flow-py client only checks the old label and then waits for a network
+        endpoint that no longer exists.  Failing at the click boundary keeps
+        a UI mismatch visible instead of leaving a job at 5% for five minutes.
+        """
+        buttons = page.locator("button, [role='button']")
+        candidates: list[tuple[int, int, Any]] = []
+        for index in range(await buttons.count()):
+            candidate = buttons.nth(index)
+            try:
+                if not await candidate.is_visible() or await candidate.is_disabled():
+                    continue
+                score = _flow_submit_button_score(
+                    await candidate.inner_text(),
+                    await candidate.get_attribute("aria-label") or "",
+                )
+                if score:
+                    candidates.append((score, index, candidate))
+            except Exception:
+                continue
+        if not candidates:
+            raise RuntimeError(
+                "FLOW_UI_CHANGED: submit button was not found or is disabled; "
+                "refresh the Flow project and retry"
+            )
+        _, _, button = max(candidates, key=lambda item: (item[0], item[1]))
+        try:
+            await button.click(force=True, timeout=8_000)
+        except Exception as exc:
+            raise RuntimeError(f"FLOW_SUBMIT_CLICK_FAILED: {exc}") from exc
+
+    async def _set_flow_count(self, page, count: int) -> None:
+        """Select the generation count in either the old tab or new radio UI."""
+        desired = max(1, min(4, int(count or 1)))
+        target = page.locator(_FLOW_CONTROL_SELECTOR).filter(
+            has_text=re.compile(rf"^\s*x{desired}\s*$", re.IGNORECASE),
+        )
+        for index in range(await target.count()):
+            candidate = target.nth(index)
+            if not await candidate.is_visible():
+                continue
+            if not await _flow_control_is_selected(candidate):
+                await candidate.click(force=True)
+                await asyncio.sleep(0.25)
+            if await _flow_control_is_selected(candidate):
+                return
+        raise RuntimeError(f"FLOW_UI_CHANGED: generation count x{desired} was not found")
+
+    async def _project_media_elements(self, page) -> list[dict[str, Any]]:
+        """Read generated media tiles from Flow's current Angular DOM."""
+        try:
+            items = await page.evaluate(
+                """() => [...document.querySelectorAll(
+                    'img[data-media-id], video[data-media-id]'
+                )].map(element => ({
+                    id: element.getAttribute('data-media-id') || '',
+                    tag: element.tagName.toLowerCase(),
+                    src: element.currentSrc || element.src || '',
+                    width: element.naturalWidth || 0,
+                    height: element.naturalHeight || 0,
+                    readyState: element.readyState || 0,
+                })).filter(item => item.id && item.src)"""
+            )
+            return [item for item in (items or []) if isinstance(item, dict)]
+        except Exception:
+            return []
+
+    async def _find_existing_project_media(
+        self,
+        api,
+        page,
+        job: dict[str, Any],
+        kind: str,
+        count: int,
+    ) -> list[dict[str, Any]]:
+        """Recover a request that succeeded while the old interceptor timed out."""
+        try:
+            data = await api.get_project_data()
+        except Exception:
+            return []
+        minimum_time = float(job.get("createdAt") or 0) - 60
+        records: list[dict[str, Any]] = []
+        for media in data.get("projectContents", {}).get("media", []):
+            if not isinstance(media, dict) or not media.get("name"):
+                continue
+            if kind == "image" and not media.get("image"):
+                continue
+            if kind == "video" and not media.get("video"):
+                continue
+            if kind == "video":
+                status = str(
+                    (((media.get("mediaMetadata") or {}).get("mediaStatus") or {}).get("mediaGenerationStatus"))
+                    or ""
+                )
+                if status and status not in {
+                    "MEDIA_GENERATION_STATUS_COMPLETE",
+                    "MEDIA_GENERATION_STATUS_SUCCESS",
+                    "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                }:
+                    continue
+            if not _media_prompt_matches(media, str(job.get("prompt") or "")):
+                continue
+            created_at = _media_created_timestamp(media)
+            if created_at and created_at < minimum_time:
+                continue
+            records.append(media)
+        if not records:
+            return []
+        by_id = {
+            str(item.get("id")): item
+            for item in await self._project_media_elements(page)
+            if item.get("id") and str(item.get("src") or "").startswith("http")
+        }
+        # Project data is authoritative for identity; the DOM supplies the
+        # authenticated, downloadable media URL.
+        found: list[dict[str, Any]] = []
+        for media in sorted(records, key=lambda item: _media_created_timestamp(item)):
+            item = by_id.get(str(media.get("name")))
+            if item:
+                found.append(item)
+            if len(found) >= max(1, int(count or 1)):
+                break
+        return found
+
+    async def _wait_for_project_media(
+        self,
+        page,
+        baseline_ids: set[str],
+        kind: str,
+        expected_count: int,
+        job_id: str,
+        timeout_s: int = 360,
+    ) -> list[dict[str, Any]]:
+        """Wait for media tiles after a current Flow Angular submit."""
+        deadline = time.monotonic() + timeout_s
+        store.patch_row("jobs", job_id, {
+            "stage": "generating", "progress": 20, "updatedAt": time.time(),
+        })
+        while time.monotonic() < deadline:
+            self._check_cancel(job_id)
+            items = await self._project_media_elements(page)
+            fresh: list[dict[str, Any]] = []
+            for item in items:
+                if str(item.get("id")) in baseline_ids:
+                    continue
+                src = str(item.get("src") or "")
+                if not src.startswith("http"):
+                    continue
+                if kind == "image" and int(item.get("width") or 0) <= 0:
+                    continue
+                fresh.append(item)
+            if len(fresh) >= max(1, expected_count):
+                return fresh[:max(1, expected_count)]
+            elapsed = timeout_s - max(0.0, deadline - time.monotonic())
+            store.patch_row("jobs", job_id, {
+                "stage": "generating",
+                "progress": min(75, 20 + int(elapsed / max(1, timeout_s) * 55)),
+                "updatedAt": time.time(),
+            })
+            await asyncio.sleep(2)
+        raise RuntimeError(
+            f"FLOW_GENERATION_TIMEOUT: no completed {kind} media appeared after submit"
+        )
 
     async def _wait_for_project_videos(
         self,
@@ -1018,8 +1373,6 @@ class FlowService:
                     for media in project_data.get("projectContents", {}).get("media", [])
                     if media.get("name")
                 }
-                async def ready(*_args, **_kwargs):
-                    return True
                 # If we have a start image, switch to FRAME_TO_VIDEO NOW while the
                 # settings panel is still open from _prepare_ui_model above.
                 # switch_mode.open_settings_panel will see the panel as already open
@@ -1030,10 +1383,12 @@ class FlowService:
                 if source:
                     from flow._models import GenerationMode
                     await client._ui.switch_mode(page, GenerationMode.FRAME_TO_VIDEO)
-                client._ui.open_settings_panel = ready
-                client._ui.switch_mode = ready   # already done (or not needed for text mode)
-                client._ui.set_aspect_ratio = ready
+                    if not await client._ui.upload_image(page, source):
+                        raise RuntimeError("FLOW_UI_CHANGED: start image upload control was not found")
                 extend_from = store.get_row("jobs", str(settings.get("extendFromJobId") or ""))
+                count = max(1, min(4, int(settings.get("count", 1))))
+                remote = []
+                media_items: list[dict[str, Any]] = []
                 if extend_from and (extend_from.get("mediaIds") or []):
                     media_id = str(extend_from["mediaIds"][0])
                     project_data = await api.get_project_data()
@@ -1045,14 +1400,23 @@ class FlowService:
                     # extension token that the raw endpoint rejects on 403.
                     remote = [await client.extend_video(media_id, workflow_id, job["prompt"])]
                 else:
-                    remote = await client.generate_video(
-                        job["prompt"], model=model,
-                        aspect="portrait" if ratio == "9:16" else "landscape",
-                        count=max(1, min(4, int(settings.get("count", 1)))), start_image=source,
-                        timeout_s=300,
+                    media_items = await self._find_existing_project_media(
+                        api, page, job, "video", count,
                     )
+                    if not media_items:
+                        baseline_media = await self._project_media_elements(page)
+                        baseline_ids = {str(item.get("id")) for item in baseline_media if item.get("id")}
+                        await self._set_flow_count(page, count)
+                        if not await client._ui.fill_prompt(page, job["prompt"]):
+                            raise RuntimeError("FLOW_UI_CHANGED: prompt editor was not found")
+                        await self._click_flow_submit(page)
+                        media_items = await self._wait_for_project_media(
+                            page, baseline_ids, "video", count, job_id,
+                        )
                 media_ids = [item.media_name for item in remote]
-                if not media_ids:
+                if media_items:
+                    media_ids = [str(item["id"]) for item in media_items]
+                elif not media_ids:
                     media_ids = await self._wait_for_project_videos(
                         api,
                         baseline_ids,
@@ -1064,6 +1428,7 @@ class FlowService:
                 store.patch_row("jobs", job_id, {"mediaIds": media_ids, "stage": "generating", "progress": 20})
                 outputs = []
                 remote_by_id = {item.media_name: item for item in remote}
+                media_by_id = {str(item["id"]): item for item in media_items}
                 for output_index, media_id in enumerate(media_ids, 1):
                     self._check_cancel(job_id)
                     remote_job = remote_by_id.get(media_id)
@@ -1075,7 +1440,8 @@ class FlowService:
                     media_url = (
                         status.fife_url
                         if status is not None and status.fife_url
-                        else f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={media_id}"
+                        else str((media_by_id.get(media_id) or {}).get("src") or "")
+                        or f"https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name={media_id}"
                     )
                     await api.download(media_url, output)
                     outputs.append(str(output))
@@ -1089,25 +1455,29 @@ class FlowService:
                 await self._prepare_ui_format(page, str(settings.get("ratio") or "16:9"))
                 for source in sources:
                     await client._ui.upload_image(page, source)
-                async def ready(*_args, **_kwargs):
-                    return True
-                client._ui.open_settings_panel = ready
-                client._ui.switch_mode = ready
-                client._ui.set_aspect_ratio = ready
-                images = await client.generate_image(
-                    job["prompt"], aspect={"9:16": "portrait", "1:1": "square"}.get(settings.get("ratio"), "landscape"),
-                    count=max(1, min(4, int(settings.get("count", 1)))), reference_images=sources or None,
-                    timeout_s=300,
+                count = max(1, min(4, int(settings.get("count", 1))))
+                baseline_media = await self._project_media_elements(page)
+                baseline_ids = {str(item.get("id")) for item in baseline_media if item.get("id")}
+                media_items = await self._find_existing_project_media(
+                    api, page, job, "image", count,
                 )
-                media_ids = [image.media_name for image in images]
+                if not media_items:
+                    await self._set_flow_count(page, count)
+                    if not await client._ui.fill_prompt(page, job["prompt"]):
+                        raise RuntimeError("FLOW_UI_CHANGED: prompt editor was not found")
+                    await self._click_flow_submit(page)
+                    media_items = await self._wait_for_project_media(
+                        page, baseline_ids, "image", count, job_id,
+                    )
+                media_ids = [str(item["id"]) for item in media_items]
                 self._log("success", "generation_submitted", job_id=job_id, account_id=account["id"], details={"model": settings.get("model"), "mediaIds": media_ids})
                 await self._sync_credits(api, account["id"])
                 store.patch_row("jobs", job_id, {"mediaIds": media_ids, "stage": "downloading", "progress": 80})
                 outputs = []
-                for output_index, image in enumerate(images, 1):
+                for output_index, image in enumerate(media_items, 1):
                     self._check_cancel(job_id)
                     output = self._output_path(job, output_index, str(settings.get("format", "png")).lower())
-                    await api.download(image.fife_url, output)
+                    await api.download(str(image["src"]), output)
                     outputs.append(str(output))
                     self._log("success", "output_downloaded", job_id=job_id, account_id=account["id"], details={"outputIndex": output_index, "path": str(output)})
             if not self._outputs_exist(outputs):
@@ -1147,22 +1517,21 @@ class FlowService:
         flow_tab = f"flow-{kind}"  # → ~/Downloads/ZM_AIO_TOOL/flow/video/ or .../flow/image/
         series_context = job.get("seriesContext") or {}
         if series_context:
-            root = selected_or_default(flow_tab, "")
-            series_root = root / "series" / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series")
+            # Series artifacts share one ``flow/series/<slug>`` namespace and
+            # remain split by kind below it.  This keeps deletion/reveal paths
+            # compatible with existing Series data while regular jobs use the
+            # ``flow/image`` and ``flow/video`` roots above.
+            root = selected_or_default("flow", "")
+            series_root = root / "series" / safe_output_part(series_context.get("seriesSlug") or series_context.get("seriesTitle") or "series", "series") / kind
             folder = series_root / "anchors" if series_context.get("artifact") == "anchor" else series_root / f"tap-{int(series_context.get('episodeIndex') or 1):02d}"
+        elif selected.is_absolute() and os.environ.get("VIDEO_CLONE_DESKTOP") == "1":
+            folder = _selected_flow_folder(selected, kind)
+
         elif selected.is_absolute():
-            flow_root = selected_or_default(flow_tab, "")
-            try:
-                relative = selected.relative_to(flow_root)
-            except ValueError:
-                # Path nằm ngoài flow_root → đặt vào flow_root/tên-folder
-                # VD: user chọn ~/Downloads/test → ~/Downloads/ZM_AIO_TOOL/flow/video/test
-                folder = flow_root / safe_output_part(selected.name or "results", "results")
-            else:
-                parts = list(relative.parts)
-                if parts and parts[0] in {"image", "video"}:
-                    parts = parts[1:]
-                folder = flow_root / safe_output_part(parts[-1] if parts else "results", "results")
+            # Browser jobs are downloaded from the backend's public tree; do
+            # not let a client-supplied absolute path escape that sandbox.
+            root = selected_or_default(flow_tab, "")
+            folder = root / safe_output_part(selected.name or "results", "results")
 
         else:
             root = selected_or_default(flow_tab, "")

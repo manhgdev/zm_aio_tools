@@ -216,6 +216,7 @@ const args = [
   '--collect-all', 'webview',
   '--collect-all', 'yt_dlp',
   '--collect-all', 'flow',
+  '--collect-all', 'keyring',
   // Hidden imports: stdlib + third-party hay bị PyInstaller miss
   '--hidden-import', 'timeit',
   '--hidden-import', 'pickletools',

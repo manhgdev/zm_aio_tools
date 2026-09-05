@@ -15,6 +15,11 @@ from pipeline.export.burn_parts.layout_text import (
     _layout_caption_over,
     _layout_caption_vertical,
 )
+from pipeline.export.burn_parts.ocr_boxes import (
+    _expand_mid_box_to_subtitle_band,
+    _merge_ocr_samples,
+    _segment_bbox_override,
+)
 
 
 EXPECTED = {
@@ -103,3 +108,79 @@ class BundledCaptionFontTest(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             SegmentIn(**base, fontFamily="../font.ttf", textColor="red")
+
+    def test_only_user_dragged_bbox_bypasses_export_ocr(self) -> None:
+        bbox = {"x": 80, "y": 900, "w": 920, "h": 80}
+
+        # A saved automatic box is an OCR hint, not an editor override.  The
+        # export must re-measure it against the encoded source frame.
+        self.assertIsNone(
+            _segment_bbox_override({"bbox": bbox, "bboxInherited": True}, 1080, 1920)
+        )
+        # Projects created before bboxInherited existed retain their edited
+        # placement until the user runs the current locator again.
+        self.assertEqual(
+            _segment_bbox_override({"bbox": bbox}, 1080, 1920),
+            (80, 900, 1000, 980),
+        )
+        self.assertEqual(
+            _segment_bbox_override(
+                {"bbox": bbox, "bboxInherited": True}, 1080, 1920, accept_automatic=True
+            ),
+            (80, 900, 1000, 980),
+        )
+        self.assertEqual(
+            _segment_bbox_override({"bbox": bbox, "bboxInherited": False}, 1080, 1920),
+            (80, 900, 1000, 980),
+        )
+
+    def test_outside_caption_flips_when_requested_side_has_no_room(self) -> None:
+        font = ImageFont.truetype(fonts._font_for_preset("system"), 48)
+
+        for placement, ocr_box in (
+            ("below", (180, 1840, 900, 1900)),
+            ("above", (180, 20, 900, 80)),
+        ):
+            layout = _layout_caption(
+                "Bản dịch phải nằm ngoài phụ đề gốc",
+                font,
+                48,
+                ocr_box,
+                1080,
+                1920,
+                placement=placement,
+            )
+            x0, y0, x1, y1 = layout["box"]
+            self.assertGreaterEqual(x0, 0)
+            self.assertLessEqual(x1, 1080)
+            self.assertGreaterEqual(y0, 0)
+            self.assertLessEqual(y1, 1920)
+            self.assertTrue(
+                y1 <= ocr_box[1] or y0 >= ocr_box[3],
+                f"{placement} caption overlaps source bbox: {layout['box']} vs {ocr_box}",
+            )
+
+    def test_mid_caption_expands_to_a_nearby_second_hardsub_row(self) -> None:
+        # The source-matched OCR can find only the lower row while the
+        # lower-band OCR sees the full two-row hard subtitle.
+        matched = [(268, 1341, 814, 1491)]
+        band = [(247, 1322, 1032, 1499)]
+
+        self.assertEqual(
+            _expand_mid_box_to_subtitle_band(matched, band, 1080, 1920),
+            [(268, 1322, 814, 1499)],
+        )
+
+    def test_ocr_sample_merge_ignores_a_previous_subtitle_lane(self) -> None:
+        # The first probe is still on the preceding subtitle; four following
+        # probes agree on the current two-row caption.  The merge must choose
+        # the repeated lane instead of centring one tall union across both.
+        merged = _merge_ocr_samples(
+            [(295, 1150, 722, 1389)] + [(268, 1321, 814, 1499)] * 4,
+            1080,
+            1920,
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertGreaterEqual(merged[0][1], 1310)
+        self.assertGreaterEqual(merged[0][3], 1499)

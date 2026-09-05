@@ -39,6 +39,8 @@ const MESSAGES = {
   'nav.review': { vi: 'Review Phim', en: 'Movie Review' },
   'nav.batch': { vi: 'Hàng loạt', en: 'Batch' },
   'nav.flow': { vi: 'Flow', en: 'Flow' },
+  'nav.chat': { vi: 'Chat AI', en: 'AI Chat' },
+  'nav.automation': { vi: 'Tự động hoá', en: 'Automation' },
   'nav.livePreview': { vi: 'Live Preview', en: 'Live Preview' },
   'nav.renders': { vi: 'List render', en: 'Render list' },
   'nav.download': { vi: 'Download Video', en: 'Download Video' },
@@ -59,6 +61,13 @@ const MESSAGES = {
   'header.switchLight': { vi: 'Chuyển sang giao diện sáng', en: 'Switch to light mode' },
   'header.switchDark': { vi: 'Chuyển sang giao diện tối', en: 'Switch to dark mode' },
   'header.back': { vi: 'Quay lại', en: 'Back' },
+  'error.cloud.apiKeyMissing': { vi: '{provider}: chưa có API key. Mở Cấu hình → API dịch cloud.', en: '{provider}: no API key is configured. Open Settings → Cloud translation APIs.' },
+  'error.cloud.authFailed': { vi: '{provider}: API key bị từ chối hoặc không có quyền dùng model.', en: '{provider}: the API key was rejected or cannot access this model.' },
+  'error.cloud.rateLimited': { vi: '{provider}: hết quota hoặc đang bị giới hạn tốc độ. Thử lại sau hoặc thêm key khác.', en: '{provider}: quota is exhausted or rate-limited. Retry later or add another key.' },
+  'error.cloud.serviceUnavailable': { vi: '{provider}: dịch vụ hoặc mạng hiện không khả dụng. Thử lại sau.', en: '{provider}: the service or network is unavailable. Retry later.' },
+  'error.cloud.modelInvalid': { vi: '{provider}: model hoặc yêu cầu không hợp lệ. Kiểm tra lại model trong Cấu hình.', en: '{provider}: the model or request is invalid. Check the model in Settings.' },
+  'error.cloud.invalidResponse': { vi: '{provider}: phản hồi dịch không hợp lệ. Thử lại hoặc chọn model khác.', en: '{provider}: the translation response is invalid. Retry or choose another model.' },
+  'error.cloud.languagePair': { vi: '{provider}: model hiện tại không hỗ trợ cặp ngôn ngữ này.', en: '{provider}: the current model does not support this language pair.' },
 } as const
 
 export type MessageKey = keyof typeof MESSAGES
@@ -159,9 +168,40 @@ export function localize(locale: AppLocale, vietnamese: string, english: string)
 
 /** Backend job messages include dynamic counts, so they cannot use the static catalog. */
 export function localizePipelineMessage(locale: AppLocale, message: string): string {
+  const cloud = /^CLOUD_TRANSLATION_([A-Z0-9_]+)_(API_KEY_MISSING|AUTH_FAILED|ACCESS_DENIED|RATE_LIMITED_OR_QUOTA|NETWORK_UNAVAILABLE|SERVICE_UNAVAILABLE|MODEL_OR_REQUEST_INVALID|INVALID_RESPONSE|UNSUPPORTED_LANGUAGE_PAIR|REQUEST_FAILED)$/.exec(message)
+  if (cloud) {
+    const provider = ({ OPENAI: 'OpenAI', GEMINI: 'Gemini', DEEPSEEK: 'DeepSeek', OPENROUTER: 'OpenRouter', GROK: 'Grok', GROQ: 'Groq', NVIDIA: 'NVIDIA NIM' } as Record<string, string>)[cloud[1]] || cloud[1]
+    const key = ({
+      API_KEY_MISSING: 'error.cloud.apiKeyMissing',
+      AUTH_FAILED: 'error.cloud.authFailed',
+      ACCESS_DENIED: 'error.cloud.authFailed',
+      RATE_LIMITED_OR_QUOTA: 'error.cloud.rateLimited',
+      NETWORK_UNAVAILABLE: 'error.cloud.serviceUnavailable',
+      SERVICE_UNAVAILABLE: 'error.cloud.serviceUnavailable',
+      MODEL_OR_REQUEST_INVALID: 'error.cloud.modelInvalid',
+      INVALID_RESPONSE: 'error.cloud.invalidResponse',
+      UNSUPPORTED_LANGUAGE_PAIR: 'error.cloud.languagePair',
+      REQUEST_FAILED: 'error.cloud.serviceUnavailable',
+    } as Record<string, MessageKey>)[cloud[2]]
+    return key ? translate(locale, key, { provider }) : message
+  }
+  if (message === 'CAPCUT_TRANSLATOR_REQUIRES_CAPCUT_ASR') {
+    return localize(locale,
+      'CapCut cloud chỉ hỗ trợ dịch cùng nhận dạng CapCut. Chọn nhận dạng CapCut hoặc công cụ dịch khác.',
+      'CapCut cloud translation requires CapCut recognition. Choose CapCut recognition or another translation provider.',
+    )
+  }
   if (locale !== 'en') return message
   return message
     .replace(/^REVIEW_CLOUD_GEMINI_HTTP_403$/g, 'Gemini rejected this request. Check the API key, its project, and Gemini API access in Settings → Cloud.')
+    .replace(/^REVIEW_CLOUD_GEMINI_API_KEY_MISSING$/g, 'Gemini has no API key. Add one in Settings → Cloud, then retry.')
+    .replace(/^REVIEW_CLOUD_GEMINI_AUTH_FAILED$/g, 'Gemini rejected the API key or it lacks Gemini API access. Check the key and project in Settings → Cloud.')
+    .replace(/^REVIEW_CLOUD_GEMINI_ACCESS_DENIED$/g, 'Gemini denied access to this request. Check the API key and Gemini API access in Settings → Cloud.')
+    .replace(/^REVIEW_CLOUD_GEMINI_RATE_LIMITED_OR_QUOTA$/g, 'Gemini is out of quota or rate-limited. Wait for quota to become available, then retry.')
+    .replace(/^REVIEW_CLOUD_GEMINI_MODEL_OR_REQUEST_INVALID$/g, 'The Gemini Review analysis model is invalid. Use a Gemini API model such as gemini-2.5-flash in Settings → Cloud.')
+    .replace(/^REVIEW_CLOUD_GEMINI_NETWORK_UNAVAILABLE$/g, 'Gemini could not be reached. Check the network and base URL in Settings → Cloud, then retry.')
+    .replace(/^REVIEW_CLOUD_GEMINI_SERVICE_UNAVAILABLE$/g, 'Gemini is temporarily unavailable. Retry shortly.')
+    .replace(/^REVIEW_CLOUD_GEMINI_INVALID_RESPONSE$/g, 'Gemini returned an invalid response. Retry, or choose another Gemini Review model.')
     .replace(/^REVIEW_CLOUD_GEMINI_UNAVAILABLE$/g, 'Gemini is temporarily unreachable. Check the network, base URL, and API key in Settings → Cloud, then retry.')
     .replace(/^Review script: AI dựng mạch từ timeline thoại · model (.+)$/g, 'Review script: AI builds an arc from the speech timeline · model $1')
     .replace(/^Lập chỉ mục cảnh: (.+)$/g, 'Indexing scenes: $1')

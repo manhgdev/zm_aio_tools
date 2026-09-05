@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 import urllib.request
 from datetime import datetime
@@ -89,6 +90,7 @@ _checks_warm_lock = threading.Lock()
 _checks_warming = False
 _UPDATE_REPOSITORY = "manhgdev/zm_aio_tools"
 _UPDATE_LOCK = threading.Lock()
+_UPDATE_DOWNLOAD_TIMEOUT_SECONDS = 30 * 60
 _UPDATE_STATE: dict[str, Any] = {
     "running": False,
     "phase": "idle",
@@ -145,9 +147,9 @@ def _release_asset(release: dict[str, Any]) -> dict[str, Any] | None:
     version = str(release.get("tag_name") or "").lstrip("v")
     if _version_key(version) == (0, 0, 0):
         return None
-    prefix = f"ZM_AIO_TOOL_v{version}"
+    expected_name = f"ZM_AIO_TOOL_v{version}{suffix}"
     for asset in release.get("assets") or []:
-        if isinstance(asset, dict) and str(asset.get("name") or "").startswith(prefix) and str(asset.get("name") or "").endswith(suffix):
+        if isinstance(asset, dict) and str(asset.get("name") or "") == expected_name:
             return asset
     return None
 
@@ -172,18 +174,35 @@ def _download_update(asset: dict[str, Any], updates: Path, version: str) -> Path
     url = str(asset.get("browser_download_url") or "")
     if not name or not url:
         raise RuntimeError("Release không có gói cài đặt phù hợp")
+    # Asset names are supplied by GitHub; never allow a release response to
+    # escape the dedicated update directory through a path separator.
+    if Path(name).name != name or name in {".", ".."}:
+        raise RuntimeError("Tên gói cập nhật không hợp lệ")
     target = updates / name
     partial = target.with_suffix(target.suffix + ".part")
     _set_update_state(phase="downloading", progress=0, message="Đang tải bản cập nhật…", assetName=name, latestVersion=version)
-    with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as output:
-        total = int(response.headers.get("Content-Length") or 0)
-        received = 0
-        while chunk := response.read(1024 * 1024):
-            output.write(chunk)
-            received += len(chunk)
-            progress = min(99, int(received * 100 / total)) if total else 0
-            _set_update_state(progress=progress)
-    partial.replace(target)
+    try:
+        # Large desktop bundles can take several minutes on a slow connection;
+        # this is a socket-idle timeout, not a total-download deadline.
+        with urllib.request.urlopen(url, timeout=_UPDATE_DOWNLOAD_TIMEOUT_SECONDS) as response, partial.open("wb") as output:
+            try:
+                total = max(0, int(response.headers.get("Content-Length") or 0))
+            except (TypeError, ValueError):
+                total = 0
+            received = 0
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+                received += len(chunk)
+                progress = min(99, int(received * 100 / total)) if total else 0
+                _set_update_state(progress=progress)
+        partial.replace(target)
+    except Exception:
+        try:
+            partial.unlink()
+        except OSError:
+            pass
+        raise
+    _set_update_state(progress=100)
     return target
 
 
@@ -387,6 +406,15 @@ def _start_checks_warm() -> None:
 
             _invalidate_checks_cache()  # Xoá cache cũ để re-check thấy trạng thái mới
             system_checks(fast=True)
+        except Exception as exc:
+            # A broken optional probe must never produce an unhandled daemon
+            # thread traceback or take down the API; the next refresh can retry.
+            try:
+                from pipeline.core.app_log import append_exception
+
+                append_exception("[warm-checks] dependency check failed", exc)
+            except Exception:
+                pass
         finally:
             with _checks_warm_lock:
                 _checks_warming = False
@@ -559,8 +587,6 @@ def api_save_config(body: AppConfigIn):
             block = {
                 "baseUrl": v.baseUrl or "",
                 "model": v.model or "",
-                "reviewBaseUrl": v.reviewBaseUrl or "",
-                "reviewModel": v.reviewModel or "",
             }
             if v.apiKeys is not None:
                 block["apiKeys"] = v.apiKeys
@@ -576,6 +602,14 @@ def api_save_config(body: AppConfigIn):
             }
         }
     save_app_config(patch)
+    # Provider discovery is cached briefly; credentials saved in this request
+    # must be visible to the Chat/Automation provider picker immediately.
+    try:
+        from api.routes.chat import service as chat_service
+
+        chat_service.clear_model_cache()
+    except Exception:
+        pass
     # key ElevenLabs đổi → xóa cache list giọng (tránh kẹt [] từ lần trước chưa có key)
     try:
         from pipeline.tts.eleven import clear_el_voices_cache

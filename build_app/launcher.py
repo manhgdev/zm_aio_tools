@@ -238,7 +238,12 @@ def show_copyable_crash(exit_code: int) -> None:
 def _supervise_child() -> int:
     import subprocess
 
-    env = os.environ.copy()
+    try:
+        from pipeline.core.runtime_site import subprocess_environment
+
+        env = subprocess_environment()
+    except Exception:
+        env = os.environ.copy()
     env[_SUPERVISOR_ENV] = "1"
     proc = subprocess.Popen([sys.executable, *sys.argv[1:]], env=env)
     return int(proc.wait())
@@ -323,7 +328,16 @@ if ocr_site.is_dir():
 
 bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 os.environ.setdefault("VIDEO_CLONE_BUNDLE", str(bundle))
-os.environ["PATH"] = os.pathsep.join((str(bundle), os.environ.get("PATH", "")))
+try:
+    from pipeline.core.runtime_site import prepend_windows_path, sanitize_process_environment
+
+    # Sanitize the inherited Explorer/shell PATH before adding bundle tools.
+    # A bloated PATH makes CreateProcess and torch's DLL bootstrap fail with
+    # WinError 206 even when the torch/lib directory itself is short.
+    sanitize_process_environment()
+    prepend_windows_path(bundle)
+except Exception:
+    os.environ["PATH"] = os.pathsep.join((str(bundle), os.environ.get("PATH", "")))
 if sys.platform == "win32":
     _motw_removed = unblock_windows_motw(bundle)
     if _motw_removed:
@@ -354,7 +368,10 @@ if sys.platform == "win32":
                 pass
             _cand = _p / "ffmpeg.exe"
             if _cand.is_file():
-                os.environ["PATH"] = os.pathsep.join((str(_cand.parent), os.environ["PATH"]))
+                try:
+                    prepend_windows_path(_cand.parent)
+                except Exception:
+                    os.environ["PATH"] = os.pathsep.join((str(_cand.parent), os.environ["PATH"]))
                 break
 
 # Seed giọng zmAI đi kèm; không ghi đè giọng hoặc metadata người dùng đã sửa.

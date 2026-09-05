@@ -21,6 +21,15 @@ _lock = threading.Lock()
 _cache: dict[str, object] = {}
 
 
+def _safe_subprocess_env() -> dict[str, str]:
+    try:
+        from .runtime_site import subprocess_environment
+
+        return subprocess_environment()
+    except Exception:
+        return os.environ.copy()
+
+
 def _nvidia_smi() -> bool:
     try:
         cmd = "nvidia-smi"
@@ -37,6 +46,7 @@ def _nvidia_smi() -> bool:
             capture_output=True,
             text=True,
             timeout=8,
+            env=_safe_subprocess_env(),
             creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if sys.platform == "win32" else 0,
         )
         return r.returncode == 0 and bool((r.stdout or "").strip())
@@ -75,6 +85,7 @@ def _probe_torch_device_in(python: str) -> TorchDevice:
             capture_output=True,
             text=True,
             timeout=90,
+            env=_safe_subprocess_env(),
             creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if sys.platform == "win32" else 0,
         )
         out = (r.stdout or "").strip().splitlines()

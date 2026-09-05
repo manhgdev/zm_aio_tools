@@ -40,7 +40,7 @@ from pipeline.tts import tts_segment
 REVIEW_PLAN_VERSION = 26
 REVIEW_STORY_VERSION = 8
 REVIEW_FINALIZE_VERSION = 8
-REVIEW_MATCH_VERSION = 5
+REVIEW_MATCH_VERSION = 6
 WINDOW_SOURCE_VERSION = 1
 
 # Stable protocol consumed and localized by the client. Never display it raw.
@@ -143,6 +143,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
     window_duration = sum(max(0.0, end - start) for start, end in windows)
     available_models = list_ollama_models()
     requested_model = str(settings.get("reviewModel") or "auto").strip()
+    requested_cloud_model = str(settings.get("reviewCloudModel") or "").strip()
     if review_mode == "llm" and requested_model not in {"", "auto"} and requested_model not in available_models:
         raise RuntimeError("REVIEW_LLM_MODEL_UNAVAILABLE")
     if review_mode == "cloud":
@@ -156,6 +157,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
         review_provider,
         requested_model,
         available_models,
+        cloud_model=requested_cloud_model,
     )
     if review_mode == "llm" and not review_model:
         raise RuntimeError("REVIEW_LLM_REQUIRED")
@@ -704,6 +706,8 @@ def _select_review_model(
     review_provider: str,
     requested_model: str,
     available_models: list[str],
+    *,
+    cloud_model: str = "",
 ) -> str | None:
     """Resolve exactly the provider selected by the Review writing mode.
 
@@ -712,14 +716,13 @@ def _select_review_model(
     run when the writing mode is ``llm``.
     """
     if review_mode == "cloud":
-        from pipeline.core.app_config import load_app_config
-
-        cloud = load_app_config()["cloud"].get(review_provider) or {}
-        model_name = (
-            requested_model
-            if requested_model not in {"", "auto"} and not requested_model.startswith("cloud:")
-            else str(cloud.get("reviewModel") or "")
-        )
+        # Cloud Review is selected and persisted with the Review project;
+        # `reviewModel` remains reserved for the Ollama selector.
+        model_name = cloud_model or {
+            "gemini": "gemini-2.5-flash",
+            "grok": "grok-3-mini",
+            "openai": "gpt-4o-mini",
+        }.get(review_provider, "")
         return f"cloud:{review_provider}:{model_name}"
     if review_mode in {"llm", "ai"}:
         if requested_model not in {"", "auto"} and requested_model in available_models:
@@ -908,7 +911,7 @@ def _script_settings_key(settings: dict[str, Any]) -> str:
     """Stable fingerprint of settings that affect script / TTS / matching output.
     Any change here forces a rebuild from script stage onward."""
     keys = (
-        "style", "scriptStyle", "narration", "reviewMode", "reviewModel", "reviewProvider",
+        "style", "scriptStyle", "narration", "reviewMode", "reviewModel", "reviewCloudModel", "reviewProvider",
         "buildMode", "genre", "pausePace", "voice", "language", "spoiler",
         "notes", "durationSec", "chunkMinutes", "keepSec", "skipSec",
         "reviewPlanVersion",

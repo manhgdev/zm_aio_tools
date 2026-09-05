@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import { fetchJson } from '@/shared/api/fetchJson'
 import { SRT_STYLE_OPTIONS } from '@/features/tts/lib/srt'
 import { IconDownload } from '@/shared/components/Icons'
-import { loadSettings } from '@/app/appSettings'
+import { availableTranslators, normalizeTranslatorForEngine, loadSettings } from '@/app/appSettings'
 import { localize, useLocale } from '@/app/i18n'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
@@ -39,7 +39,7 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
   const [outputMode, setOutputMode] = useState<OutputMode>('original')
   const [sourceLang, setSourceLang] = useState(saved.sourceLang)
   const [targetLang, setTargetLang] = useState(saved.targetLang === 'none' ? 'vi' : saved.targetLang)
-  const [translator, setTranslator] = useState(saved.translator)
+  const [translator, setTranslator] = useState(() => normalizeTranslatorForEngine('whisper', saved.translator))
   const [recognitionEngine, setRecognitionEngine] = useState<RecognitionEngine>('whisper')
   const capcutTranslate = kind === 'media' && recognitionEngine === 'capcut'
 
@@ -148,7 +148,7 @@ export default function SrtExportPage({ onBack }: { onBack: () => void }) {
         {kind === 'media' && <label><span>{t('Nhận dạng & dịch', 'Recognition & translation')}</span><select value={recognitionEngine} onChange={(event) => selectRecognitionEngine(event.target.value as RecognitionEngine)}><option value="whisper">{t('Whisper + công cụ dịch', 'Whisper + translation provider')}</option><option value="capcut">{t('CapCut dịch (không dùng Whisper)', 'CapCut Translate (no Whisper)')}</option></select></label>}
         <label><span>{t('Kiểu phụ đề', 'Subtitle output')}</span><select value={outputMode} onChange={(event) => setOutputMode(event.target.value as OutputMode)}>{!capcutTranslate && <option value="original">{t('Bản gốc', 'Original')}</option>}<option value="translated">{t('Bản dịch', 'Translation')}</option><option value="bilingual">{t('Song ngữ (2 bộ file: gốc và dịch)', 'Bilingual (two sets: source and translation)')}</option></select></label>
         <label><span>{t('Ngôn ngữ gốc', 'Source language')}</span><select value={sourceLang} onChange={(event) => setSourceLang(event.target.value)}><option value="auto">{t('Tự động nhận diện', 'Auto detect')}</option><option value="vi">{t('Tiếng Việt', 'Vietnamese')}</option><option value="en">{t('Tiếng Anh', 'English')}</option><option value="zh">{t('Tiếng Trung', 'Chinese')}</option><option value="ja">{t('Tiếng Nhật', 'Japanese')}</option><option value="ko">{t('Tiếng Hàn', 'Korean')}</option></select></label>
-        {outputMode !== 'original' && <><label><span>{t('Ngôn ngữ dịch', 'Translate to')}</span><select value={targetLang} onChange={(event) => setTargetLang(event.target.value)}><option value="vi">{t('Tiếng Việt', 'Vietnamese')}</option><option value="en">{t('Tiếng Anh', 'English')}</option><option value="zh">{t('Tiếng Trung', 'Chinese')}</option><option value="ja">{t('Tiếng Nhật', 'Japanese')}</option><option value="ko">{t('Tiếng Hàn', 'Korean')}</option></select></label>{!capcutTranslate && <label><span>{t('Công cụ dịch', 'Translation provider')}</span><select value={translator} onChange={(event) => { const value = event.target.value as typeof translator; setTranslator(value); if (value === 'capcut') selectRecognitionEngine('capcut') }}><option value="google">Google Translate</option><option value="mymemory">MyMemory</option><option value="tiktok">TikTok Translate</option><option value="capcut">{t('CapCut cloud', 'CapCut cloud')}</option><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="grok">Grok (xAI)</option><option value="nvidia">NVIDIA NIM</option></select></label>}</>}
+        {outputMode !== 'original' && <><label><span>{t('Ngôn ngữ dịch', 'Translate to')}</span><select value={targetLang} onChange={(event) => setTargetLang(event.target.value)}><option value="vi">{t('Tiếng Việt', 'Vietnamese')}</option><option value="en">{t('Tiếng Anh', 'English')}</option><option value="zh">{t('Tiếng Trung', 'Chinese')}</option><option value="ja">{t('Tiếng Nhật', 'Japanese')}</option><option value="ko">{t('Tiếng Hàn', 'Korean')}</option></select></label>{!capcutTranslate && <label><span>{t('Công cụ dịch', 'Translation provider')}</span><select value={translator} onChange={(event) => setTranslator(event.target.value as typeof translator)}>{availableTranslators('whisper').map((id) => <option key={id} value={id}>{id === 'grok' ? 'Grok (xAI)' : id === 'groq' ? 'Groq' : id === 'nvidia' ? 'NVIDIA NIM' : id}</option>)}</select></label>}</>}
       </div>
       <div className="srt-export-outputs">
         <strong>{t('File xuất tự động', 'Automatic output files')}</strong>

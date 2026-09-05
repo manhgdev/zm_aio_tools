@@ -3,7 +3,7 @@ import { localize, useLocale } from '@/app/i18n'
 import { api } from '@/features/project/project.api'
 import {
   GENRES, KEEP_SKIP_PRESETS, loadPacks, savePacks,
-  type CaptionMode, type Pack, type ReviewSettings,
+  type CaptionMode, type Pack, type ReviewCloudProvider, type ReviewSettings,
 } from './reviewSettings'
 import { studioApi } from './studio.api'
 
@@ -355,18 +355,29 @@ export function ReviewRightPanel({
           </p>
         </label>
       ) : settings.reviewMode === 'cloud' ? (
-        <label className="rv-field">
-          <span className="rv-lab">{t('Nhà cung cấp Cloud', 'Cloud provider')}</span>
-          <select value={settings.reviewProvider} onChange={(e) => onChange({ reviewProvider: e.target.value as ReviewSettings['reviewProvider'] })}>
-            <option value="gemini">Gemini</option>
-            <option value="grok">Grok</option>
-            <option value="openai">OpenAI</option>
-          </select>
+        <div className="rv-field">
+          <div className="rv-two">
+            <label className="rv-field">
+              <span className="rv-lab">{t('Cloud AI', 'Cloud AI')}</span>
+              <select value={settings.reviewProvider} onChange={(e) => {
+                const provider = e.target.value as ReviewCloudProvider
+                onChange({ reviewProvider: provider, reviewCloudModel: provider === 'gemini' ? 'gemini-2.5-flash' : provider === 'grok' ? 'grok-3-mini' : 'gpt-4o-mini' })
+              }}>
+                <option value="gemini">Gemini</option>
+                <option value="grok">Grok</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </label>
+            <label className="rv-field">
+              <span className="rv-lab">Model</span>
+              <input value={settings.reviewCloudModel} onChange={(e) => onChange({ reviewCloudModel: e.target.value })} placeholder={t('Ví dụ: gemini-2.5-flash', 'e.g. gemini-2.5-flash')} />
+            </label>
+          </div>
           <p className="rv-hint">{t(
-            'Chọn Gemini để Review theo timeline thoại. Đặt API key và model trong Cài đặt → Cloud; key không được lưu trong job.',
-            'Choose Gemini for transcript-timeline Review. Set its API key and model in Settings → Cloud; keys are never saved in the job.',
+            'Model được chọn riêng cho project Review này. API key và Base URL vẫn lấy từ Cấu hình → Cloud; key không được lưu trong job.',
+            'The model is selected for this Review project. The API key and base URL still come from Settings → Cloud; keys are never stored in the job.',
           )}</p>
-        </label>
+        </div>
       ) : null}
 
       <h4 className="rv-nest-h small">{t('Độ dài lời kể', 'Narration length')}</h4>

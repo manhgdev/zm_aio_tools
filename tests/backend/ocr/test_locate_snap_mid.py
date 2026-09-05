@@ -42,6 +42,17 @@ def test_apply_caption_box_mid_not_tall():
     assert seg["bbox"]["y"] > 900
 
 
+def test_apply_caption_box_preserves_two_row_hardsub_band():
+    fw, fh = 1080, 1920
+    seg: dict = {"source": "make you all pay for your betrayal"}
+
+    _apply_caption_box(seg, (220, 1340, 850, 1500), fw, fh)
+
+    assert seg["layout"] == "mid"
+    assert seg["bbox"]["h"] >= 160
+    assert seg["bbox"]["y"] <= 1330
+
+
 def test_apply_caption_box_wide_mid_stays_mid():
     seg: dict = {"source": "è¿™æ˜¯ä¸€æ¡å¾ˆé•¿çš„ä¸­é—´å­—å¹•"}
     _apply_caption_box(seg, (80, 860, 1000, 930), 1080, 1920)

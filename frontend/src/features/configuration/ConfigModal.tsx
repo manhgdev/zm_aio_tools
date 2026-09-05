@@ -55,6 +55,9 @@ export default function ConfigModal({
   const [elSlots, setElSlots] = useState<string[]>([''])
   const [elSavedCount, setElSavedCount] = useState(0)
   const [cloudKeySlots, setCloudKeySlots] = useState<Record<CloudProviderId, string[]>>(() => Object.fromEntries(PROVIDERS.map((id) => [id, ['']])) as Record<CloudProviderId, string[]>)
+  /** Empty slots normally mean "keep saved keys"; track explicit edits so the
+   * remove button can clear the first/only saved key on the next save. */
+  const [cloudKeysDirty, setCloudKeysDirty] = useState<Record<CloudProviderId, boolean>>(() => Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -221,14 +224,13 @@ export default function ConfigModal({
             apiKeys: c.apiKeys || '', keyCount: c.keyCount || 0,
             baseUrl: c.baseUrl || next[id].baseUrl,
             model: c.model || next[id].model,
-            reviewBaseUrl: c.reviewBaseUrl || c.baseUrl || next[id].baseUrl,
-            reviewModel: c.reviewModel || c.model || next[id].model,
             apiKeySet: !!c.apiKeySet,
             label: c.label || next[id].label,
           }
         }
         setDraft(next)
         setCloudKeySlots(Object.fromEntries(PROVIDERS.map((id) => [id, Array.from({ length: Math.max(1, Number(cfg.cloud?.[id]?.keyCount || 0) || (cfg.cloud?.[id]?.apiKeySet ? 1 : 0)) }, () => '')])) as Record<CloudProviderId, string[]>)
+        setCloudKeysDirty(Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>)
         const el = cfg.tts?.elevenlabs
         const n = Math.max(1, Number(el?.keyCount || 0) || (el?.apiKeySet ? 1 : 0))
         setElSavedCount(el?.apiKeySet ? n : 0)
@@ -412,20 +414,37 @@ export default function ConfigModal({
     }
   }
 
+  function setCloudKeySlot(index: number, value: string) {
+    setCloudKeySlots((all) => ({
+      ...all,
+      [tab]: all[tab].map((key, i) => (i === index ? value : key)),
+    }))
+    setCloudKeysDirty((all) => ({ ...all, [tab]: true }))
+  }
+
+  function addCloudKeySlot() {
+    setCloudKeySlots((all) => ({ ...all, [tab]: [...all[tab], ''] }))
+    setCloudKeysDirty((all) => ({ ...all, [tab]: true }))
+  }
+
+  function removeCloudKeySlot(index: number) {
+    setCloudKeySlots((all) => ({ ...all, [tab]: all[tab].filter((_, i) => i !== index) }))
+    setCloudKeysDirty((all) => ({ ...all, [tab]: true }))
+  }
+
   async function onSave() {
     setSaving(true)
     setMsg('')
     try {
-      const cloud: Record<string, { apiKeys?: string; baseUrl?: string; model?: string; reviewBaseUrl?: string; reviewModel?: string }> =
+      const cloud: Record<string, { apiKeys?: string; baseUrl?: string; model?: string }> =
         {}
       for (const id of PROVIDERS) {
         const d = draft[id]
+        const keys = cloudKeySlots[id].map((key) => key.trim()).filter(Boolean).join(',')
         cloud[id] = {
           baseUrl: d.baseUrl,
           model: d.model,
-          reviewBaseUrl: d.reviewBaseUrl || d.baseUrl,
-          reviewModel: d.reviewModel || d.model,
-          ...(cloudKeySlots[id].some((key) => key.trim()) ? { apiKeys: cloudKeySlots[id].map((key) => key.trim()).filter(Boolean).join(',') } : {}),
+          ...(cloudKeysDirty[id] ? { apiKeys: keys } : {}),
         }
       }
       const body: {
@@ -448,13 +467,13 @@ export default function ConfigModal({
           keyCount: c.keyCount || 0,
           baseUrl: c.baseUrl || next[id].baseUrl,
           model: c.model || next[id].model,
-          reviewBaseUrl: c.reviewBaseUrl || c.baseUrl || next[id].baseUrl,
-          reviewModel: c.reviewModel || c.model || next[id].model,
           apiKeySet: !!c.apiKeySet,
           label: c.label || next[id].label,
         }
       }
       setDraft(next)
+      setCloudKeySlots(Object.fromEntries(PROVIDERS.map((id) => [id, Array.from({ length: Math.max(1, Number(cfg.cloud?.[id]?.keyCount || 0) || (cfg.cloud?.[id]?.apiKeySet ? 1 : 0)) }, () => '')])) as Record<CloudProviderId, string[]>)
+      setCloudKeysDirty(Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>)
       const el = cfg.tts?.elevenlabs
       const n = Math.max(1, Number(el?.keyCount || 0) || (el?.apiKeySet ? 1 : 0))
       setElSavedCount(el?.apiKeySet ? n : 0)
@@ -727,7 +746,17 @@ export default function ConfigModal({
           </div>
         ) : section === 'cloud' ? (
           <div className="cfg-body cfg-body-grid">
-            <div className="cfg-el-keys"><span>API keys {cur.apiKeySet ? '(saved — enter to replace/add)' : ''}</span>{cloudKeySlots[tab].map((value, index) => <div className="cfg-el-key-row" key={`${tab}-${index}`}><input type="text" autoComplete="off" placeholder={savedKeyPlaceholder(cur, index)} value={value} onChange={(e) => setCloudKeySlots((all) => ({ ...all, [tab]: all[tab].map((key, i) => i === index ? e.target.value : key) }))} /><button type="button" className="cfg-el-remove" disabled={cloudKeySlots[tab].length <= 1} onClick={() => setCloudKeySlots((all) => ({ ...all, [tab]: all[tab].filter((_, i) => i !== index) }))}>×</button></div>)}<button type="button" className="cfg-el-add" onClick={() => setCloudKeySlots((all) => ({ ...all, [tab]: [...all[tab], ''] }))}>+ {t('Thêm key', 'Add key')}</button><p className="cfg-hint">{t('Nhiều key được luân phiên cho batch dịch; Review Phim dùng key đang hoạt động.', 'Multiple keys rotate for translation batches; Movie Review uses the active key.')}</p></div>
+            <div className="cfg-el-keys">
+              <span>{t('API key', 'API keys')}{cur.apiKeySet ? t(' (đã lưu — nhập để thay/thêm)', ' (saved — enter to replace/add)') : ''}</span>
+              {cloudKeySlots[tab].map((value, index) => (
+                <div className="cfg-el-key-row" key={`${tab}-${index}`}>
+                  <input type="text" autoComplete="off" placeholder={savedKeyPlaceholder(cur, index)} value={value} onChange={(e) => setCloudKeySlot(index, e.target.value)} />
+                  <button type="button" className="cfg-el-remove" aria-label={t(`Xóa API key ${index + 1}`, `Remove API key ${index + 1}`)} onClick={() => removeCloudKeySlot(index)}>×</button>
+                </div>
+              ))}
+              <button type="button" className="cfg-el-add" onClick={addCloudKeySlot}>+ {t('Thêm key', 'Add key')}</button>
+              <p className="cfg-hint">{t('Nhiều key được luân phiên cho batch dịch. Khi sửa/xóa ô, hãy nhập lại các key muốn giữ trước khi Lưu; để trống toàn bộ rồi Lưu sẽ xóa key đã lưu.', 'Multiple keys rotate for translation batches. When editing/removing a slot, re-enter any keys you want to keep before Save; leaving every slot empty and saving clears the saved keys.')}</p>
+            </div>
             <div className="cfg-cloud-panels">
               <section className="cfg-cloud-panel">
                 <h3>{t('API Dịch', 'Translation API')}</h3>
@@ -740,20 +769,9 @@ export default function ConfigModal({
                   <input type="text" value={cur.model} onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], model: e.target.value } }))} />
                 </label>
               </section>
-              <section className="cfg-cloud-panel">
-                <h3>{t('AI phân tích Review', 'Review analysis AI')}</h3>
-                <label>
-                  <span>{t('Base URL', 'Base URL')}</span>
-                  <input type="text" value={cur.reviewBaseUrl || cur.baseUrl} onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], reviewBaseUrl: e.target.value } }))} />
-                </label>
-                <label>
-                  <span>Model</span>
-                  <input type="text" value={cur.reviewModel || cur.model} onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], reviewModel: e.target.value } }))} />
-                </label>
-              </section>
             </div>
             <p className="cfg-hint">
-              {t('API Dịch và AI Review có Base URL/Model riêng, nhưng dùng chung API key của provider. Key lưu ', 'Translation API and Review AI use separate base URLs/models, but share the provider API key. Keys are stored in ')}
+              {t('API key, Base URL và model dịch được lưu tại ', 'The API key, base URL, and translation model are stored in ')}
               <code>backend/data/app_config.json</code>.
             </p>
           </div>

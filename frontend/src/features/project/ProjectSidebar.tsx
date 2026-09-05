@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import type { JobStatus, ProjectSettings } from '@/features/project/project.types'
 import { api } from '@/features/project/project.api'
 import { localize, useLocale } from '@/app/i18n'
+import { availableTranslators, normalizeTranslatorForEngine } from '@/app/appSettings'
 
 type AnalysisRegion = { x: number; y: number; w: number; h: number }
 
@@ -302,7 +303,7 @@ export default function Sidebar({
     onSettings({ ...settings, [key]: value })
   }
   const selectEngine = (engine: ProjectSettings['engine']) => {
-    set('engine', engine)
+    onSettings({ ...settings, engine, translator: normalizeTranslatorForEngine(engine, settings.translator) })
   }
 
   /** Commit ô Preview → settings; trả về số giây đã chốt (dùng khi bấm Preview ngay). */
@@ -498,14 +499,7 @@ export default function Sidebar({
             <option value="google">Google Translate</option>
             <option value="mymemory">MyMemory</option>
             <option value="tiktok">TikTok Translate</option>
-            <option value="capcut">{t('CapCut cloud', 'CapCut cloud')}</option>
-            <option value="ollama">Ollama</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="grok">Grok (xAI)</option>
-            <option value="nvidia">NVIDIA NIM</option>
+            {availableTranslators(settings.engine).map((id) => <option key={id} value={id}>{id === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : id === 'grok' ? 'Grok (xAI)' : id === 'groq' ? 'Groq' : id === 'nvidia' ? 'NVIDIA NIM' : id}</option>)}
           </select>
         </Field>
       </div>

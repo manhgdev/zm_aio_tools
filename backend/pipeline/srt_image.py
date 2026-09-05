@@ -470,6 +470,65 @@ def is_video(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_EXTENSIONS
 
 
+def _prepare_media_inputs(
+    job_id: str, media: list[Path], durations: list[float], work: Path,
+    allow_missing: bool,
+) -> tuple[list[Path], list[float]]:
+    """Validate source media and make WebP inputs decoder-safe for FFmpeg.
+
+    Flow downloads are not guaranteed to be complete when a job starts.  A
+    truncated WebP can otherwise survive all preparation steps and fail late
+    inside FFmpeg's concat decoder.  Invalid inputs are either reported before
+    rendering or skipped together with their duration when the user enabled
+    the existing ``allowMissingMedia`` option.
+    """
+    normalized: list[Path] = []
+    kept_durations: list[float] = []
+    webp_dir = work / "media-normalized"
+    for index, (source, duration) in enumerate(zip(media, durations)):
+        reason = ""
+        target = source
+        try:
+            if not source.is_file() or source.stat().st_size <= 0:
+                raise ValueError("file không tồn tại hoặc rỗng")
+            if is_video(source):
+                # Video validation remains delegated to FFmpeg, but an empty
+                # file is rejected here so the job fails with a useful cause.
+                pass
+            else:
+                from PIL import Image
+
+                # verify() checks container integrity without decoding the
+                # pixels; reopen/load catches truncated payloads as well.
+                with Image.open(source) as image:
+                    image.verify()
+                with Image.open(source) as image:
+                    for frame in range(getattr(image, "n_frames", 1)):
+                        image.seek(frame)
+                        image.load()
+                    if source.suffix.lower() == ".webp":
+                        webp_dir.mkdir(parents=True, exist_ok=True)
+                        target = webp_dir / f"media_{index:05d}.png"
+                        image.seek(0)
+                        mode = "RGBA" if "A" in image.getbands() else "RGB"
+                        image.convert(mode).save(target, format="PNG")
+        except Exception as exc:
+            reason = str(exc) or exc.__class__.__name__
+
+        if reason:
+            message = f"MEDIA_INVALID: media không hợp lệ / invalid media {source.name}: {reason}"
+            if allow_missing:
+                _log(job_id, f"Bỏ qua media lỗi / Skipping invalid media: {source.name} · {reason}")
+                continue
+            raise RuntimeError(message)
+        normalized.append(target)
+        kept_durations.append(duration)
+
+    if not normalized:
+        raise RuntimeError("MEDIA_INVALID: Không còn ảnh/video hợp lệ để ghép / no valid image or video remains")
+    return normalized, kept_durations
+
+
 def _encoder_args(use_gpu: bool, crf: int, *, intermediate: bool = False) -> list[str]:
     """Encoder args.  intermediate=True uses faster presets for throwaway segments."""
     if use_gpu:
@@ -1312,12 +1371,16 @@ def run(job_id: str) -> None:
             for i, (start, end) in enumerate(cues)
         ]
         opts = job["options"]
+        work = Path(job["work"])
+        work.mkdir(parents=True, exist_ok=True)
+        media, durations = _prepare_media_inputs(
+            job_id, media, durations, work, bool(opts.get("allowMissingMedia")),
+        )
         speed = max(25, min(400, float(opts.get("speed", 100)))) / 100
         preview = max(0, min(120, float(opts.get("previewSeconds", 0))))
         media, durations = preview_media_window(media, durations, preview, speed)
         if preview:
             _log(job_id, f"Preview {preview:g}s: chỉ chuẩn bị {len(media)} media đầu tiên")
-        work = Path(job["work"])
         media = _drawing_video_sources(job_id, media, durations, opts, work)
         width, height = _output_resolution(opts, media[0])
         fps = max(1, min(60, int(opts.get("fps", 30))))
@@ -1345,7 +1408,7 @@ def run(job_id: str) -> None:
             _log(job_id, f"Delogo: {dw}×{dh} tại ({dx},{dy}) trên {src_w}×{src_h}")
         # ponytail: drawing videos và ảnh tĩnh khi zoom=off không cần encode segment trung gian,
         # áp dụng delogo trực tiếp trong final pass.
-        all_raw_still = all(not is_video(Path(p)) for p in job["images"][:len(durations)])
+        all_raw_still = all(not is_video(p) for p in media)
         is_drawing = bool(opts.get("drawing", {}).get("enabled")) if isinstance(opts.get("drawing"), dict) else False
         need_segments = (
             zoom_mode != "off"

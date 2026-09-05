@@ -13,8 +13,12 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import os
+import subprocess
+import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
@@ -22,6 +26,8 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 import httpx
 
 from pipeline.tts.capcut import BASE, base_headers, common_query, compact_json, load_device, make_sign_header
+from pipeline.core.config import DATA
+from pipeline.core.media import _ff_bin
 
 _VOD_REGION = "sdwdmwlll"
 _VOD_SERVICE = "vod"
@@ -36,6 +42,12 @@ _SUCCESS_CODES = {"", "0", "00", "2000"}
 # empty query response for long periods is not a queued job.  Do not leave the
 # editor stuck for the full 20-minute task deadline in that situation.
 _MAX_MISSING_STATUS_POLLS = 15
+CAPCUT_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+_CAPCUT_PROXY_TARGET_BYTES = 190 * 1024 * 1024
+_AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
+_CAPCUT_CACHE_DIR = DATA / "cache" / "capcut-stt"
+_CAPCUT_CHUNK_SECONDS = 15 * 60
+_CAPCUT_CHUNK_WORKERS = 2
 
 
 class CapCutSttError(RuntimeError):
@@ -85,6 +97,34 @@ def _file_hashes(path: Path, check: Callable[[], bool] | None) -> tuple[str, str
     return md5.hexdigest(), f"{crc & 0xffffffff:08x}"
 
 
+def _cache_path(md5: str, source_lang: str, target_lang: str) -> Path:
+    key = "|".join((md5, _language(source_lang, default="auto"), _language(target_lang, default="vi-VN")))
+    return _CAPCUT_CACHE_DIR / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+
+
+def _load_cached_cues(md5: str, source_lang: str, target_lang: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
+    try:
+        cached = json.loads(_cache_path(md5, source_lang, target_lang).read_text(encoding="utf-8"))
+        source, translated = cached.get("source"), cached.get("translated")
+        if isinstance(source, list) and source and isinstance(translated, list):
+            return source, translated
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    return None
+
+
+def _write_cached_cues(md5: str, source_lang: str, target_lang: str, source: list[dict[str, Any]], translated: list[dict[str, Any]]) -> None:
+    path = _cache_path(md5, source_lang, target_lang)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(json.dumps({"source": source, "translated": translated}, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        # ponytail: cache must never make a successful CapCut result fail; retry next run if disk is unavailable.
+        pass
+
+
 def _hmac(key: str | bytes, value: str | bytes) -> bytes:
     return hmac.new(key.encode() if isinstance(key, str) else key, value.encode() if isinstance(value, str) else value, hashlib.sha256).digest()
 
@@ -117,7 +157,197 @@ def _vod_headers(method: str, url: str, payload: bytes, credentials: dict[str, A
     }
 
 
+def _probe_duration_seconds(path: Path) -> float:
+    try:
+        result = subprocess.run(
+            [_ff_bin("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        value = float(result.stdout.strip() or 0)
+        return value if value > 0 else 0.0
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
+def _split_audio_chunks(
+    path: Path, directory: Path, check: Callable[[], bool] | None,
+    progress: Callable[[str], None] | None,
+) -> list[tuple[Path, float]]:
+    """Extract compact mono audio once, then split it into CapCut-safe chunks."""
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "chunk-%04d.m4a"
+    command = [
+        _ff_bin("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error", "-i", str(path),
+        "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "64k",
+        "-f", "segment", "-segment_time", str(_CAPCUT_CHUNK_SECONDS), "-reset_timestamps", "1",
+        "-segment_format", "mp4", "-segment_format_options", "movflags=+faststart", str(target),
+    ]
+    if progress:
+        progress("CapCut: đang tách audio thành các đoạn ngắn… / splitting audio into short chunks…")
+    try:
+        _cancelled(check)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=1800)
+        _cancelled(check)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CapCutSttError(f"CAPCUT_CHUNK_PREP_FAILED: không thể tách audio / unable to split audio: {exc}") from exc
+    if result.returncode:
+        detail = (result.stderr or "").strip().splitlines()[-1] if result.stderr else ""
+        raise CapCutSttError(f"CAPCUT_CHUNK_PREP_FAILED: không thể tách audio / unable to split audio{f': {detail}' if detail else ''}")
+    chunks: list[tuple[Path, float]] = []
+    for chunk in sorted(directory.glob("chunk-*.m4a")):
+        duration = _probe_duration_seconds(chunk)
+        if duration <= 0 or chunk.stat().st_size <= 0:
+            raise CapCutSttError(f"CAPCUT_CHUNK_PREP_FAILED: đoạn audio không hợp lệ / invalid audio chunk: {chunk.name}")
+        if chunk.stat().st_size > CAPCUT_MAX_UPLOAD_BYTES:
+            raise CapCutSttError(
+                f"CAPCUT_CHUNK_TOO_LARGE: đoạn audio vẫn vượt giới hạn / audio chunk still exceeds "
+                f"the {CAPCUT_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit"
+            )
+        chunks.append((chunk, duration))
+    if not chunks:
+        raise CapCutSttError("CAPCUT_CHUNK_PREP_FAILED: không tìm thấy audio để nhận dạng / no audio stream to transcribe")
+    return chunks
+
+
+def _offset_cues(cues: list[dict[str, Any]], offset: float) -> list[dict[str, Any]]:
+    return [
+        {**cue, "start": round(float(cue["start"]) + offset, 3), "end": round(float(cue["end"]) + offset, 3)}
+        for cue in cues
+    ]
+
+
+def _transcribe_chunked_audio(
+    path: Path, source_lang: str, target_lang: str, *, require_translation: bool = True,
+    cancelled: Callable[[], bool] | None = None, progress: Callable[[str], None] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run CapCut on short audio chunks and restore source-media timecodes."""
+    with tempfile.TemporaryDirectory(prefix="capcut-chunks-") as raw_directory:
+        chunks = _split_audio_chunks(path, Path(raw_directory), cancelled, progress)
+        # AAC/M4A duration includes encoder priming (typically ~20–60ms).
+        # Segment boundaries use the requested timeline, so derive offsets
+        # from that boundary instead of accumulating probe durations.
+        offsets = [index * float(_CAPCUT_CHUNK_SECONDS) for index in range(len(chunks))]
+
+        def transcribe(index: int, chunk: Path) -> tuple[int, list[dict[str, Any]], list[dict[str, Any]]]:
+            _cancelled(cancelled)
+            if progress:
+                progress(f"CapCut: đang nhận dạng đoạn {index + 1}/{len(chunks)}… / transcribing chunk {index + 1}/{len(chunks)}…")
+            source, translated = transcribe_and_translate(
+                chunk, source_lang, target_lang, require_translation=require_translation,
+                cancelled=cancelled, progress=progress,
+            )
+            return index, source, translated
+
+        completed: list[tuple[int, list[dict[str, Any]], list[dict[str, Any]]]] = []
+        workers = min(_CAPCUT_CHUNK_WORKERS, len(chunks))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(transcribe, index, chunk) for index, (chunk, _) in enumerate(chunks)]
+            for future in as_completed(futures):
+                _cancelled(cancelled)
+                completed.append(future.result())
+
+    source_result: list[dict[str, Any]] = []
+    translated_result: list[dict[str, Any]] = []
+    for index, source, translated in sorted(completed):
+        source_result.extend(_offset_cues(source, offsets[index]))
+        translated_result.extend(_offset_cues(translated, offsets[index]))
+    return source_result, translated_result
+
+
+def _create_media_proxy(path: Path, check: Callable[[], bool] | None, progress: Callable[[str], None] | None) -> Path:
+    """Create a compact CapCut-compatible proxy for media over 200 MiB."""
+    is_audio = path.suffix.lower() in _AUDIO_EXTENSIONS
+    suffix = ".m4a" if is_audio else ".mp4"
+    fd, raw_target = tempfile.mkstemp(prefix="capcut-upload-", suffix=suffix)
+    os.close(fd)
+    target = Path(raw_target)
+    duration = _probe_duration_seconds(path)
+    if is_audio:
+        command = [
+            _ff_bin("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error", "-i", str(path),
+            "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "96k",
+            "-movflags", "+faststart", str(target),
+        ]
+    else:
+        # Reserve headroom for container metadata and audio.  The bitrate is
+        # derived from duration so long recordings stay below CapCut's limit.
+        # If probing is unavailable, choose a conservative one-hour estimate
+        # rather than producing a short-clip bitrate that can exceed the cap.
+        seconds = duration if duration > 0 else 3600.0
+        audio_bps = 96_000
+        overhead_bps = 24_000
+        video_bps = int((_CAPCUT_PROXY_TARGET_BYTES * 8 / seconds) - audio_bps - overhead_bps)
+        video_bps = max(96_000, min(2_000_000, video_bps))
+        command = [
+            _ff_bin("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error", "-i", str(path),
+            "-map", "0:v:0?", "-map", "0:a:0?", "-vf", "scale=1280:-2:force_original_aspect_ratio=decrease",
+            "-c:v", "libx264", "-preset", "veryfast", "-b:v", str(video_bps),
+            "-maxrate", str(video_bps), "-bufsize", str(video_bps * 2),
+            "-c:a", "aac", "-b:a", "96k", "-ac", "1", "-movflags", "+faststart", str(target),
+    ]
+    if progress:
+        progress("CapCut: media vượt 200 MB, đang tạo bản proxy nén… / media exceeds 200 MB; creating a compressed proxy…")
+    try:
+        _cancelled(check)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=1800)
+        _cancelled(check)
+        if result.returncode or not target.is_file() or target.stat().st_size <= 0:
+            detail = (result.stderr or "").strip().splitlines()[-1] if result.stderr else ""
+            raise CapCutSttError(
+                f"CAPCUT_PROXY_FAILED: không thể nén media / unable to compress media"
+                f"{f': {detail}' if detail else ''}"
+            )
+        return target
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+
+
+def _prepare_upload_media(
+    path: Path, check: Callable[[], bool] | None, progress: Callable[[str], None] | None,
+) -> tuple[Path, Path | None]:
+    """Return the upload path and an optional temporary proxy to clean up."""
+    if not path.is_file():
+        raise CapCutSttError("Không tìm thấy video để gửi CapCut")
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise CapCutSttError(f"Không đọc được media để gửi CapCut: {exc}") from exc
+    if size <= CAPCUT_MAX_UPLOAD_BYTES:
+        return path, None
+    try:
+        proxy = _create_media_proxy(path, check, progress)
+    except InterruptedError:
+        raise
+    except CapCutSttError:
+        raise
+    except Exception as exc:
+        raise CapCutSttError(f"CAPCUT_PROXY_FAILED: không thể nén media / unable to compress media: {exc}") from exc
+    try:
+        proxy_size = proxy.stat().st_size
+    except OSError as exc:
+        proxy.unlink(missing_ok=True)
+        raise CapCutSttError("CAPCUT_PROXY_FAILED: không đọc được bản proxy / unable to read compressed proxy") from exc
+    if proxy_size > CAPCUT_MAX_UPLOAD_BYTES:
+        proxy.unlink(missing_ok=True)
+        raise CapCutSttError(
+            f"CAPCUT_MEDIA_TOO_LARGE: media sau khi nén vẫn vượt giới hạn / "
+            f"compressed media still exceeds the {CAPCUT_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit "
+            f"(original {size / (1024 * 1024):.1f} MB, compressed {proxy_size / (1024 * 1024):.1f} MB)"
+        )
+    return proxy, proxy
+
+
 def _upload(path: Path, client: httpx.Client, device: dict[str, Any], check: Callable[[], bool] | None, progress: Callable[[str], None] | None) -> tuple[str, str, int]:
+    upload_path, temporary = _prepare_upload_media(path, check, progress)
+    try:
+        return _upload_once(upload_path, client, device, check, progress)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _upload_once(path: Path, client: httpx.Client, device: dict[str, Any], check: Callable[[], bool] | None, progress: Callable[[str], None] | None) -> tuple[str, str, int]:
     if not path.is_file():
         raise CapCutSttError("Không tìm thấy video để gửi CapCut")
     if progress:
@@ -241,6 +471,21 @@ def _task_status(query: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
 def transcribe_and_translate(path: Path, source_lang: str, target_lang: str, *, require_translation: bool = True, cancelled: Callable[[], bool] | None = None, progress: Callable[[str], None] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Upload one video, ask CapCut STT to translate it, and return timed cues."""
+    if not path.is_file():
+        raise CapCutSttError("Không tìm thấy video để gửi CapCut")
+    source_md5, _ = _file_hashes(path, cancelled)
+    cached = _load_cached_cues(source_md5, source_lang, target_lang)
+    if cached and (not require_translation or cached[1]):
+        if progress:
+            progress("CapCut: dùng kết quả đã lưu, không tải video lên…")
+        return cached
+    if path.stat().st_size > CAPCUT_MAX_UPLOAD_BYTES:
+        source, translated = _transcribe_chunked_audio(
+            path, source_lang, target_lang, require_translation=require_translation,
+            cancelled=cancelled, progress=progress,
+        )
+        _write_cached_cues(source_md5, source_lang, target_lang, source, translated)
+        return source, translated
     device = load_device()
     with httpx.Client(trust_env=False, follow_redirects=True) as client:
         vid, md5, duration = _upload(path, client, device, cancelled, progress)
@@ -293,6 +538,7 @@ def transcribe_and_translate(path: Path, source_lang: str, target_lang: str, *, 
                     raise CapCutSttError("CapCut không trả câu phụ đề có timecode")
                 if require_translation and not translated:
                     raise CapCutSttError("CapCut không trả bản dịch cho ngôn ngữ đã chọn")
+                _write_cached_cues(source_md5, source_lang, target_lang, source, translated)
                 return source, translated
             if status in {"failed", "error", "cancelled"}:
                 raise CapCutSttError(f"CapCut dịch phụ đề thất bại: {task.get('message') or task}")

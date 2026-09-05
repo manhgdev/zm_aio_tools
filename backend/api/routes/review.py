@@ -20,8 +20,10 @@ class ReviewIn(BaseModel):
     style: str = "normal"
     reviewMode: Literal["llm", "cloud", "translate"] = "llm"
     reviewModel: str = "auto"
+    reviewCloudModel: str = "gemini-2.5-flash"
     reviewProvider: Literal["gemini", "grok", "openai"] = "gemini"
     recognitionEngine: Literal["whisper", "capcut"] = "whisper"
+    sourceLang: str = "auto"
     language: str = "vi"
     voice: str = DEFAULT_REVIEW_VOICE
     spoiler: str = "none"

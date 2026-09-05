@@ -123,6 +123,37 @@ class ReviewQueueTests(unittest.TestCase):
             _cloud_failure_code("gemini", RuntimeError("GEMINI_TRANSPORT_UNAVAILABLE")),
             "REVIEW_CLOUD_GEMINI_UNAVAILABLE",
         )
+        self.assertEqual(
+            _cloud_failure_code(
+                "gemini", RuntimeError("CLOUD_TRANSLATION_GEMINI_MODEL_OR_REQUEST_INVALID")
+            ),
+            "REVIEW_CLOUD_GEMINI_MODEL_OR_REQUEST_INVALID",
+        )
+        self.assertEqual(
+            _cloud_failure_code("gemini", RuntimeError("CLOUD_TRANSLATION_GEMINI_API_KEY_MISSING")),
+            "REVIEW_CLOUD_GEMINI_API_KEY_MISSING",
+        )
+
+    def test_cloud_review_uses_the_model_selected_in_review_settings(self):
+        """A saved Ollama selection must not override the Cloud Review model."""
+        from pipeline.review.run import _select_review_model
+
+        result = _select_review_model(
+            "cloud", "gemini", "gemma4:26b", [], cloud_model="gemini-2.5-flash"
+        )
+        self.assertEqual(result, "cloud:gemini:gemini-2.5-flash")
+
+    def test_cloud_review_preserves_safe_provider_failure_reason(self):
+        from pipeline.review import llm
+
+        with patch.object(llm, "load_app_config", return_value={"cloud": {"gemini": {
+            "baseUrl": "https://example.invalid/v1beta",
+        }}}), patch.object(llm, "provider_api_keys", return_value=["secret-key"]), patch.object(
+            llm, "_gemini_generate", side_effect=RuntimeError("CLOUD_TRANSLATION_GEMINI_MODEL_OR_REQUEST_INVALID")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "^REVIEW_CLOUD_GEMINI_MODEL_OR_REQUEST_INVALID$") as raised:
+                llm.generate_json("{}", model="cloud:gemini:gemini-2.5-flash")
+        self.assertNotIn("secret-key", str(raised.exception))
 
     def test_gemini_retries_transient_transport_errors(self):
         from pipeline.mt import cloud
@@ -1049,12 +1080,19 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertGreaterEqual(len(a_clips), 2)
         self.assertLess(a_clips[-1]["source_start"], starts[1])
 
-    def test_stretch_sets_target_duration(self):
-        visuals = [{"scene_id": 1, "start": 0, "end": 4, "duration": 4, "plot_score": 0.5, "visual_score": 0.5, "emotion_score": 0.2, "spoiler_score": 0}]
+    def test_stretch_walks_forward_and_never_freezes_one_short_scene(self):
+        visuals = [
+            {"scene_id": 1, "start": 0, "end": 4, "duration": 4, "plot_score": 0.5, "visual_score": 0.5, "emotion_score": 0.2, "spoiler_score": 0},
+            {"scene_id": 2, "start": 4, "end": 8, "duration": 4, "plot_score": 0.5, "visual_score": 0.5, "emotion_score": 0.2, "spoiler_score": 0},
+        ]
         plan = match_voice([{"id": "a", "text": "x", "duration": 8}], visuals, style="normal", spoiler="full", mode="stretch")
-        clip = plan["segments"][0]["clips"][0]
-        self.assertGreater(clip["target_duration"], 4)
-        self.assertAlmostEqual(clip["target_duration"], 8, places=1)
+        clips = plan["segments"][0]["clips"]
+        self.assertGreaterEqual(len(clips), 2)
+        self.assertEqual([clip["scene_id"] for clip in clips], [1, 2])
+        self.assertAlmostEqual(sum(clip["target_duration"] for clip in clips), 8, places=1)
+        for clip in clips:
+            source_duration = clip["source_end"] - clip["source_start"]
+            self.assertLessEqual(clip["target_duration"] / source_duration, 1.75)
 
     def test_smart_keep_skip_windows(self):
         from pipeline.review.match import keep_skip_windows

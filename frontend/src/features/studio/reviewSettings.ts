@@ -26,6 +26,7 @@ export type ReviewSettings = {
   scriptStyle: ScriptStyle
   reviewMode: ReviewMode
   reviewModel: string
+  reviewCloudModel: string
   reviewProvider: ReviewCloudProvider
   narration: Narration
   pausePace: PausePace
@@ -56,6 +57,7 @@ export const DEFAULT_REVIEW_SETTINGS: ReviewSettings = {
   scriptStyle: 'chuan',
   reviewMode: 'llm',
   reviewModel: 'auto',
+  reviewCloudModel: 'gemini-2.5-flash',
   reviewProvider: 'gemini',
   narration: 'default',
   pausePace: 'balanced',

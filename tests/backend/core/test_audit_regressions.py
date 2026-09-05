@@ -185,10 +185,46 @@ def test_windows_job_spawn_error_updates_project_status(monkeypatch, tmp_path) -
     assert "WinError 206" in errors[0][2]
 
 
+def test_windows_job_worker_timeout_updates_project_status(monkeypatch) -> None:
+    import importlib.util
+    import subprocess
+
+    path = Path("backend/api/job_spawn.py")
+    spec = importlib.util.spec_from_file_location("vc_job_spawn_timeout", path)
+    assert spec and spec.loader
+    js = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(js)
+    errors: list[tuple[object, str, str]] = []
+
+    class HangingProcess:
+        returncode = 124
+
+        def poll(self):
+            return None
+
+        def communicate(self, **_kwargs):
+            if not getattr(self, "killed", False):
+                raise subprocess.TimeoutExpired("python", 1)
+            return b"", b""
+
+        def kill(self):
+            self.killed = True
+
+    monkeypatch.setattr(js.sys, "platform", "win32")
+    monkeypatch.setattr(js, "_job_python", lambda: "python.exe")
+    monkeypatch.setattr(js.subprocess, "Popen", lambda *_a, **_k: HangingProcess())
+    monkeypatch.setattr(js, "_mark_job_error", lambda project, job, msg: errors.append((project, job, msg)))
+    js._run_in_subprocess(lambda _project_id: None, ("project-1",))
+
+    assert errors and errors[0][:2] == ("project-1", "<lambda>")
+    assert "timeout" in errors[0][2].lower()
+
+
 def test_ai_subprocesses_use_the_shared_sanitized_environment() -> None:
     for path in (
         "backend/api/job_spawn.py",
         "backend/pipeline/asr/whisper.py",
+        "backend/pipeline/tts/engines/vieneu.py",
         "backend/pipeline/tts/engines/vieneu_frozen.py",
         "backend/pipeline/ocr/extract_parts/api.py",
         "backend/pipeline/ocr/locate_worker.py",
@@ -197,6 +233,19 @@ def test_ai_subprocesses_use_the_shared_sanitized_environment() -> None:
     ):
         source = Path(path).read_text(encoding="utf-8")
         assert "subprocess_environment" in source, path
+
+
+def test_desktop_launcher_sanitizes_windows_path_before_bundle_append() -> None:
+    launcher = Path("build_app/launcher.py").read_text(encoding="utf-8")
+    assert "sanitize_process_environment" in launcher
+    assert launcher.index("sanitize_process_environment") < launcher.index("os.environ[\"PATH\"] = os.pathsep.join")
+
+
+def test_frozen_vieneu_does_not_import_native_runtime_in_api_process() -> None:
+    source = Path("backend/pipeline/tts/engines/vieneu.py").read_text(encoding="utf-8")
+    frozen_branch = source.split("if getattr(sys, \"frozen\", False):", 1)[1].split("return None", 1)[0]
+    assert "ensure_runtime_torch" not in frozen_branch
+    assert "ensure_runtime_transformers" not in frozen_branch
 
 
 def test_ollama_detector_covers_gui_app_paths_on_macos() -> None:
@@ -248,6 +297,12 @@ def test_windows_bundle_keeps_pdb_for_external_transformers() -> None:
 def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     """A stable payload prevents every update from adding another .app."""
     workflow = Path(".github/workflows/release-macos.yml").read_text(encoding="utf-8")
+    assert "matrix:" in workflow
+    assert "runner: macos-14" in workflow
+    assert "arch: arm64" in workflow
+    assert "runner: macos-15-intel" in workflow
+    assert "arch: x64" in workflow
+    assert "runs-on: ${{ matrix.runner }}" in workflow
     assert 'payload="$stage/ZM AIO TOOL.app"' in workflow
     assert 'pkgbuild --component "$payload" --scripts "$scripts" --install-location /Applications "$pkg"' in workflow
     assert 'close_running_bundle "/Applications/ZM AIO TOOL.app"' in workflow
@@ -259,6 +314,13 @@ def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     assert 'if [ -d "$legacy" ]; then' in workflow
     assert '/bin/rm -rf "$legacy" || true' in workflow
     assert 'exit 0' in workflow
+
+
+def test_macos_release_assets_are_architecture_specific_without_checksum_sidecars() -> None:
+    workflow = Path(".github/workflows/release-macos.yml").read_text(encoding="utf-8")
+    assert "macos-${ARCH}.pkg" in workflow
+    assert ".sha256" not in workflow
+    assert "macos-13" not in workflow
 
 
 def test_desktop_launcher_never_inherits_installer_temp_directory() -> None:

@@ -22,6 +22,8 @@ except BaseException as exc:
     raise
 """
 
+_DEFAULT_WORKER_TIMEOUT_SECONDS = 12 * 60 * 60
+
 
 def _job_python() -> str:
     """Never VideoClone.exe — launcher exits 2 on extra argv."""
@@ -86,6 +88,30 @@ def _spawn_error_message(exc: OSError) -> str:
             "App đã loại đường dẫn trùng; không cần cài lại gói AI."
         )
     return str(exc).strip() or type(exc).__name__
+
+
+def _worker_timeout_seconds() -> int:
+    """Bound native workers while allowing long exports by default."""
+    try:
+        value = int(os.environ.get("VIDEO_CLONE_WORKER_TIMEOUT", _DEFAULT_WORKER_TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
+        value = _DEFAULT_WORKER_TIMEOUT_SECONDS
+    return max(60, min(24 * 60 * 60, value))
+
+
+def _terminate_worker(proc: subprocess.Popen) -> None:
+    """Kill a timed-out worker and its native children when possible."""
+    try:
+        from pipeline.core.jobs import kill_process_tree
+
+        kill_process_tree(proc)
+        return
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
 
 
 def _run_in_thread(fn, args) -> None:
@@ -165,7 +191,24 @@ def _run_in_subprocess(fn, args) -> None:
             except Exception:
                 pass
         try:
-            _out, err_b = proc.communicate()
+            _out, err_b = proc.communicate(timeout=_worker_timeout_seconds())
+        except subprocess.TimeoutExpired as exc:
+            _terminate_worker(proc)
+            try:
+                _out, err_b = proc.communicate(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                _out, err_b = b"", b""
+            timeout = _worker_timeout_seconds()
+            detail = str(exc).strip() or "worker did not exit"
+            msg = f"{job} timeout after {timeout}s: {detail}"[:2000]
+            try:
+                from pipeline.core.app_log import append_log
+
+                append_log(f"[job:{job}] {msg}")
+            except Exception:
+                pass
+            _mark_job_error(project_id, job, msg)
+            return
         finally:
             if unreg is not None:
                 try:

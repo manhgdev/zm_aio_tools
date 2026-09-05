@@ -345,11 +345,18 @@ def runtime_python() -> Path:
 
 def _run_runtime(code: str, *, timeout: float = 45.0) -> subprocess.CompletedProcess[str]:
     py = runtime_python()
+    try:
+        from pipeline.core.runtime_site import subprocess_environment
+
+        env = subprocess_environment()
+    except Exception:
+        env = os.environ.copy()
     return subprocess.run(
         [str(py), "-c", code],
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=env,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
     )
 

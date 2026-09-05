@@ -61,6 +61,23 @@ export const ENGINE_DEFAULTS = {
   },
 }
 
+export const TRANSLATORS = [
+  'google', 'mymemory', 'tiktok', 'capcut', 'ollama', 'openai', 'gemini',
+  'deepseek', 'openrouter', 'grok', 'groq', 'nvidia',
+] as const
+
+export function normalizeTranslatorForEngine(
+  engine: ProjectSettings['engine'],
+  translator: ProjectSettings['translator'],
+): ProjectSettings['translator'] {
+  if (engine === 'capcut') return 'capcut'
+  return translator === 'capcut' ? 'google' : translator
+}
+
+export function availableTranslators(engine: ProjectSettings['engine']) {
+  return engine === 'capcut' ? TRANSLATORS : TRANSLATORS.filter((id) => id !== 'capcut')
+}
+
 export const defaultSettings: ProjectSettings = {
   engine: 'whisper',
   sourceLang: 'auto',
@@ -80,7 +97,7 @@ export const defaultSettings: ProjectSettings = {
   coverMaskColor: '#4c1d95',
   coverMaskOpacity: 40,
   burnSubs: true,
-  captionPlacement: 'below',
+  captionPlacement: 'above',
   subtitleFontSize: 0,
   subtitleFontFamily: 'system',
   captionTextColor: '#ffffff',
@@ -190,20 +207,7 @@ export function loadSettings(): ProjectSettings {
     } else {
       s.originalAudioVolume = Math.max(0, Math.min(200, s.originalAudioVolume))
     }
-    const okTr = [
-      'google',
-      'mymemory',
-      'tiktok',
-      'capcut',
-      'ollama',
-      'openai',
-      'gemini',
-      'deepseek',
-      'openrouter',
-      'grok',
-      'nvidia',
-    ] as const
-    if (!okTr.includes(s.translator as (typeof okTr)[number])) s.translator = 'google'
+    if (!TRANSLATORS.includes(s.translator as (typeof TRANSLATORS)[number])) s.translator = 'google'
     if (s.ollamaMode !== 'local' && s.ollamaMode !== 'cloud') s.ollamaMode = 'cloud'
     if (typeof s.ollamaModel !== 'string' || !s.ollamaModel.trim()) {
       s.ollamaModel = 'minimax-m3:cloud'
@@ -269,6 +273,7 @@ export function loadSettings(): ProjectSettings {
     }
     // Migrate projects saved while SenseVoice existed back to Whisper.
     const eng = s.engine === 'paddleocr' || s.engine === 'subtitle' || s.engine === 'capcut' ? s.engine : 'whisper'
+    s.translator = normalizeTranslatorForEngine(eng, s.translator)
     const profiles = {
       whisper: {
         ...ENGINE_DEFAULTS.whisper,
