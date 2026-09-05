@@ -90,7 +90,10 @@ def _persistent_blur_band_segment(
     else:
         boxes: list[tuple[int, int, int, int]] = []
         for segment in segments:
-            if segment.get("maskOnly") or str(segment.get("layout") or "horizontal") in ("vertical", "label"):
+            lay = str(segment.get("layout") or "horizontal")
+            # Sync with frontend: only horizontal lane bbox feeds the auto band.
+            # mid/vertical/label subtitles are excluded — same filter as LivePreviewEditor.
+            if segment.get("maskOnly") or lay in ("vertical", "label", "mid"):
                 continue
             box = _segment_bbox_override(segment, width, height)
             if box is not None:
@@ -99,10 +102,13 @@ def _persistent_blur_band_segment(
             return None
         # Do not union every OCR box: minor detection drift makes that region
         # grow through the entire video. A median bbox is the stable lane.
+        # Use median of left edge and median of right edge (not median of width)
+        # to match the frontend LivePreviewEditor calculation.
         median = lambda values: sorted(values)[len(values) // 2]
         x = median([box[0] for box in boxes])
         y = median([box[1] for box in boxes])
-        w = median([box[2] - box[0] for box in boxes])
+        median_right = median([box[2] for box in boxes])
+        w = max(0, median_right - x)
         h = median([box[3] - box[1] for box in boxes])
     x = max(0, min(width - 1, x))
     y = max(0, min(height - 1, y))
