@@ -533,6 +533,7 @@ export default function App() {
                     bbox: undefined,
                     captionLayout: undefined,
                     bboxInherited: undefined,
+                    bboxDetected: undefined,
                   }
                 : {}),
               ...(dropTts

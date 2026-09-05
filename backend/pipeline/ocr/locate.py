@@ -25,10 +25,11 @@ from .overlay_cover import mid_bottom_cutoff
 # Lock: chỉ một request được chạy OCR in-process — native ext crash khi song song.
 _inprocess_lock = threading.Lock()
 
-# Whisper captions normally stay in one lane. Probe 3/5 representative cues,
-# then bisect only intervals whose measured lanes differ.
+# A visible hard-sub can roll independently from Whisper's split cues. Probe
+# the full short timeline so a previous on-screen row is not assigned to the
+# next ASR cue, then inherit only when OCR genuinely has no row to measure.
 _SHORT_VIDEO_SECONDS = 10 * 60
-_QUICK_PROBE_LIMIT = 16
+_QUICK_PROBE_LIMIT = 32
 _FRAME_SEEK_TIMEOUT_SECONDS = 5.0
 _locate_ocr: Any = None
 _locate_ocr_lock = threading.Lock()
@@ -566,6 +567,12 @@ def _probe_mid_hardsub(
         bw, bh = bx1 - bx0, by1 - by0
         if bw < 8 or bh < 8:
             continue
+        # English/Latin ASR may legitimately differ from a translated Latin
+        # hardsub, but one unrelated CJK glyph is never a usable caption row.
+        # Without this guard it can win with a tiny positive fallback score
+        # and make every following cue inherit a box from the middle of frame.
+        if src and src_cjk == 0 and not is_sub and cjk and (cjk < 2 or bw < w * 0.20):
+            continue
         if bh > h * 0.24:
             continue
         if layout != "vertical":
@@ -772,6 +779,10 @@ def _apply_caption_box(
     }
     # True = OCR auto (editor được fit chữ lại). False chỉ khi user kéo/Áp Y.
     seg["bboxInherited"] = True
+    # Keep proof separate from geometry.  Inherited geometry is useful for
+    # positioning a fallback caption, but must never become evidence that the
+    # source frame contains a hard-sub to blur.
+    seg["bboxDetected"] = True
     saved = seg["bbox"]
     old_lay = str(seg.get("layout") or "")
     if old_lay not in ("vertical", "label"):
@@ -861,12 +872,63 @@ def _inherit_caption_bboxes(
             "h": donor["h"],
         }
         seg["bboxInherited"] = True
+        seg["bboxDetected"] = False
         seg["_fromInherit"] = True
         # Giữ mid/horizontal theo Y donor — không ép horizontal khi mượn từ mid
         seg["layout"] = _layout_from_cy(cy, fh, fw)
         seg.pop("captionLayout", None)
         n += 1
     return n
+
+
+def _expand_split_hardsub_groups(
+    segments: list[dict[str, Any]], fh: int, fw: int
+) -> None:
+    """Expand a one-row OCR box when ASR split one visible two-row subtitle."""
+    groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for seg in segments:
+        if seg.get("bboxDetected") is not True or not isinstance(seg.get("bbox"), dict):
+            continue
+        words = seg.get("words") or []
+        if not isinstance(words, list) or not words:
+            continue
+        first, last = words[0], words[-1]
+        if not isinstance(first, dict) or not isinstance(last, dict):
+            continue
+        try:
+            key = (round(float(first.get("start")) * 100), round(float(last.get("end")) * 100))
+        except (TypeError, ValueError):
+            continue
+        groups.setdefault(key, []).append(seg)
+
+    for peers in groups.values():
+        if len(peers) < 2:
+            continue
+        boxes = [seg["bbox"] for seg in peers]
+        try:
+            left = min(int(box["x"]) for box in boxes)
+            top = min(int(box["y"]) for box in boxes)
+            right = max(int(box["x"]) + int(box["w"]) for box in boxes)
+            bottom = max(int(box["y"]) + int(box["h"]) for box in boxes)
+        except (KeyError, TypeError, ValueError):
+            continue
+        row_h = max(8, bottom - top)
+        # One missing row plus small glyph bleed; never blur a large frame area.
+        top_extra = max(round(row_h * 0.85), round(min(fw, fh) * 0.055))
+        new_top = max(0, top - top_extra)
+        new_bottom = min(fh, max(bottom, new_top + 12))
+        if new_bottom - new_top > round(fh * 0.18):
+            continue
+        expanded = {
+            "x": max(0, left),
+            "y": new_top,
+            "w": min(fw, right) - max(0, left),
+            "h": new_bottom - new_top,
+        }
+        if expanded["w"] < 8 or expanded["h"] < 8:
+            continue
+        for seg in peers:
+            seg["bbox"] = dict(expanded)
 
 
 def _ensure_cover_times(
@@ -1052,6 +1114,10 @@ def attach_speech_hardsub_boxes_inprocess(
                 and bool(cl.get("lines"))
             )
             seg["bboxInherited"] = False if manual else True
+            if not manual:
+                # A pre-existing legacy box has no OCR proof.  The v12
+                # migration below re-probes it; until then it is geometry only.
+                seg.setdefault("bboxDetected", False)
             _retag_layout_from_bbox(seg, fh, fw)
 
     filtered: list[dict[str, Any]] = []
@@ -1324,6 +1390,7 @@ def attach_speech_hardsub_boxes_inprocess(
     finally:
         cap.release()
     attached += _inherit_caption_bboxes(segments, fh, fw)
+    _expand_split_hardsub_groups(segments, fh, fw)
     _ensure_cover_times(segments, video_end)
     for seg in segments:
         seg.pop("_probeAnchored", None)

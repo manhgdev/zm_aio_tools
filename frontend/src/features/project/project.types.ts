@@ -5,6 +5,8 @@ export type Segment = {
   index: number
   start: number
   end: number
+  /** Word timestamps identify ASR chunks belonging to the same visible hard-sub. */
+  words?: { word: string; start: number; end: number }[]
   /** Cửa sổ che chữ gốc (có thể rộng hơn start/end dịch). OCR/gán tay. */
   coverStart?: number
   coverEnd?: number
@@ -12,6 +14,8 @@ export type Segment = {
   bbox?: { x: number; y: number; w: number; h: number } | null
   /** true khi bbox được ước lượng từ 3 mốc OCR, không phải poly OCR trực tiếp. */
   bboxInherited?: boolean
+  /** True only when OCR matched source text in this cue; inherited boxes are geometry only. */
+  bboxDetected?: boolean
   /** Layout caption từ preview — export dùng y nguyên, không tính lại. */
   captionLayout?: {
     x: number

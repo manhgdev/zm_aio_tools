@@ -650,6 +650,7 @@ def clear_project_cache(
                     continue
                 s.pop("bbox", None)
                 s.pop("bboxInherited", None)
+                s.pop("bboxDetected", None)
                 s.pop("captionLayout", None)
             m["segments"] = segs
             m.pop("timelineBaseline", None)

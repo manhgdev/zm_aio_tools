@@ -231,7 +231,7 @@ def api_replace_segments(project_id: str, body: list[SegmentIn]):
         ordered = sorted(body, key=lambda s: (s.start, s.end, s.id))
         out: list[dict] = []
         # Reset OCR gửi bbox/captionLayout=null — không restore từ prev
-        _clearable = ("bbox", "captionLayout", "bboxInherited")
+        _clearable = ("bbox", "captionLayout", "bboxInherited", "bboxDetected")
         for i, item in enumerate(ordered):
             raw = item.model_dump(exclude_none=False)
             dumped = {k: v for k, v in raw.items() if v is not None}

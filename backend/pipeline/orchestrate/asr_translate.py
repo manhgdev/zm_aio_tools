@@ -409,6 +409,8 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                         seg["bbox"] = old["bbox"]
                         if old.get("bboxInherited") is not None:
                             seg["bboxInherited"] = old["bboxInherited"]
+                        if old.get("bboxDetected") is not None:
+                            seg["bboxDetected"] = old["bboxDetected"]
                         if old.get("captionLayout"):
                             seg["captionLayout"] = old["captionLayout"]
                         if old_lay in ("vertical", "label"):
@@ -583,10 +585,20 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
             )
             n_box = 0
             locate_ok = False
-            # v10: late-probe retry — rolling bilingual subs show the 2nd row
-            # only near end of segment; midpoint probe gets 1 row → small bbox.
-            # Re-probe at 85% of segment duration → catches full 2-row band.
-            locate_layout_version = 10
+            # v12 distinguishes an OCR hit from a borrowed geometry. Borrowed
+            # boxes may place a fallback caption but must not create a blur
+            # mask over frames with no source hard-sub.
+            # hits used to seed a wrong lane and then get inherited by later
+            # cues, so discard only auto-detected boxes once before relocalizing.
+            locate_layout_version = 12
+            stale_bbox_layout = int(meta.get("bboxLocateVersion") or 0) < locate_layout_version
+            if stale_bbox_layout:
+                for seg in segments:
+                    if seg.get("bboxInherited") is not False:
+                        seg.pop("bbox", None)
+                        seg.pop("bboxInherited", None)
+                        seg.pop("bboxDetected", None)
+                        seg.pop("captionLayout", None)
             srt_locator = engine == "subtitle"
             if srt_locator:
                 for seg in segments:
@@ -595,7 +607,7 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                 n_box = attach_speech_hardsub_boxes(
                     video,
                     segments,
-                    only_missing=int(meta.get("bboxLocateVersion") or 0) >= locate_layout_version,
+                    only_missing=not stale_bbox_layout,
                     project_id=project_id,
                     stable=bool(settings.get("stableCaptionLocate", False)),
                     analysis_region=settings.get("analysisRegion"),

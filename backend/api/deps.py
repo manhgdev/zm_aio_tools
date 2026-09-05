@@ -109,6 +109,7 @@ class SegmentIn(BaseModel):
     dub: bool | None = None
     bbox: dict[str, float] | None = None
     bboxInherited: bool | None = None
+    bboxDetected: bool | None = None
     videoSpeed: float | None = None
     ttsVolume: float | None = None
     ttsSpeed: float | None = None
@@ -309,6 +310,7 @@ SEG_PRESERVE = (
     "audioDuration",
     "bbox",
     "bboxInherited",
+    "bboxDetected",
     "captionLayout",
     "layout",
     "dub",

@@ -65,7 +65,6 @@ def _persistent_blur_band_segment(
     *,
     mode: str,
     region: dict[str, float] | None,
-    auto_region: dict[str, float] | None,
     width: int,
     height: int,
     duration: float,
@@ -73,45 +72,19 @@ def _persistent_blur_band_segment(
     color: str,
     opacity: int,
 ) -> dict[str, Any] | None:
-    """Make the persistent blur band a normal mask-only cue for every renderer."""
-    if mode not in ("auto", "manual") or width < 8 or height < 8 or duration <= 0:
+    """Make a user-drawn persistent blur band a normal mask-only cue."""
+    if mode != "manual" or width < 8 or height < 8 or duration <= 0:
         return None
-    # Auto captures the OCR-derived band once.  It must no longer follow later
-    # caption-bbox edits, otherwise two independent editor tools move together.
-    fixed_region = region if mode == "manual" else auto_region
-    if fixed_region is not None:
-        try:
-            x = round(float(fixed_region.get("x", 0)) * width)
-            y = round(float(fixed_region.get("y", 0)) * height)
-            w = round(float(fixed_region.get("w", 0)) * width)
-            h = round(float(fixed_region.get("h", 0)) * height)
-        except (TypeError, ValueError):
-            return None
-    else:
-        boxes: list[tuple[int, int, int, int]] = []
-        for segment in segments:
-            lay = str(segment.get("layout") or "horizontal")
-            # Exclude overlays that are structural (vertical CJK columns, field labels).
-            # mid = hardsub that is positioned dynamically — keep it.
-            if segment.get("maskOnly") or lay in ("vertical", "label"):
-                continue
-            box = _segment_bbox_override(segment, width, height)
-            if box is not None:
-                boxes.append(box)
-        if not boxes:
-            return None
-        # Exclude boxes whose centre-y is in the top 30% — likely title/watermark, not a subtitle band.
-        min_cy = height * 0.30
-        boxes = [b for b in boxes if (b[1] + b[3]) / 2 >= min_cy] or boxes
-        if not boxes:
-            return None
-        # Use median of left/right edges to match frontend LivePreviewEditor calculation.
-        median = lambda values: sorted(values)[len(values) // 2]
-        x = median([box[0] for box in boxes])
-        y = median([box[1] for box in boxes])
-        median_right = median([box[2] for box in boxes])
-        w = max(0, median_right - x)
-        h = median([box[3] - box[1] for box in boxes])
+    fixed_region = region
+    if fixed_region is None:
+        return None
+    try:
+        x = round(float(fixed_region.get("x", 0)) * width)
+        y = round(float(fixed_region.get("y", 0)) * height)
+        w = round(float(fixed_region.get("w", 0)) * width)
+        h = round(float(fixed_region.get("h", 0)) * height)
+    except (TypeError, ValueError):
+        return None
     x = max(0, min(width - 1, x))
     y = max(0, min(height - 1, y))
     w = max(0, min(width - x, w))
@@ -131,6 +104,47 @@ def _persistent_blur_band_segment(
         "coverMaskColor": color,
         "coverMaskOpacity": opacity,
     }
+
+
+def _auto_blur_band_segments(
+    segments: list[dict[str, Any]], *, width: int, height: int, duration: float,
+    style: str, color: str, opacity: int,
+) -> list[dict[str, Any]]:
+    """Build fixed, full-width subtitle lanes from verified OCR hits only."""
+    if width < 8 or height < 8 or duration <= 0:
+        return []
+    boxes: list[tuple[int, int, int, int]] = []
+    for segment in segments:
+        if segment.get("bboxDetected") is not True:
+            continue
+        bbox = _segment_bbox_override(segment, width, height)
+        if bbox is not None:
+            boxes.append(bbox)
+    bands: list[dict[str, Any]] = []
+    for lower in (False, True):
+        lane = [box for box in boxes if ((box[1] + box[3]) * 0.5 >= height * 0.5) == lower]
+        if not lane:
+            continue
+        # Keep every verified subtitle row in the lane, but add no synthetic
+        # padding — this is the tightest fixed band that cannot leak a row.
+        top = max(0, min(box[1] for box in lane))
+        bottom = min(height, max(box[3] for box in lane))
+        band_h = max(24, bottom - top)
+        y = max(0, min(height - band_h, top))
+        bands.append({
+            "id": f"__auto_blur_band_{'lower' if lower else 'upper'}__",
+            "start": 0.0,
+            "end": duration,
+            "translation": "",
+            "source": "",
+            "layout": "mid",
+            "maskOnly": True,
+            "bbox": {"x": 0, "y": y, "w": width, "h": band_h},
+            "coverMaskStyle": style,
+            "coverMaskColor": color,
+            "coverMaskOpacity": opacity,
+        })
+    return bands
 
 
 def cover_and_burn(
@@ -216,7 +230,6 @@ def cover_and_burn(
         segments,
         mode=str(blur_band_mode or "off").lower(),
         region=blur_band_region,
-        auto_region=blur_band_auto_region,
         width=w,
         height=h,
         duration=vid_dur,
@@ -226,6 +239,13 @@ def cover_and_burn(
     )
     if persistent_band is not None:
         segments.append(persistent_band)
+    auto_band_segments: list[dict[str, Any]] = []
+    if str(blur_band_mode or "off").lower() == "auto":
+        auto_band_segments = _auto_blur_band_segments(
+            segments, width=w, height=h, duration=vid_dur,
+            style=mask_style, color=mask_color, opacity=mask_opacity,
+        )
+        segments.extend(auto_band_segments)
     for seg in segments:
         raw = (seg.get("translation") or "").strip()
         source = (seg.get("source") or "").strip()
@@ -259,8 +279,9 @@ def cover_and_burn(
             cover_start, cover_end = resolve_cover_window(seg)
             burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
         elif layout == "mid":
-            # blurBandMode=off: per-segment cover; auto/manual: full-video blur band.
-            if (blur_band_mode or 'off') == 'off':
+            # Auto follows each OCR cue so a subtitle that changes rows stays
+            # covered. Only a manually drawn region is full-video persistent.
+            if (blur_band_mode or 'off') != 'manual':
                 cover_start, cover_end = resolve_cover_window(seg)
                 burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
             else:
@@ -361,10 +382,41 @@ def cover_and_burn(
 
     ocr = None
     segments_by_id = {str(seg.get("id") or ""): seg for seg in segments}
+    auto_band_boxes = [
+        box for box in (_segment_bbox_override(seg, w, h) for seg in auto_band_segments)
+        if box is not None
+    ]
     manual_by_idx: list[tuple[int, int, int, int] | None] = []
+    unverified_auto_by_idx: list[bool] = []
     for sid in cue_segment_ids:
         seg = segments_by_id.get(sid, {})
-        mb = _segment_bbox_override(seg, w, h)
+        layout = str(seg.get("layout") or "horizontal")
+        # Preview places every normal caption inside its nearest fixed auto
+        # band.  Export must use that same box, not the cue's old OCR bbox.
+        if (
+            auto_band_boxes
+            and cover
+            and not seg.get("maskOnly")
+            and layout in ("horizontal", "mid")
+        ):
+            raw_box = _segment_bbox_override(seg, w, h)
+            center = ((raw_box[1] + raw_box[3]) * 0.5) if raw_box else h * 0.84
+            mb = min(
+                auto_band_boxes,
+                key=lambda box: abs(((box[1] + box[3]) * 0.5) - center),
+            )
+            unverified_auto_by_idx.append(False)
+            manual_by_idx.append(mb)
+            continue
+        unverified_auto = bool(
+            cover
+            and not seg.get("maskOnly")
+            and layout in ("horizontal", "mid")
+            and seg.get("bboxInherited") is not False
+            and seg.get("bboxDetected") is not True
+        )
+        unverified_auto_by_idx.append(unverified_auto)
+        mb = None if unverified_auto else _segment_bbox_override(seg, w, h)
         # Bbox đáy bake sẵn + source CJK → bỏ, OCR lại vị trí thật (giữa/đáy)
         manual_by_idx.append(mb)
     cue_boxes: list[list[tuple[int, int, int, int]]] = [[] for _ in cues]
@@ -556,6 +608,7 @@ def cover_and_burn(
         # seg_meta ở phần mask/logo bên dưới — gán trong `if burn and text` gây
         # UnboundLocalError (cue đầu) hoặc dùng meta của cue trước (stale).
         seg_meta = segments_by_id.get(segment_id, {})
+        unverified_auto = unverified_auto_by_idx[i] if i < len(unverified_auto_by_idx) else False
         boxes = list(cue_boxes[i] if i < len(cue_boxes) else [])
         paint = _union_box(boxes) if boxes else None
         has_manual_bbox = manual_by_idx[i] is not None
@@ -566,7 +619,7 @@ def cover_and_burn(
         src_s = (src or "").strip()
         use_label_style = is_label
         # Fallback paint: coverHardsubs hoặc overlay mid/dọc (preview vẫn mask khi burn)
-        if paint is None and _should_paint_cover_mask(cover, lay_mode):
+        if paint is None and not unverified_auto and _should_paint_cover_mask(cover, lay_mode):
             from pipeline.ocr.overlay_cover import default_overlay_paint, is_mid_flash_source
 
             if is_vert:
@@ -690,7 +743,7 @@ def cover_and_burn(
             editor_locked = _editor_layout_locked(seg_meta)
             lay: dict[str, Any] | None = None
             # below/above: không ép mid layout "over" — dùng placement above/below OCR
-            force_below_above = (not cover) and layout_place in ("below", "above")
+            force_below_above = ((not cover) or unverified_auto) and place in ("below", "above")
             # Caption + CAP-MID share the same bbox-fitting engine. Their tags
             # and timing lanes remain separate.
             if uses_bbox_caption and paint is not None and not force_below_above:
@@ -776,7 +829,7 @@ def cover_and_burn(
                     force_vertical=label_tall,
                     source=src_s,
                 )
-            elif lay is None and (layout_place == "over" or has_manual_bbox) and paint is not None:
+            elif lay is None and ((layout_place == "over" and not unverified_auto) or has_manual_bbox) and paint is not None:
                 # Overlay OCR không có captionLayout → classic / manual / auto-over
                 from pipeline.ocr.overlay_cover import (
                     classic_cover_fit,
@@ -813,7 +866,8 @@ def cover_and_burn(
                     )
             elif lay is None:
                 lay = _layout_caption(
-                    text, cue_font, cue_fs, paint, w, h, placement=layout_place
+                    text, cue_font, cue_fs, paint, w, h,
+                    placement=place if unverified_auto else layout_place,
                 )
         else:
             lay = None
@@ -864,6 +918,8 @@ def cover_and_burn(
         if not cover and is_mid:
             need_mask = False
         if seg_meta.get("skipCoverMask"):
+            need_mask = False
+        if unverified_auto:
             need_mask = False
         if seg_meta.get("maskOnly"):
             # Effect region: luôn che đúng bbox editor
@@ -955,10 +1011,14 @@ def cover_and_burn(
         str(segment.get("coverMaskStyle") or "").lower() == "feather"
         for segment in segments_by_id.values()
     )
-    # ponytail: feathered blur needs a spatial alpha mask. Keep it on the
-    # pixel-accurate renderer until the FFmpeg graph grows the same mask;
-    # this trades speed for matching the soft CapCut edge in exported video.
-    if not has_feathered_blur and try_render_ffmpeg(
+    # ponytail: browser preview uses a backdrop-filter glass effect for auto
+    # subtitle lanes. FFmpeg's gblur graph is intentionally faster but not
+    # visually equivalent, so use the shared pixel mask renderer for these
+    # lanes (and feather) until the graph can reproduce that compositing.
+    # Ceiling: exports with automatic blur trade throughput for WYSIWYG;
+    # upgrade path: implement the same glass blend in ffgraph.py.
+    needs_preview_accurate_mask = has_feathered_blur or bool(auto_band_segments)
+    if not needs_preview_accurate_mask and try_render_ffmpeg(
         video,
         out,
         cues=cues,

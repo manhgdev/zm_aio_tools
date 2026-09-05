@@ -40,7 +40,7 @@ def test_feathered_blur_softens_the_top_and_bottom_edges():
     assert bottom_change < centre_change
 
 
-def test_persistent_blur_band_uses_manual_region_or_auto_ocr_boxes():
+def test_persistent_blur_band_uses_only_manual_region():
     from pipeline.export.burn_parts.pipeline import _persistent_blur_band_segment
 
     manual = _persistent_blur_band_segment(
@@ -57,7 +57,8 @@ def test_persistent_blur_band_uses_manual_region_or_auto_ocr_boxes():
         mode="auto", region=None, width=1000, height=800, duration=12,
         style="blur", color="#101827", opacity=0,
     )
-    assert auto and auto["bbox"] == {"x": 100, "y": 580, "w": 700, "h": 80}
+    assert auto is None
+
 
 W, H = 640, 360
 
@@ -185,6 +186,7 @@ def test_cover_keeps_an_automatic_caption_in_the_requested_outside_lane(clip, tm
         "source": "old hard subtitle", "translation": "Bản dịch phải ở phía dưới",
         "layout": "horizontal", "bbox": {"x": 60, "y": 160, "w": 520, "h": 50},
         "bboxInherited": True,
+        "bboxDetected": True,
     }]
     cover_and_burn(
         clip, segments, out, cover=True, burn=True, caption_placement="below",

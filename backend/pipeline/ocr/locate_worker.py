@@ -300,6 +300,7 @@ Path(sys.argv[3]).write_text(
                     for k in (
                         "bbox",
                         "bboxInherited",
+                        "bboxDetected",
                         "layout",
                         "captionLayout",
                         "coverStart",
@@ -465,6 +466,7 @@ def _copy_worker_segments(
             for key in (
                 "bbox",
                 "bboxInherited",
+                "bboxDetected",
                 "layout",
                 "captionLayout",
                 "coverStart",

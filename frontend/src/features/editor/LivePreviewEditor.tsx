@@ -110,7 +110,6 @@ import {
   solidMidAt,
   solidOcrAt,
   solidOverlaysAt,
-  unionBox,
   sourceToDisplayStyle,
   splitMediaList,
   videoCropStyle,
@@ -401,8 +400,10 @@ export default function LivePreviewEditor({
   const [draft, setDraft] = useState<{ id: string; start: number; end: number } | null>(null)
   const [groupDraft, setGroupDraft] = useState<Record<string, { start: number; end: number }> | null>(null)
   const [bboxDraft, setBboxDraft] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [blurBandDraft, setBlurBandDraft] = useState<PixelBox | null>(null)
   const [activeBboxId, setActiveBboxId] = useState<string | null>(null)
   const [activeAutoBlurBand, setActiveAutoBlurBand] = useState(false)
+  const [activeBlurBandIndex, setActiveBlurBandIndex] = useState(0)
   const [draggingBox, setDraggingBox] = useState(false)
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({ h: false, v: false })
   /** true khi đang kéo pan aspect / crop tự do — hiện tia căn giữa giống bbox */
@@ -1148,7 +1149,7 @@ export default function LivePreviewEditor({
     const cl = s.captionLayout
     // Cover mode changes the geometry (caption must be inside the mask), so it
     // must invalidate a layout calculated for above/below mode.
-    const key = `v16|${s.id}|${s.translation}|${s.layout}|${s.bboxInherited}|${s.bbox ? `${s.bbox.x},${s.bbox.y},${s.bbox.w},${s.bbox.h}` : ''}|${cl ? `${cl.x},${cl.y},${cl.w},${cl.h},${cl.fontSize},${(cl.lines || []).join('\\n')}` : ''}|${settings.burnSubs}|${settings.coverHardsubs}|${settings.captionPlacement}|${settings.subtitleFontSize}|${s.fontFamily || settings.subtitleFontFamily}|${crop.x},${crop.y},${crop.w},${crop.h}|${override ? `${override.x},${override.y},${override.w},${override.h}` : ''}`
+    const key = `v17|${s.id}|${s.translation}|${s.layout}|${s.bboxInherited}|${s.bboxDetected}|${s.bbox ? `${s.bbox.x},${s.bbox.y},${s.bbox.w},${s.bbox.h}` : ''}|${cl ? `${cl.x},${cl.y},${cl.w},${cl.h},${cl.fontSize},${(cl.lines || []).join('\\n')}` : ''}|${settings.burnSubs}|${settings.coverHardsubs}|${settings.captionPlacement}|${settings.subtitleFontSize}|${s.fontFamily || settings.subtitleFontFamily}|${crop.x},${crop.y},${crop.w},${crop.h}|${override ? `${override.x},${override.y},${override.w},${override.h}` : ''}`
     const cached = layoutCacheRef.current[s.id]
     if (cached && cached.key === key) {
       return cached.val
@@ -1389,7 +1390,7 @@ export default function LivePreviewEditor({
   const solidAtPlayhead = solidOverlaysAt(layoutSegs, time)
   const withExpandedMidHardsubBand = (items: Segment[]) => {
     const mids = items.filter((seg) =>
-      seg.bboxInherited !== false
+      seg.bboxDetected === true
       && Boolean(seg.bbox)
       && effectiveOverlayLayout(seg, sourceHeight, sourceWidth) === 'mid',
     )
@@ -1397,7 +1398,27 @@ export default function LivePreviewEditor({
     return items.map((seg) => {
       if (!mids.includes(seg) || !seg.bbox) return seg
       const box = clampCoverBox(seg.bbox, sourceWidth, sourceHeight)
-      const peers = mids.filter((peer) => {
+      const words = seg.words || []
+      const wordStart = words[0]?.start
+      const wordEnd = words[words.length - 1]?.end
+      // ASR often splits one visible two-line hard-sub into several segments
+      // with the same word time span. Include those siblings even when only
+      // one segment is active at this playhead, otherwise the top row leaks.
+      const groupMids = typeof wordStart === 'number' && typeof wordEnd === 'number'
+        ? layoutSegs.filter((peer) => {
+            const peerWords = peer.words || []
+            const peerStart = peerWords[0]?.start
+            const peerEnd = peerWords[peerWords.length - 1]?.end
+            return peer.bboxDetected === true
+              && Boolean(peer.bbox)
+              && effectiveOverlayLayout(peer, sourceHeight, sourceWidth) === 'mid'
+              && typeof peerStart === 'number'
+              && typeof peerEnd === 'number'
+              && Math.abs(peerStart - wordStart) < 0.03
+              && Math.abs(peerEnd - wordEnd) < 0.03
+          })
+        : []
+      const peers = [...new Map([...mids, ...groupMids].map((peer) => [peer.id, peer])).values()].filter((peer) => {
         if (!peer.bbox) return false
         const candidate = clampCoverBox(peer.bbox, sourceWidth, sourceHeight)
         const overlap = Math.max(0, Math.min(box.x + box.w, candidate.x + candidate.w) - Math.max(box.x, candidate.x))
@@ -1421,28 +1442,6 @@ export default function LivePreviewEditor({
   const coverSegsRaw = settings.burnSubs
     ? (() => {
         let base = overCoverMode ? segmentsAt(layoutSegs, time) : solidAtPlayhead
-        // Mid hardsub band: persistent full-video blur when blurBandMode is
-        // 'auto' (default) or 'manual'. Off = time-gated only.
-        // Pre-compute union bbox and mark bboxInherited:false so
-        // withExpandedMidHardsubBand skips expansion (keeps exact OCR height).
-        const blurBandMode = settings.blurBandMode ?? 'auto'
-        if (overCoverMode && blurBandMode !== 'off') {
-          const midHardsubSegs = layoutSegs.filter(
-            (s) => Boolean(s.bbox) && effectiveOverlayLayout(s, sourceHeight, sourceWidth) === 'mid',
-          )
-          if (midHardsubSegs.length > 0 && !base.some((s) => midHardsubSegs.includes(s))) {
-            const unionBbox = midHardsubSegs.reduce(
-              (acc, s) => acc === null
-                ? clampCoverBox(s.bbox!, sourceWidth, sourceHeight)
-                : unionBox(acc, clampCoverBox(s.bbox!, sourceWidth, sourceHeight)),
-              null as { x: number; y: number; w: number; h: number } | null,
-            )
-            if (unionBbox) {
-              // bboxInherited:false bypasses withExpandedMidHardsubBand expansion
-              base = [...base, { ...midHardsubSegs[0], bbox: unionBbox, bboxInherited: false }]
-            }
-          }
-        }
         // HACK: match backend gap-fill — extend the last horizontal cover to video end
         // if the gap is small (<1.5s), so lingering hardsubs at the end are covered.
         if (mediaDurationProp && time >= 0) {
@@ -1504,9 +1503,7 @@ export default function LivePreviewEditor({
           .filter((s) => {
             if (overCoverMode) {
               return (
-                isOcrOverlayLayout(s.layout)
-                || Boolean(effectiveOverlayLayout(s, sourceHeight, sourceWidth))
-                || Boolean(s.translation.trim())
+                s.bboxDetected === true || s.bboxInherited === false
               )
             }
             // below/above: không che chữ hardsub mid/ngang — chỉ dọc/nhãn
@@ -1521,77 +1518,70 @@ export default function LivePreviewEditor({
           })
           .filter((b): b is PixelBox => !!b)
       : []
+  // Auto blur follows the subtitle visible at the current time. A single
+  // full-video band makes the mask oversized and disconnects it from caption.
+  // Only a user-drawn manual region is intentionally persistent.
   const persistentBlurBandBox = (() => {
-    const mode = settings.blurBandMode ?? 'off'
-    if (mode === 'off' || !settings.burnSubs || trackHidden.caption || sourceWidth <= 0 || sourceHeight <= 0) return null
-    const region = mode === 'manual'
-      ? settings.blurBandRegion
-      : settings.blurBandAutoRegionVersion === 1 ? settings.blurBandAutoRegion : null
-    if (region) {
-      const values = [region.x, region.y, region.w, region.h].map(Number)
-      if (values.some((value) => !Number.isFinite(value))) return null
-      return clampCoverBox({
-        x: values[0] * sourceWidth,
-        y: values[1] * sourceHeight,
-        w: values[2] * sourceWidth,
-        h: values[3] * sourceHeight,
-      }, sourceWidth, sourceHeight)
-    }
-    const autoBoxes = layoutSegs
-      .filter((segment) => {
-        if (!segment.bbox) return false
-        const lane = captionLaneOf(segment, sourceHeight, sourceWidth)
-        // Exclude structural overlays (vertical CJK, field labels). mid = hardsub.
-        if (lane === 'vertical' || lane === 'label') return false
-        // Exclude boxes whose centre-y is in top 30% — likely title/watermark.
-        const box = clampCoverBox(segment.bbox, sourceWidth, sourceHeight)
-        const cy = box.y + box.h / 2
-        return cy >= sourceHeight * 0.30
-      })
-      .map((segment) => clampCoverBox(segment.bbox!, sourceWidth, sourceHeight))
-    if (!autoBoxes.length) return null
-    // A union expands each time OCR sees a slightly different subtitle row.
-    // Use the median box instead: it represents the stable subtitle lane and
-    // rejects one-off detection noise rather than accumulating it.
-    const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
-    // Use median left/right edges so the band covers the widest stable subtitle
-    // extent on each side, without outlier boxes pulling it to the full frame edge.
-    const medianX = median(autoBoxes.map((box) => box.x))
-    const medianRight = median(autoBoxes.map((box) => box.x + box.w))
-    const medianY = median(autoBoxes.map((box) => box.y))
-    const medianH = median(autoBoxes.map((box) => box.h))
+    if (settings.blurBandMode !== 'manual' || !settings.burnSubs || trackHidden.caption || sourceWidth <= 0 || sourceHeight <= 0) return null
+    const region = settings.blurBandRegion
+    if (!region) return null
+    const values = [region.x, region.y, region.w, region.h].map(Number)
+    if (values.some((value) => !Number.isFinite(value))) return null
     return clampCoverBox({
-      x: medianX,
-      y: medianY,
-      w: Math.max(12, medianRight - medianX),
-      h: medianH,
+      x: values[0] * sourceWidth,
+      y: values[1] * sourceHeight,
+      w: values[2] * sourceWidth,
+      h: values[3] * sourceHeight,
     }, sourceWidth, sourceHeight)
   })()
-  // Freeze the OCR result on first auto use. From then on the blur band and
-  // editable caption bbox are deliberately independent project settings.
-  useEffect(() => {
-    if (settings.blurBandMode !== 'auto' || settings.blurBandAutoRegionVersion === 1 || !persistentBlurBandBox || sourceWidth <= 0 || sourceHeight <= 0) return
-    onSettings({
-      ...settings,
-      blurBandAutoRegion: {
-        x: persistentBlurBandBox.x / sourceWidth,
-        y: persistentBlurBandBox.y / sourceHeight,
-        w: persistentBlurBandBox.w / sourceWidth,
-        h: persistentBlurBandBox.h / sourceHeight,
-      },
-      blurBandAutoRegionVersion: 1,
+  const autoBlurBandBoxes = useMemo(() => {
+    if (settings.blurBandMode !== 'auto' || sourceWidth <= 0 || sourceHeight <= 0) return []
+    const verified = layoutSegs
+      .filter((segment) => segment.bboxDetected === true && segment.bbox)
+      .map((segment) => clampCoverBox(segment.bbox!, sourceWidth, sourceHeight))
+    if (!verified.length) return []
+    // Keep one fixed full-width lane per half of the video. OCR may miss a
+    // cue, but an inherited box must never turn into a huge moving blur.
+    return ([false, true] as const).flatMap((lower) => {
+      const boxes = verified.filter((box) => (box.y + box.h / 2 >= sourceHeight / 2) === lower)
+      if (!boxes.length) return []
+      // A rolling bilingual hard-sub often has two real rows. Use their exact
+      // verified extent (no artificial padding) so neither row leaks.
+      const top = Math.max(0, Math.min(...boxes.map((box) => box.y)))
+      const bottom = Math.min(sourceHeight, Math.max(...boxes.map((box) => box.y + box.h)))
+      const height = Math.max(24, bottom - top)
+      const y = Math.max(0, Math.min(sourceHeight - height, top))
+      return [{ x: 0, y, w: sourceWidth, h: height }]
     })
-  }, [settings, persistentBlurBandBox, sourceWidth, sourceHeight, onSettings])
-  // A blur band is persistent, so showing the same single box at every playhead
-  // is more truthful than briefly drawing each individual OCR subtitle box.
-  const previewMaskBoxes = persistentBlurBandBox ? [persistentBlurBandBox] : maskBoxes
-  // The automatic OCR band is a project setting, not a persisted overlay.
-  // Still show it as a full-duration clip so the timeline truthfully reflects
-  // what will be rendered/exported.
-  const hasTimelineBlurBand = Boolean(persistentBlurBandBox && timelineDuration > 0)
+  }, [layoutSegs, settings.blurBandMode, sourceHeight, sourceWidth])
+  const previewMaskBoxes = persistentBlurBandBox
+    ? [persistentBlurBandBox]
+    : settings.blurBandMode === 'auto' && autoBlurBandBoxes.length
+      ? autoBlurBandBoxes
+      : maskBoxes
+  const hasAutoBlurCues = autoBlurBandBoxes.length > 0
+  const editableBlurBandBox = blurBandDraft
+    ?? persistentBlurBandBox
+    ?? autoBlurBandBoxes[Math.min(activeBlurBandIndex, Math.max(0, autoBlurBandBoxes.length - 1))]
+    ?? null
+  const blurBandInteractive = Boolean(editableBlurBandBox) && settings.burnSubs && !trackHidden.caption
+  // Auto lanes remain visible in the timeline as fixed source-text zones.
+  const hasTimelineBlurBand = Boolean((persistentBlurBandBox || hasAutoBlurCues) && timelineDuration > 0)
   const timelineBlurBandLabel = settings.blurBandMode === 'manual'
     ? t('Vùng làm mờ thủ công', 'Manual blur zone')
     : t('Làm mờ tự động (OCR)', 'Auto blur (OCR)')
+  const blurBandForSegment = (segment: Segment) => {
+    if (persistentBlurBandBox) return persistentBlurBandBox
+    if (!autoBlurBandBoxes.length) return null
+    const center = segment.bbox
+      ? segment.bbox.y + segment.bbox.h / 2
+      : sourceHeight * 0.84
+    return autoBlurBandBoxes.reduce((nearest, band) =>
+      Math.abs(band.y + band.h / 2 - center) < Math.abs(nearest.y + nearest.h / 2 - center)
+        ? band
+        : nearest,
+    )
+  }
   // Caption "over" layers: cover mode; hoặc dọc/nhãn. Mid/horizontal ở below/above → activeCaptionBox.
   const captionLayers =
     overlayBurnOn && !trackHidden.caption
@@ -1607,9 +1597,18 @@ export default function LivePreviewEditor({
           ) {
             return null
           }
-          const layout = getCachedPreviewLayout(s, s.id === selected?.id ? activeCoverDraft : undefined)
-          return layout ? { seg: s, layout } : null
-        }).filter((x): x is { seg: Segment; layout: NonNullable<ReturnType<typeof resolvePreviewOverLayout>> } => !!x)
+          const fixedBand = overCoverMode && !isVertLabel ? blurBandForSegment(s) : null
+          const layout = fixedBand
+            ? resolvePreviewOverLayout(
+                { ...s, bbox: fixedBand, bboxInherited: false, captionLayout: null },
+                settings,
+                sourceWidth,
+                sourceHeight,
+                crop,
+              )
+            : getCachedPreviewLayout(s, s.id === selected?.id ? activeCoverDraft : undefined)
+          return layout ? { seg: s, layout, outsideFallback: false } : null
+        }).filter((x): x is { seg: Segment; layout: NonNullable<ReturnType<typeof resolvePreviewOverLayout>>; outsideFallback: boolean } => !!x)
       : []
   const captionOverLayout =
     captionLayers.find((c) => c.seg.id === bboxSeg?.id)?.layout
@@ -5075,28 +5074,44 @@ export default function LivePreviewEditor({
                         <div
                           key={`mask-${i}-${box.x}-${box.y}`}
                           data-cover-mask-preview
-                          className="absolute z-[9] pointer-events-none overflow-hidden rounded-[1px]"
+                          className={cn(
+                            'absolute z-[9] overflow-hidden rounded-[1px]',
+                            blurBandInteractive ? 'pointer-events-auto cursor-move' : 'pointer-events-none',
+                          )}
                           style={{
                             ...sourceToDisplayStyle(box, crop),
                             ...coverMaskPreviewStyle(coverMaskStyle, coverMaskColor, coverMaskOpacity),
+                          }}
+                          onPointerDown={(event) => {
+                            if (!blurBandInteractive || busy) return
+                            event.preventDefault()
+                            event.stopPropagation()
+                            setActiveBboxId(null)
+                            setSelectedOverlayId(null)
+                            setActiveBlurBandIndex(i)
+                            setActiveAutoBlurBand(true)
+                            setTrackFocus('text')
+                            setTool('select')
+                            setPropTab('caption')
                           }}
                           aria-hidden
                         />
                       ))}
 
                       {/* Auto blur is a project-wide OCR band, not a caption bbox. */}
-                      {activeAutoBlurBand && persistentBlurBandBox && tool !== 'text' && (
+                      {activeAutoBlurBand && editableBlurBandBox && tool !== 'text' && (
                         <div
                           data-blur-band
                           className="absolute z-[35] cursor-move touch-none overflow-visible rounded-sm border border-dashed border-fuchsia-200/90 shadow-[0_0_0_1px_rgba(88,28,135,0.7)]"
-                          style={sourceToDisplayStyle(persistentBlurBandBox, crop)}
+                          style={sourceToDisplayStyle(editableBlurBandBox, crop)}
                           onPointerDown={(e) => {
                             if (busy) return
                             e.preventDefault(); e.stopPropagation()
                             const canvas = canvasRef.current
                             if (!canvas) return
                             const rect = canvas.getBoundingClientRect()
-                            const original = { ...persistentBlurBandBox }
+                            const original = { ...editableBlurBandBox }
+                            let latest = original
                             const update = (move: PointerEvent) => {
                               const dx = ((move.clientX - e.clientX) / rect.width) * crop.w
                               const dy = ((move.clientY - e.clientY) / rect.height) * crop.h
@@ -5105,11 +5120,19 @@ export default function LivePreviewEditor({
                                 y: Math.round(original.y + dy),
                                 w: original.w, h: original.h,
                               }, sourceWidth, sourceHeight)
-                              onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: next.x / sourceWidth, y: next.y / sourceHeight, w: next.w / sourceWidth, h: next.h / sourceHeight } })
+                              latest = next
+                              setBlurBandDraft(next)
                             }
-                            const cleanup = () => { window.removeEventListener('pointermove', update); window.removeEventListener('pointerup', cleanup) }
+                            const cleanup = () => {
+                              window.removeEventListener('pointermove', update)
+                              window.removeEventListener('pointerup', cleanup)
+                              window.removeEventListener('pointercancel', cleanup)
+                              setBlurBandDraft(null)
+                              onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: latest.x / sourceWidth, y: latest.y / sourceHeight, w: latest.w / sourceWidth, h: latest.h / sourceHeight } })
+                            }
                             window.addEventListener('pointermove', update)
                             window.addEventListener('pointerup', cleanup, { once: true })
+                            window.addEventListener('pointercancel', cleanup, { once: true })
                           }}
                         >
                           {(['nw','n','ne','e','se','s','sw','w'] as const).map((handle) => (
@@ -5133,7 +5156,8 @@ export default function LivePreviewEditor({
                                 const canvas = canvasRef.current
                                 if (!canvas) return
                                 const rect = canvas.getBoundingClientRect()
-                                const original = { ...persistentBlurBandBox }
+                                const original = { ...editableBlurBandBox }
+                                let latest = original
                                 const minSize = 12
                                 const update = (move: PointerEvent) => {
                                   const dx = ((move.clientX - e.clientX) / rect.width) * crop.w
@@ -5145,11 +5169,19 @@ export default function LivePreviewEditor({
                                   if (handle.includes('n')) top = Math.max(0, Math.min(bottom - minSize, original.y + dy))
                                   if (handle.includes('s')) bottom = Math.min(sourceHeight, Math.max(top + minSize, bottom + dy))
                                   const next = clampCoverBox({ x: Math.round(left), y: Math.round(top), w: Math.round(right - left), h: Math.round(bottom - top) }, sourceWidth, sourceHeight)
-                                  onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: next.x / sourceWidth, y: next.y / sourceHeight, w: next.w / sourceWidth, h: next.h / sourceHeight } })
+                                  latest = next
+                                  setBlurBandDraft(next)
                                 }
-                                const cleanup = () => { window.removeEventListener('pointermove', update); window.removeEventListener('pointerup', cleanup) }
+                                const cleanup = () => {
+                                  window.removeEventListener('pointermove', update)
+                                  window.removeEventListener('pointerup', cleanup)
+                                  window.removeEventListener('pointercancel', cleanup)
+                                  setBlurBandDraft(null)
+                                  onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: latest.x / sourceWidth, y: latest.y / sourceHeight, w: latest.w / sourceWidth, h: latest.h / sourceHeight } })
+                                }
                                 window.addEventListener('pointermove', update)
                                 window.addEventListener('pointerup', cleanup, { once: true })
+                                window.addEventListener('pointercancel', cleanup, { once: true })
                               }}
                             />
                           ))}
@@ -5166,7 +5198,7 @@ export default function LivePreviewEditor({
                             'group/bbox absolute border cursor-move z-[30] overflow-visible touch-none',
                             // A selected blur owns pointer input, even where it overlaps a
                             // subtitle. Otherwise this invisible bbox steals its move cursor.
-                            (selectedOverlayId || activeAutoBlurBand) && 'pointer-events-none',
+                            (selectedOverlayId || activeAutoBlurBand || blurBandInteractive) && 'pointer-events-none',
                             showBboxAtPlayhead ? 'border-white/75 border-dashed' : 'border-transparent bg-transparent',
                             showBboxAtPlayhead && !showCoverBlur && 'bg-white/5',
                             draggingBox && 'opacity-80',
@@ -5201,7 +5233,7 @@ export default function LivePreviewEditor({
                       )}
 
                       {/* Phụ đề dịch — mọi clip overlapping (mid + dọc + đáy cùng lúc) */}
-                      {captionLayers.map(({ seg: layerSeg, layout: layerLayout }) => {
+                      {captionLayers.map(({ seg: layerSeg, layout: layerLayout, outsideFallback }) => {
                         const overlayLay = effectiveOverlayLayout(layerSeg, sourceHeight, sourceWidth)
                         const fontPx = layerLayout.fontPx
                           ?? (overlayLay
@@ -5225,7 +5257,7 @@ export default function LivePreviewEditor({
                           )}
                           style={sourceToDisplayStyle(
                             // Horizontal cover mode: bám cover (che + chữ giữa khung tím)
-                            overlayLay || settings.coverHardsubs
+                            overlayLay || (settings.coverHardsubs && !outsideFallback)
                               ? layerLayout.cover
                               : layerLayout.caption,
                             crop,
