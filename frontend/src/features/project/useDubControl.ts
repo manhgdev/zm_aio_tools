@@ -92,9 +92,10 @@ export function useDubControl({
     if (cancelLockRef.current) return
     cancelLockRef.current = true
     const stepNow = status.step
-    // Mở khóa lồng tiếng ngay — poll dừng khi running=false nên không clear lock được
+    // Close the popup immediately: cancellation is an explicit stop, never a
+    // request to continue in the background. The backend call below kills its
+    // registered subprocesses synchronously when it receives the request.
     releaseDubLock()
-    // optimistic — đừng chờ server
     setStatus({
       step: stepNow,
       progress: 0,
@@ -103,17 +104,16 @@ export function useDubControl({
           ? 'Đã huỷ xuất bản'
           : stepNow === 'dub'
             ? 'Đã huỷ lồng tiếng'
-            : 'Đang huỷ…',
+            : 'Đã huỷ',
       running: false,
       error: 'cancelled',
     })
     try {
       await api.cancel(projectId)
     } catch {
-      /* flag server có thể fail; UI đã dừng */
+      // Polling/status reconciliation handles a transient backend failure.
     } finally {
       cancelLockRef.current = false
-      releaseDubLock()
     }
   }
 
