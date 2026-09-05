@@ -547,6 +547,16 @@ export default function App() {
           )
         }
       }
+      if (res.clearedCovers) {
+        // Auto blur is OCR-derived cache. The API already clears its project
+        // copy; clear this in-memory/local copy too so the current preview
+        // cannot keep painting an old frozen region after cache deletion.
+        setSettings((current) => {
+          const { blurBandAutoRegion: _region, blurBandAutoRegionVersion: _version, ...next } = current
+          persistSettings(next)
+          return next
+        })
+      }
       if (res.clearedSegments || parts.includes('render') || parts.includes('preview')) {
         setExportUrl(null)
         setExportPath(null)

@@ -78,7 +78,7 @@ export type ProjectMediaAsset = {
 
 /** `inpaint` is the high-quality export path used by automatic watermark removal.
  * The editor shows it as a soft blur because browser preview cannot run native inpainting. */
-export type OverlayMaskStyle = 'blur' | 'solid' | 'mosaic' | 'inpaint'
+export type OverlayMaskStyle = 'blur' | 'feather' | 'solid' | 'mosaic' | 'inpaint'
 export type LogoKeyframe = { at: number; x: number; y: number }
 
 export type TextOverlay = {
@@ -175,8 +175,24 @@ export type ProjectSettings = {
   hiddenLogoTexts?: string[]
   /** Che hardsub cũ (blur). Tắt = giữ chữ OCR trên khung */
   coverHardsubs: boolean
-  /** Kiểu mặt nạ che chữ gốc khi cover: blur | solid | mosaic */
-  coverMaskStyle: 'blur' | 'solid' | 'mosaic'
+  /**
+   * Chế độ vùng làm mờ cố định (blur band) chạy suốt video:
+   * - 'off': không dùng (mặc định)
+   * - 'auto': tự động phát hiện vị trí hardsub qua OCR
+   * - 'manual': người dùng kéo chọn vùng trong preview
+   */
+  blurBandMode?: 'off' | 'auto' | 'manual'
+  /**
+   * Tọa độ vùng làm mờ thủ công (chuẩn hóa 0–1 theo khung video).
+   * Chỉ dùng khi blurBandMode === 'manual'.
+   */
+  blurBandRegion?: { x: number; y: number; w: number; h: number } | null
+  /** Vùng OCR đã chốt cho chế độ auto; tách khỏi bbox phụ đề để kéo bbox không kéo blur. */
+  blurBandAutoRegion?: { x: number; y: number; w: number; h: number } | null
+  /** Version vùng auto để một thuật toán OCR mới có thể seed lại an toàn. */
+  blurBandAutoRegionVersion?: 1
+  /** Kiểu mặt nạ che chữ gốc khi cover: blur | feather | solid | mosaic */
+  coverMaskStyle: 'blur' | 'feather' | 'solid' | 'mosaic'
   /** Màu phủ (blur tint hoặc nền solid), hex #RRGGBB */
   coverMaskColor: string
   /** Độ mờ/đậm mặt nạ 0–100 */

@@ -4,9 +4,19 @@ import type { AppLocale } from '@/app/i18n'
 export const SPEAKER_COLORS = ['#0ea5a8', '#8b5cf6', '#e58a2b', '#3b82f6', '#ec4899', '#22c55e', '#ef4444', '#a855f7']
 
 const ROLE_NAMES = {
-  vi: ['Nam chính', 'Nữ chính', 'Nam phụ', 'Nữ phụ', 'Người dẫn chuyện', 'Khách mời 1', 'Khách mời 2', 'Nhân vật phụ'],
-  en: ['Male lead', 'Female lead', 'Supporting male', 'Supporting female', 'Narrator', 'Guest 1', 'Guest 2', 'Supporting character'],
+  vi: ['Nam chính', 'Nữ chính', 'Nữ phụ', 'Nam phụ', 'Người dẫn truyện', 'Khách mời 1', 'Khách mời 2', 'Nhân vật phụ'],
+  en: ['Male lead', 'Female lead', 'Supporting female', 'Supporting male', 'Narrator', 'Guest 1', 'Guest 2', 'Supporting character'],
 } as const
+
+const DEFAULT_SPEAKER_VOICES = [
+  'cc:BV075_streaming:7102355803792740865', // Thanh Niên Tự Tin
+  'cc:BV074_streaming:7102355709945188865', // Cô Gái Hoạt Ngôn
+  'cc:BV421_vivn_streaming:7252594014782755330', // Nhỏ Ngọt Ngào
+  'cc:BV560_streaming:7483736167565758992', // Alex Đại Đế
+  'cc:multi_female_richgirl_uranus_bigtts:7637460351541447956', // Review Phim new
+  'cc:BV560_streaming:7483736167565758992', // Alex Đại Đế
+  'cc:BV562_streaming:7483736254694035984', // Mai
+] as const
 
 export function speakerRoleOptions(locale: AppLocale): readonly string[] {
   return ROLE_NAMES[locale]
@@ -37,7 +47,7 @@ export function resolvedSpeakerProfiles(
       // changes. Custom user names are never translated.
       name: !isGeneratedSpeakerName(saved?.name) ? saved!.name : defaultSpeakerRole(index, locale),
       color: saved?.color || SPEAKER_COLORS[index % SPEAKER_COLORS.length],
-      voice: saved?.voice || settings.speakerVoices?.[id] || settings.defaultVoice,
+      voice: saved?.voice || settings.speakerVoices?.[id] || DEFAULT_SPEAKER_VOICES[index] || settings.defaultVoice,
     }
   })
 }

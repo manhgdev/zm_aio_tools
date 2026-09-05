@@ -461,6 +461,9 @@ def status() -> dict[str, Any]:
             if backend == "pytorch" and device == "cuda":
                 out["device"] = "CUDA (runtime)"
                 out["message"] = "Sẵn sàng — TTS PyTorch/CUDA qua runtime venv"
+            elif backend == "pytorch" and device == "mps":
+                out["device"] = "Apple GPU (MPS runtime)"
+                out["message"] = "TTS PyTorch/MPS runtime"
             else:
                 out["device"] = "ONNX/CPU (runtime)"
                 out["message"] = "Sẵn sàng — TTS ONNX/CPU qua runtime venv"

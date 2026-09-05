@@ -66,6 +66,21 @@ export const TRANSLATORS = [
   'deepseek', 'openrouter', 'grok', 'groq', 'nvidia',
 ] as const
 
+const TRANSLATOR_LABELS: Record<(typeof TRANSLATORS)[number], string> = {
+  google: 'Google Translate',
+  mymemory: 'MyMemory',
+  tiktok: 'TikTok Translate',
+  capcut: 'CapCut cloud',
+  ollama: 'Ollama',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+  deepseek: 'DeepSeek',
+  openrouter: 'OpenRouter',
+  grok: 'Grok (xAI)',
+  groq: 'Groq',
+  nvidia: 'NVIDIA NIM',
+}
+
 export function normalizeTranslatorForEngine(
   engine: ProjectSettings['engine'],
   translator: ProjectSettings['translator'],
@@ -76,6 +91,11 @@ export function normalizeTranslatorForEngine(
 
 export function availableTranslators(engine: ProjectSettings['engine']) {
   return engine === 'capcut' ? TRANSLATORS : TRANSLATORS.filter((id) => id !== 'capcut')
+}
+
+/** Canonical options for every translator picker; never combine display and raw-id lists. */
+export function translatorOptions(engine: ProjectSettings['engine']) {
+  return availableTranslators(engine).map((id) => ({ id, label: TRANSLATOR_LABELS[id] }))
 }
 
 export const defaultSettings: ProjectSettings = {
@@ -95,7 +115,7 @@ export const defaultSettings: ProjectSettings = {
   coverHardsubs: true,
   coverMaskStyle: 'blur',
   coverMaskColor: '#4c1d95',
-  coverMaskOpacity: 40,
+  coverMaskOpacity: 0,
   burnSubs: true,
   captionPlacement: 'above',
   subtitleFontSize: 0,
@@ -215,10 +235,10 @@ export function loadSettings(): ProjectSettings {
     if (!['fast', 'balanced', 'quality'].includes(s.ollamaLocalTier)) {
       s.ollamaLocalTier = 'balanced'
     }
-    const okMask = ['blur', 'solid', 'mosaic'] as const
+    const okMask = ['blur', 'feather', 'solid', 'mosaic'] as const
     if (!okMask.includes(s.coverMaskStyle as (typeof okMask)[number])) s.coverMaskStyle = 'blur'
     if (typeof s.coverMaskOpacity !== 'number' || Number.isNaN(s.coverMaskOpacity)) {
-      s.coverMaskOpacity = 40
+      s.coverMaskOpacity = 0
     } else {
       s.coverMaskOpacity = Math.max(0, Math.min(100, s.coverMaskOpacity))
     }

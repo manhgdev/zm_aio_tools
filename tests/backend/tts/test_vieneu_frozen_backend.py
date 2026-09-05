@@ -56,6 +56,28 @@ def test_frozen_status_uses_runtime_backend(monkeypatch) -> None:
     assert "CUDA" in st["message"]
 
 
+def test_frozen_status_reports_apple_gpu_when_runtime_uses_mps(monkeypatch) -> None:
+    from pipeline.tts.engines import vieneu as v
+
+    monkeypatch.setattr(v, "available", lambda: True)
+    monkeypatch.setattr(v, "list_preset_from_assets", lambda: ["A"])
+    monkeypatch.setattr(v, "package_version", lambda: "3.2.3")
+    monkeypatch.setattr(v.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        "pipeline.tts.engines.vieneu_frozen.probe",
+        lambda: (True, "pytorch/mps"),
+    )
+    monkeypatch.setattr(
+        "pipeline.tts.engines.vieneu_frozen.resolve_backend",
+        lambda: ("pytorch", "mps"),
+    )
+
+    st = v.status()
+
+    assert st["device"] == "Apple GPU (MPS runtime)"
+    assert "MPS" in st["message"]
+
+
 def test_frozen_synthesize_reference_passes_ref_path(monkeypatch, tmp_path) -> None:
     """zmAI reference voices must work in desktop app — not require npm run server."""
     from pipeline.tts.engines import vieneu as v

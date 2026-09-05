@@ -8,6 +8,8 @@ from unittest.mock import patch
 from pipeline.asr.speaker import (
     EMBEDDING_NAME,
     assign_speakers,
+    default_speaker_role,
+    default_speaker_voice,
     ensure_diarization_models,
     diarization_provider_for_device,
     preferred_diarization_provider,
@@ -15,6 +17,24 @@ from pipeline.asr.speaker import (
 
 
 class SpeakerAssignmentTests(unittest.TestCase):
+    def test_default_roles_and_voices_follow_the_requested_story_cast(self):
+        self.assertEqual(
+            [default_speaker_role(index) for index in range(7)],
+            ["Nam chính", "Nữ chính", "Nữ phụ", "Nam phụ", "Người dẫn truyện", "Khách mời 1", "Khách mời 2"],
+        )
+        self.assertEqual(
+            [default_speaker_voice(index, "system") for index in range(7)],
+            [
+                "cc:BV075_streaming:7102355803792740865",
+                "cc:BV074_streaming:7102355709945188865",
+                "cc:BV421_vivn_streaming:7252594014782755330",
+                "cc:BV560_streaming:7483736167565758992",
+                "cc:multi_female_richgirl_uranus_bigtts:7637460351541447956",
+                "cc:BV560_streaming:7483736167565758992",
+                "cc:BV562_streaming:7483736254694035984",
+            ],
+        )
+
     def test_provider_follows_video_clone_device_detection(self):
         cases = [
             ({"accel": "cuda", "gpuKind": "nvidia"}, "cuda"),

@@ -11,6 +11,35 @@ SEGMENTATION_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/spea
 EMBEDDING_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
 EMBEDDING_NAME = "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
 
+# First-time role/voice mapping after diarization. Speaker IDs are assigned by
+# Sherpa in stable numeric order (SPEAKER_00, SPEAKER_01, …), not by gender.
+# These are editable defaults, never a claim about a detected person's gender.
+DEFAULT_SPEAKER_ROLES = (
+    "Nam chính", "Nữ chính", "Nữ phụ", "Nam phụ", "Người dẫn truyện", "Khách mời 1", "Khách mời 2",
+)
+DEFAULT_SPEAKER_VOICES = (
+    "cc:BV075_streaming:7102355803792740865",  # Thanh Niên Tự Tin
+    "cc:BV074_streaming:7102355709945188865",  # Cô Gái Hoạt Ngôn
+    "cc:BV421_vivn_streaming:7252594014782755330",  # Nhỏ Ngọt Ngào
+    "cc:BV560_streaming:7483736167565758992",  # Alex Đại Đế
+    "cc:multi_female_richgirl_uranus_bigtts:7637460351541447956",  # Review Phim new
+    "cc:BV560_streaming:7483736167565758992",  # Alex Đại Đế
+    "cc:BV562_streaming:7483736254694035984",  # Mai
+)
+
+
+def default_speaker_role(position: int) -> str:
+    return DEFAULT_SPEAKER_ROLES[position] if position < len(DEFAULT_SPEAKER_ROLES) else f"Người nói {position + 1}"
+
+
+def default_speaker_voice(position: int, fallback: str) -> str:
+    return DEFAULT_SPEAKER_VOICES[position] if position < len(DEFAULT_SPEAKER_VOICES) else fallback
+
+
+def is_generated_speaker_role(name: object) -> bool:
+    value = str(name or "").strip()
+    return not value or value in DEFAULT_SPEAKER_ROLES or value.startswith("Người nói ") or value.startswith("Speaker ")
+
 
 
 _DOWNLOAD_TIMEOUT = 600  # 10 phút tối đa mỗi file model (~100MB qua mạng chậm)

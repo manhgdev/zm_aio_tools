@@ -58,7 +58,7 @@ export function coverMaskPreviewStyle(
 ): React.CSSProperties {
   const [r, g, b] = parseHexColor(color)
   const pct = Math.max(0, Math.min(100, opacity))
-  const a = Math.max(0.05, Math.min(1, pct / 100))
+  const a = Math.max(0, Math.min(1, pct / 100))
   if (style === 'solid') {
     return { backgroundColor: `rgba(${r},${g},${b},${a})` }
   }
@@ -81,9 +81,22 @@ export function coverMaskPreviewStyle(
       isolation: 'isolate' as const,
     }
   }
+  if (style === 'feather') {
+    // CapCut-style band: the backdrop blur and tint fade only at the top/bottom.
+    const tintA = Math.min(0.52, a * 0.52)
+    const blurPx = Math.round(28 + a * 24)
+    return {
+      backgroundColor: `rgba(${r},${g},${b},${tintA})`,
+      backdropFilter: `blur(${blurPx}px) saturate(0.78) brightness(0.82)`,
+      WebkitBackdropFilter: `blur(${blurPx}px) saturate(0.78) brightness(0.82)`,
+      maskImage: 'linear-gradient(to bottom, transparent 0%, #000 20%, #000 80%, transparent 100%)',
+      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, #000 20%, #000 80%, transparent 100%)',
+      isolation: 'isolate' as const,
+    }
+  }
 
   // Làm mờ CapCut: blur phía sau + tint mỏng (bản đẹp — không đậm thêm)
-  const tintA = Math.min(0.22, Math.max(0.06, a * 0.28))
+  const tintA = Math.min(0.22, a * 0.28)
   const blurPx = Math.round(22 + a * 20) // ~22–42px
   return {
     backgroundColor: `rgba(${r},${g},${b},${tintA})`,
@@ -98,6 +111,7 @@ export type CropRect = { x: number; y: number; w: number; h: number }
 
 export const COVER_MASK_STYLES: { id: ProjectSettings['coverMaskStyle']; label: string }[] = [
   { id: 'blur', label: 'Làm mờ' },
+  { id: 'feather', label: 'Mờ tan mép' },
   { id: 'solid', label: 'Màu nền' },
   { id: 'mosaic', label: 'Khối' },
 ]
@@ -190,11 +204,12 @@ export const EFFECT_PRESETS: {
   id: string
   label: string
   desc: string
-  maskStyle: 'blur' | 'solid' | 'mosaic'
+  maskStyle: 'blur' | 'feather' | 'solid' | 'mosaic'
   maskColor: string
   maskOpacity: number
 }[] = [
-  { id: 'blur', label: 'Làm mờ', desc: 'Kính mờ CapCut — che vùng tự do', maskStyle: 'blur', maskColor: '#4c1d95', maskOpacity: 45 },
+  { id: 'blur', label: 'Làm mờ', desc: 'Kính mờ CapCut — che vùng tự do', maskStyle: 'blur', maskColor: '#4c1d95', maskOpacity: 0 },
+  { id: 'feather', label: 'Mờ tan mép', desc: 'Dải kính có mặt nạ tan mềm ở hai mép', maskStyle: 'feather', maskColor: '#101827', maskOpacity: 0 },
   { id: 'solid', label: 'Màu nền', desc: 'Phủ màu đặc lên vùng chọn', maskStyle: 'solid', maskColor: '#1e1b4b', maskOpacity: 70 },
   { id: 'mosaic', label: 'Khối', desc: 'Làm mờ pixel / che hardsub', maskStyle: 'mosaic', maskColor: '#2a2a30', maskOpacity: 80 },
 ]

@@ -532,7 +532,7 @@ def run_export(project_id: str, *, nested: bool = False) -> Path:
                 caption_placement=place,
                 cover_mask_style=str(settings.get("coverMaskStyle") or "blur"),
                 cover_mask_color=str(settings.get("coverMaskColor") or "#4c1d95"),
-                cover_mask_opacity=int(settings.get("coverMaskOpacity", 40)),
+                cover_mask_opacity=int(settings.get("coverMaskOpacity", 0)),
                 caption_text_color=str(settings.get("captionTextColor") or "#ffffff"),
                 caption_bg_style=str(settings.get("captionBgStyle") or "none"),
                 caption_bg_color=str(settings.get("captionBgColor") or "#000000"),
@@ -543,6 +543,13 @@ def run_export(project_id: str, *, nested: bool = False) -> Path:
                 video_scale_x=video_scale_x,
                 video_scale_y=video_scale_y,
                 render_info=render_info,
+                blur_band_mode=str(settings.get("blurBandMode") or "off"),
+                blur_band_region=settings.get("blurBandRegion") or None,
+                blur_band_auto_region=(
+                    settings.get("blurBandAutoRegion")
+                    if int(settings.get("blurBandAutoRegionVersion") or 0) == 1
+                    else None
+                ),
             )
         else:
             # Không burn/cover — remux bỏ metadata (không copy2 nguyên file nguồn)

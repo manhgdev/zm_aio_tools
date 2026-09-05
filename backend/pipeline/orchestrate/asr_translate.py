@@ -321,7 +321,13 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                 else:
                     segments = asr_whisper(wav, settings.get("sourceLang", "auto"), workers=w, project_id=project_id)
                 if settings.get("speakerDiarization"):
-                    from pipeline.asr.speaker import assign_speakers, diarize_audio
+                    from pipeline.asr.speaker import (
+                        assign_speakers,
+                        default_speaker_role,
+                        default_speaker_voice,
+                        diarize_audio,
+                        is_generated_speaker_role,
+                    )
 
                     set_status(project_id, step="asr", progress=44, message="Đang tách người nói…", running=True)
                     model_dir = DATA / "models" / "pyannote"
@@ -335,11 +341,12 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                     palette = ("#0ea5a8", "#8b5cf6", "#e58a2b", "#3b82f6", "#ec4899", "#22c55e", "#ef4444", "#a855f7")
                     for position, speaker in enumerate(sorted({str(s.get("speaker")) for s in segments if s.get("speaker")})):
                         old_profile = profiles.get(speaker) if isinstance(profiles.get(speaker), dict) else {}
+                        fallback_voice = str(settings.get("defaultVoice") or "system")
                         profiles[speaker] = {
                             "id": speaker,
-                            "name": str(old_profile.get("name") or f"Người nói {position + 1}"),
+                            "name": default_speaker_role(position) if is_generated_speaker_role(old_profile.get("name")) else str(old_profile["name"]),
                             "color": str(old_profile.get("color") or palette[position % len(palette)]),
-                            "voice": str(old_profile.get("voice") or speaker_voices.get(speaker) or settings.get("defaultVoice") or "system"),
+                            "voice": str(old_profile.get("voice") or speaker_voices.get(speaker) or default_speaker_voice(position, fallback_voice)),
                         }
                     settings["speakerProfiles"] = profiles
                     settings["speakerVoices"] = {key: str(value.get("voice") or "") for key, value in profiles.items()}
@@ -576,7 +583,10 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
             )
             n_box = 0
             locate_ok = False
-            locate_layout_version = 3
+            # v10: late-probe retry — rolling bilingual subs show the 2nd row
+            # only near end of segment; midpoint probe gets 1 row → small bbox.
+            # Re-probe at 85% of segment duration → catches full 2-row band.
+            locate_layout_version = 10
             srt_locator = engine == "subtitle"
             if srt_locator:
                 for seg in segments:

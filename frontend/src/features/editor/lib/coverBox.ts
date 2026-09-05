@@ -89,9 +89,17 @@ export function fitHardsubCover(
 
   // OCR commonly returns the bright glyph body only.  Never trim its top:
   // that was cutting through white/black subtitle outlines in the preview.
-  const topBleed = Math.max(pad.top, Math.round(seed.h * 0.18))
+  // When seed already spans two rows (h ≥ 1.5× one row), use minimal padding
+  // only — extra bleed would push the cover up into the caption area above.
+  const oneRowH = Math.max(fontPx * 0.9, 28)
+  const isTwoRow = seed.h >= oneRowH * 1.5
+  const topBleed = isTwoRow
+    ? Math.max(pad.top, Math.round(seed.h * 0.04))
+    : Math.max(pad.top, Math.round(seed.h * 0.18))
   const y = Math.max(0, seed.y - topBleed)
-  const botExtra = Math.max(pad.bottom, Math.round(seed.h * 0.4), Math.round(fontPx * 0.7))
+  const botExtra = isTwoRow
+    ? Math.max(pad.bottom, Math.round(seed.h * 0.06))
+    : Math.max(pad.bottom, Math.round(seed.h * 0.4), Math.round(fontPx * 0.7))
   const bottom = seed.y + seed.h + botExtra
   const h = Math.max(12, Math.min(frameH - y, bottom - y))
 
@@ -179,6 +187,14 @@ export function expandOverlappingSubtitleBand(
   if (!boxes.length) return null
   const band = boxes.reduce(unionBox)
   const rowH = Math.max(...boxes.map((box) => box.h), 1)
+  // When the union already spans multiple rows (blur-band mode where all mid
+  // segs are included), skip the aggressive topExtra — it was only needed to
+  // expand a single-row sample upward to reach the hidden second line.
+  if (band.h >= rowH * 1.6) {
+    const smallMargin = Math.round(fontPx * 0.2)
+    const y = Math.max(0, band.y - smallMargin)
+    return clampCoverBox({ ...band, y, h: band.y + band.h - y + smallMargin }, frameW, frameH)
+  }
   const topExtra = Math.max(Math.round(rowH * 0.85), Math.round(fontPx * 1.25))
   const y = Math.max(0, band.y - topExtra)
   return clampCoverBox({ ...band, y, h: band.y + band.h - y }, frameW, frameH)

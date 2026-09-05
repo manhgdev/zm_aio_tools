@@ -23,6 +23,7 @@ def _setup(tmp_path, monkeypatch):
     src = root / "source.mp4"
     src.write_bytes(b"fake-video")
     (root / "cache" / "asr.json").write_text("{}", encoding="utf-8")
+    (root / "cache" / "bbox_ocr.json").write_text("{}", encoding="utf-8")
     (root / "cache" / "preview_20.mp4").write_bytes(b"p")
     (root / "tts" / "a.wav").write_bytes(b"x")
     (root / "out" / "final.mp4").write_bytes(b"y")
@@ -54,7 +55,13 @@ def _setup(tmp_path, monkeypatch):
                     "version": 1,
                     "bbox": {"x": 0.8, "y": 0.1, "w": 0.1, "h": 0.1},
                 },
-                "settings": {"engine": "whisper"},
+                "settings": {
+                    "engine": "whisper",
+                    "blurBandMode": "auto",
+                    "blurBandAutoRegion": {"x": 0.1, "y": 0.6, "w": 0.8, "h": 0.1},
+                    "blurBandAutoRegionVersion": 1,
+                    "blurBandRegion": {"x": 0.2, "y": 0.7, "w": 0.6, "h": 0.1},
+                },
                 "status": {"step": "translate", "running": False},
                 "workVideo": str(root / "cache" / "preview_20.mp4"),
             }
@@ -83,6 +90,9 @@ def test_clear_project_cache_keeps_source(tmp_path, monkeypatch):
     assert "logoDetection" not in meta
     assert Path(meta["videoPath"]).is_file()
     assert meta["settings"]["engine"] == "whisper"
+    assert "blurBandAutoRegion" not in meta["settings"]
+    assert "blurBandAutoRegionVersion" not in meta["settings"]
+    assert meta["settings"]["blurBandRegion"] == {"x": 0.2, "y": 0.7, "w": 0.6, "h": 0.1}
 
 
 def test_clear_covers_only_keeps_segments(tmp_path, monkeypatch):
@@ -92,6 +102,10 @@ def test_clear_covers_only_keeps_segments(tmp_path, monkeypatch):
     assert src.is_file()
     # TTS file not deleted when only covers
     assert (root / "tts" / "a.wav").is_file()
+    assert not (root / "cache" / "bbox_ocr.json").exists()
+    # Recognition transcript remains available: only visual positioning cache
+    # belongs to the covers option.
+    assert (root / "cache" / "asr.json").is_file()
     meta = json.loads((root / "meta.json").read_text(encoding="utf-8"))
     assert len(meta["segments"]) == 1
     seg = meta["segments"][0]
@@ -100,3 +114,7 @@ def test_clear_covers_only_keeps_segments(tmp_path, monkeypatch):
     assert seg.get("translation") == "xin"
     assert "timelineBaseline" not in meta
     assert "logoDetection" not in meta
+    assert "blurBandAutoRegion" not in meta["settings"]
+    assert "blurBandAutoRegionVersion" not in meta["settings"]
+    # Vùng thủ công là settings do người dùng chọn, không phải OCR cache.
+    assert meta["settings"]["blurBandRegion"] == {"x": 0.2, "y": 0.7, "w": 0.6, "h": 0.1}

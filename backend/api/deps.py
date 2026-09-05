@@ -32,9 +32,13 @@ class Settings(BaseModel):
     # from coverLogo so each detected logo can be toggled independently.
     hiddenLogoTexts: list[str] = []
     coverHardsubs: bool = True
+    blurBandMode: Literal["off", "auto", "manual"] = "off"
+    blurBandRegion: dict[str, float] | None = None
+    blurBandAutoRegion: dict[str, float] | None = None
+    blurBandAutoRegionVersion: int = 0
     coverMaskStyle: str = "blur"
     coverMaskColor: str = "#4c1d95"
-    coverMaskOpacity: int = 40
+    coverMaskOpacity: int = 0
     burnSubs: bool = True
     captionPlacement: str = "above"
     subtitleFontSize: int = 0

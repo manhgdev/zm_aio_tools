@@ -339,15 +339,20 @@ def asr_paddleocr_inprocess(
     total = max(1, len(jpgs))
     n = len(jpgs)
     w_req = int(workers or 0)
-    # Auto GPU: pack VRAM RapidOCR ~450MB/job — không kẹp 2–4 khi card rảnh.
-    gpu_ocr = _rapidocr_gpu_kwargs()["det_use_cuda"]
+    # CUDA/DML can pack dedicated VRAM. CoreML shares system memory with the
+    # display, so one session is faster and avoids starving the UI.
+    gpu_kwargs = _rapidocr_gpu_kwargs()
+    gpu_ocr = bool(gpu_kwargs["det_use_cuda"] or gpu_kwargs["det_use_dml"])
+    coreml_ocr = _onnx_provider_available("CoreMLExecutionProvider")
     from pipeline.core.resources import pack_gpu_workers
 
-    if gpu_ocr:
+    if coreml_ocr:
+        gpu_cap = 1
+    elif gpu_ocr:
         gpu_cap = pack_gpu_workers(per_job_mb=450, reserve_mb=350, hard_max=20)
     else:
         gpu_cap = min(16, _cpu_budget(0.92))
-    w = _ocr_pool_workers(w_req, cap=gpu_cap, gpu=gpu_ocr)
+    w = _ocr_pool_workers(w_req, cap=gpu_cap, gpu=(gpu_ocr or coreml_ocr))
     w = max(1, min(w, n if n else 1))
     _limit_onnx_threads()
 

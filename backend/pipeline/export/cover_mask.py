@@ -81,9 +81,9 @@ def _feather_vertical_blend(
 
 
 def _blur_tint_alpha(opacity_pct: int) -> float:
-    """Tint mỏng khớp coverMaskPreviewStyle CSS: clamp(opacity%×0.28, 0.06, 0.22)."""
+    """Tint khớp coverMaskPreviewStyle CSS: clamp(opacity%×0.28, 0, 0.22)."""
     a_ui = max(0.0, min(1.0, float(opacity_pct) / 100.0))
-    return max(0.06, min(0.22, a_ui * 0.28))
+    return min(0.22, a_ui * 0.28)
 
 
 def _blur_css_radius(opacity_pct: int) -> float:
@@ -133,6 +133,7 @@ def _blur_tint_region(
     box: tuple[int, int, int, int],
     color_hex: str = "#4c1d95",
     opacity_pct: int = 40,
+    feather_px: int = 16,
 ) -> Any:
     """Render the editor's clean frosted cover without leaking old subtitle glyphs.
 
@@ -201,10 +202,10 @@ def _blur_tint_region(
     # behind the old subtitle from washing out the cover in the encoded video.
     channel_median = np.median(covered.reshape(-1, 3), axis=0)
     covered = np.minimum(covered, channel_median + 64.0)
-    # A two-pixel vertical feather prevents a hard compositing seam while the
-    # body stays fully opaque, so no source letters are visible underneath.
+    # The normal blur needs only a small seam feather. Feathered blur passes a
+    # larger value to reproduce CapCut's soft-top/soft-bottom band mask.
     roi = frame_bgr[y0:y1, x0:x1].copy()
-    _feather_vertical_blend(frame_bgr, roi, covered.astype(np.uint8), y0, y1, x0, x1)
+    _feather_vertical_blend(frame_bgr, roi, covered.astype(np.uint8), y0, y1, x0, x1, feather=feather_px)
     return frame_bgr
 
 
@@ -309,4 +310,13 @@ def _apply_cover_mask(
     if st == "mosaic":
         # ponytail: "Khối" = _blur_region cũ (median + pixelate + gaussian) — che hardsub thật
         return _blur_region(frame_bgr, box)
+    if st == "feather":
+        # 20% of the band on each side matches the preview's 20→80% mask ramp.
+        return _blur_tint_region(
+            frame_bgr,
+            box,
+            color_hex,
+            opacity_pct,
+            feather_px=max(12, round(max(1, box[3] - box[1]) * 0.2)),
+        )
     return _blur_tint_region(frame_bgr, box, color_hex, opacity_pct)

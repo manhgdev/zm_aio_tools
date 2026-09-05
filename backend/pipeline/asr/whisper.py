@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 import sys
 import tempfile
@@ -34,17 +35,30 @@ def _mlx_model_name() -> str:
     return "mlx-community/whisper-large-v3-turbo"
 
 
+def _mlx_whisper_available() -> bool:
+    """True khi ASR có thể dùng MLX trên GPU Apple, không nạp model."""
+    if (
+        sys.platform != "darwin"
+        or platform.machine().lower() not in {"arm64", "aarch64"}
+    ):
+        return False
+    try:
+        import mlx_whisper  # noqa: F401  # type: ignore[import-not-found]
+    except (ImportError, OSError, RuntimeError):
+        return False
+    return True
+
+
 def _mlx_transcribe(
     wav: "Path",
     source_lang: str,
 ) -> "list[dict] | None":
     """Transcribe bằng mlx-whisper trên Metal GPU. Trả None nếu không khả dụng."""
+    if not _mlx_whisper_available():
+        return None
     try:
         import mlx_whisper  # type: ignore[import]
-    except ImportError:
-        return None
-    import sys
-    if sys.platform != "darwin":
+    except (ImportError, OSError, RuntimeError):
         return None
     lang = None if source_lang in ("", "auto") else source_lang
     model_repo = _mlx_model_name()
@@ -235,7 +249,15 @@ def get_whisper(workers: int = 2):
 
 
 def warm_whisper(workers: int = 0) -> str:
-    """Nạp model nền (startup)."""
+    """Nạp model nền (startup), trừ MLX vốn nạp model theo lần nhận dạng."""
+    if _mlx_whisper_available():
+        try:
+            from pipeline.core.app_log import append_log
+
+            append_log("[whisper] MLX ready; skip Faster-Whisper CPU preload")
+        except Exception:
+            pass
+        return "mlx-ready"
     get_whisper(workers or 2)
     return "ok"
 
@@ -542,6 +564,13 @@ def asr_whisper_inprocess(
 
     thr = _resolve_asr_workers(workers)
     cached = whisper_loaded()
+    mlx_ready = _mlx_whisper_available()
+    if mlx_ready:
+        initial_status = "Apple GPU (MLX)"
+    elif not cached:
+        initial_status = "tải model"
+    else:
+        initial_status = "nhận dạng"
     if project_id:
         set_status(
             project_id,
@@ -550,10 +579,48 @@ def asr_whisper_inprocess(
             message=progress_msg(
                 "Whisper",
                 workers=thr,
-                extra="tải model" if not cached else "nhận dạng",
+                extra=initial_status,
             ),
             running=True,
         )
+    lang = None if source_lang in ("", "auto") else source_lang
+    try:
+        from pipeline.core.app_log import append_log
+
+        append_log("[whisper] transcribe start")
+    except Exception:
+        pass
+    # Chặn decoder lặp một token (đặc biệt tiếng Trung: "嗚嗚嗚…") rồi nuốt
+    # trọn cửa sổ 30 giây.  Penalty nhẹ giữ được tiếng đệm thật, còn n-gram=3
+    # buộc decoder thoát khỏi vòng lặp trước khi lời thoại phía sau bị mất.
+    # Faster-Whisper/CTranslate2 không hỗ trợ MPS. Trên Apple Silicon phải thử
+    # MLX trước để không nạp model CPU vô ích rồi mới nhận dạng bằng GPU.
+    if mlx_ready:
+        mlx_rows = _mlx_transcribe(wav, source_lang or "auto")
+        if mlx_rows is not None:
+            if on_progress:
+                end = max((float(row.get("end") or 0) for row in mlx_rows), default=0.0)
+                on_progress(len(mlx_rows), end)
+            try:
+                from pipeline.core.app_log import append_log
+                append_log(f"[whisper] mlx done: {len(mlx_rows)} segments (Metal GPU)")
+            except Exception:
+                pass
+            if project_id:
+                set_status(
+                    project_id,
+                    step="asr",
+                    progress=50,
+                    message=progress_msg(
+                        "Whisper xong",
+                        len(mlx_rows),
+                        workers=thr,
+                        extra="Apple GPU (MLX)",
+                    ),
+                    running=True,
+                )
+            return mlx_rows
+    # Fallback khi MLX không cài/không tải được model: CUDA nếu có, rồi CPU.
     model = get_whisper(thr)
     if project_id:
         device = getattr(getattr(model, "model", None), "device", "cpu")
@@ -572,31 +639,6 @@ def asr_whisper_inprocess(
             ),
             running=True,
         )
-    lang = None if source_lang in ("", "auto") else source_lang
-    try:
-        from pipeline.core.app_log import append_log
-
-        append_log("[whisper] transcribe start")
-    except Exception:
-        pass
-    # Chặn decoder lặp một token (đặc biệt tiếng Trung: "嗚嗚嗚…") rồi nuốt
-    # trọn cửa sổ 30 giây.  Penalty nhẹ giữ được tiếng đệm thật, còn n-gram=3
-    # buộc decoder thoát khỏi vòng lặp trước khi lời thoại phía sau bị mất.
-    # --- Apple Silicon: thử mlx-whisper trên Metal GPU trước ---
-    import sys as _sys
-    if _sys.platform == "darwin":
-        mlx_rows = _mlx_transcribe(wav, source_lang or "auto")
-        if mlx_rows is not None:
-            if on_progress:
-                end = max((float(row.get("end") or 0) for row in mlx_rows), default=0.0)
-                on_progress(len(mlx_rows), end)
-            try:
-                from pipeline.core.app_log import append_log
-                append_log(f"[whisper] mlx done: {len(mlx_rows)} segments (Metal GPU)")
-            except Exception:
-                pass
-            return mlx_rows
-    # --- Fallback: faster-whisper CPU ---
     segments, _info = model.transcribe(
         str(wav),
         language=lang,

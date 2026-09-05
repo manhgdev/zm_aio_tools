@@ -535,9 +535,18 @@ def _probe_mid_hardsub(
         is_sub = bool(src and _source_matches(text, src))
         
         if cjk < 1 or cjk > 28:
-            # Generic SRT locator has no source text to compare. Vietnamese and
-            # other Latin-script hard-subs must remain valid OCR candidates.
-            if not is_sub and not (not src and letters >= 2):
+            # Generic SRT locator (no source) or bilingual Latin hardsub:
+            # keep boxes with enough letters and horizontal span.  When source
+            # is set, matching boxes still get a much higher score (line below),
+            # so non-matching Latin rows are only accepted as fallback covers.
+            wide_enough = False
+            try:
+                xs = [float(p[0]) for p in row[0]]
+                box_w = max(xs) - min(xs)
+                wide_enough = box_w > (x1 - x0) * 0.20
+            except Exception:
+                pass
+            if not is_sub and not (letters >= 3 and wide_enough):
                 continue
         # mảnh quá thiếu so với Whisper — bỏ; dòng dài hơn thì GIỮ (Whisper cắt nửa hardsub)
         if not is_sub and src_cjk >= 3 and cjk < max(2, int(src_cjk * 0.55)):
@@ -580,7 +589,10 @@ def _probe_mid_hardsub(
                     score += 14 + (bw / max(1, w)) * 10
             else:
                 sim = float(_ocr_sim(text, src) or 0)
-                min_sim = 0.28 if src_cjk <= 8 else 0.42
+                # For pure-Latin source (English ASR, src_cjk=0), the OCR row
+                # may be a Vietnamese translation — text will never match source.
+                # Skip the sim gate; keep a low score so matching rows still win.
+                min_sim = 0.0 if src_cjk == 0 else (0.28 if src_cjk <= 8 else 0.42)
                 if sim < min_sim:
                     continue
                 score = sim * 22 + cjk - abs(cjk - src_cjk) * 2
@@ -606,6 +618,26 @@ def _probe_mid_hardsub(
                 ux1 = max(ux1, bx1)
                 uy1 = max(uy1, by1)
         best_bb = (ux0, uy0, ux1, uy1)
+
+    # Bilingual hard-subs: translated row above (VI) + Whisper may split one
+    # sentence into two segments each matching a different hardsub row (below).
+    # Union adjacent rows in BOTH directions so the cover hides all rows that
+    # appear simultaneously.  Only extend Y — keep X of the matched row.
+    bx0, by0, bx1, by1 = best_bb
+    row_h = max(1, by1 - by0)
+    all_boxes = [(sc, bb2, tx) for sc, bb2, tx in cands if bb2 != best_bb]
+    for _sc, bb2, _tx in all_boxes:
+        ax0, ay0, ax1, ay1 = bb2
+        overlap_x = min(bx1, ax1) - max(bx0, ax0)
+        if overlap_x <= row_h * 0.3:
+            continue
+        gap_above = by0 - ay1   # positive = bb2 is above best_bb
+        gap_below = ay0 - by1   # positive = bb2 is below best_bb
+        if 0 <= gap_above <= row_h * 1.4:
+            by0 = min(by0, ay0)  # extend upward
+        elif 0 <= gap_below <= row_h * 1.4:
+            by1 = max(by1, ay1)  # extend downward (Whisper split row)
+    best_bb = (bx0, by0, bx1, by1)
         
     return best_score, best_bb, best_text
 
@@ -705,13 +737,18 @@ def _apply_caption_box(
     oh = max(1, y1 - y0)
     lay = str(seg.get("layout") or "")
     if lay not in ("vertical", "label"):
-        # ponytail: cap abnormal single-lane OCR polygons; if multi-row source
-        # captions are supported later, derive this from the individual rows.
+        # ponytail: cap abnormal single-lane OCR polygons.  For multi-row
+        # hard-subs (long source that wraps at large fonts) OCR often returns
+        # only the louder row; clamping to 1-row-cap hides the other row.
+        # Allow 2× for source text long enough to wrap (≥12 glyph+alpha chars).
+        source = str(seg.get("source") or "")
+        glyphs = _caption_glyph_len(source) + sum(c.isalpha() for c in source)
         max_caption_h = max(24, int(round(min(fw, fh) * 0.085)))
-        if oh > max_caption_h:
-            y0 = max(0, min(fh - max_caption_h, int(round(cy - max_caption_h * 0.5))))
-            y1 = y0 + max_caption_h
-            oh = max_caption_h
+        max_h = max_caption_h * 2 if glyphs >= 12 else max_caption_h
+        if oh > max_h:
+            y0 = max(0, min(fh - max_h, int(round(cy - max_h * 0.5))))
+            y1 = y0 + max_h
+            oh = max_h
     if lay == "vertical":
         pad_x = max(12, int(round(fw * 0.015)), int(round(ow * 0.15)))
         pad_top = max(12, int(round(fh * 0.015)), int(round(oh * 0.05)))
@@ -1230,6 +1267,59 @@ def attach_speech_hardsub_boxes_inprocess(
             seg.pop("captionLayout", None)
             attach_cover_times(seg, video_end=video_end)
             attached += 1
+
+        # Late-probe retry: for rolling bilingual subs the second row appears
+        # near the END of the segment.  Midpoint probe only sees 1 row → bbox.h
+        # is small.  Re-probe at late point (85% through) so the full 2-row
+        # band is visible.  Only retry if we got a 1-row result (h < 1.3×cap).
+        max_cap_1row = max(24, int(round(min(fw, fh) * 0.085)))
+        late_retry_segs: list[tuple[int, float]] = []
+        for si, stable_box in sorted(anchor_hits.items()):
+            seg = filtered[si]
+            bb = seg.get("bbox")
+            if not isinstance(bb, dict):
+                continue
+            bh = float(bb.get("h") or 0)
+            if bh < max_cap_1row * 1.3:  # looks like 1-row only
+                s0 = float(seg.get("start") or 0)
+                e0 = float(seg.get("end") or s0)
+                dur = max(0.0, e0 - s0)
+                if dur >= 0.4:
+                    late_t = s0 + dur * 0.85
+                    late_retry_segs.append((si, late_t))
+        if late_retry_segs:
+            late_by_idx: dict[int, list[tuple[int, float]]] = {}
+            for si, t in late_retry_segs:
+                late_by_idx.setdefault(max(0, int(round(t * fps))), []).append((si, t))
+            for idx, frame in _decode_frames_batch(
+                Path(video),
+                [t for _si, t in late_retry_segs],
+                fps,
+                fw,
+                fh,
+                use_cuda=False,
+                project_id=project_id,
+            ):
+                check_cancel(project_id)
+                for si, t in late_by_idx.get(idx, []):
+                    seg = filtered[si]
+                    try:
+                        hit = _ocr_probe(
+                            t,
+                            frame,
+                            str(seg.get("source") or "").strip(),
+                            str(seg.get("layout") or "horizontal"),
+                            lane_region,
+                        )
+                    except Exception:
+                        hit = None
+                    if hit:
+                        new_box = hit[2]
+                        # Only upgrade if taller than current bbox
+                        cur_bb = seg.get("bbox") or {}
+                        if float(new_box[3] - new_box[1]) > float(cur_bb.get("h") or 0) * 1.2:
+                            _apply_caption_box(seg, new_box, fw, fh)
+                            attach_cover_times(seg, video_end=video_end)
         _report(len(anchor_hits), len(anchor_hits))
     finally:
         cap.release()

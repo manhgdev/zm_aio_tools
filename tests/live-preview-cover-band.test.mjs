@@ -17,11 +17,13 @@ async function loadExpandOverlappingSubtitleBand() {
 
 test('Live Preview expands overlapping one-row OCR boxes into a two-row subtitle band', async () => {
   const expandOverlappingSubtitleBand = await loadExpandOverlappingSubtitleBand()
-
-  assert.deepEqual(expandOverlappingSubtitleBand([
+  const band = expandOverlappingSubtitleBand([
     { x: 0, y: 1411, w: 1080, h: 90 },
     { x: 180, y: 1411, w: 714, h: 90 },
-  ], 1080, 1920, 48), {
+  ], 1080, 1920, 48)
+
+  assert.ok(band)
+  assert.deepEqual({ ...band }, {
     x: 0,
     y: 1334,
     w: 1080,

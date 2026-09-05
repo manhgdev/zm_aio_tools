@@ -92,6 +92,50 @@
 .analysis-roi-handle-e { right: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
 .analysis-roi-handle-w { left: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
 
+/* Manual persistent blur band: same direct manipulation model as OCR ROI. */
+.blur-band-roi {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  border: 2px solid #a855f7;
+  background: rgb(168 85 247 / 14%);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 18%);
+  cursor: move;
+  touch-action: none;
+  border-radius: 4px;
+}
+
+.blur-band-roi-label {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #f3e8ff;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+  user-select: none;
+}
+
+.blur-band-roi-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #a855f7;
+  border: 1px solid #581c87;
+  border-radius: 2px;
+  z-index: 5;
+}
+
+.blur-band-roi-handle-nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.blur-band-roi-handle-ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.blur-band-roi-handle-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.blur-band-roi-handle-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.blur-band-roi-handle-n { left: 50%; top: -5px; margin-left: -5px; cursor: ns-resize; }
+.blur-band-roi-handle-s { left: 50%; bottom: -5px; margin-left: -5px; cursor: ns-resize; }
+.blur-band-roi-handle-e { right: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+.blur-band-roi-handle-w { left: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+
 .preview.has-roi video {
   /* controls vẫn dùng được; ROI nằm trên phần hình */
   pointer-events: auto;
@@ -201,9 +245,12 @@
   border-color: var(--primary);
 }
 
-/* Keep the original compact control metrics and only normalize the native
-   macOS arrow, which WKWebView otherwise places too low. */
-.platform-macos .sidebar .field select {
+/* Keep the original compact control metrics and normalize every select arrow
+   in the sidebar. WKWebView otherwise renders the OCR/workers arrows lower
+   than the regular fields. */
+.platform-macos .sidebar .field select,
+.platform-macos .sidebar .blur-zone-select,
+.platform-macos .sidebar .workers-setting select {
   -webkit-appearance: none;
   appearance: none;
   box-sizing: border-box;
@@ -756,10 +803,6 @@
   background: var(--surface);
 }
 
-.locate-logo-filter .audio-filter-toggle:last-child {
-  border-left: 1px solid var(--line);
-}
-
 .locate-logo-filter .audio-filter-toggle input {
   order: initial;
   flex: 0 0 auto;
@@ -771,6 +814,39 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Blur uses the same two-column card grid as locate/remove-logo. */
+.blur-zone-control {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.blur-zone-select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 30px 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.blur-zone-select:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 42%, transparent);
+}
+
+@media (max-width: 560px) {
+  .blur-zone-control {
+    grid-template-columns: 1fr;
+  }
+
 }
 
 .audio-filter-options {

@@ -60,6 +60,71 @@ from .render import (  # noqa: F401
 )
 
 
+def _persistent_blur_band_segment(
+    segments: list[dict[str, Any]],
+    *,
+    mode: str,
+    region: dict[str, float] | None,
+    auto_region: dict[str, float] | None,
+    width: int,
+    height: int,
+    duration: float,
+    style: str,
+    color: str,
+    opacity: int,
+) -> dict[str, Any] | None:
+    """Make the persistent blur band a normal mask-only cue for every renderer."""
+    if mode not in ("auto", "manual") or width < 8 or height < 8 or duration <= 0:
+        return None
+    # Auto captures the OCR-derived band once.  It must no longer follow later
+    # caption-bbox edits, otherwise two independent editor tools move together.
+    fixed_region = region if mode == "manual" else auto_region
+    if fixed_region is not None:
+        try:
+            x = round(float(fixed_region.get("x", 0)) * width)
+            y = round(float(fixed_region.get("y", 0)) * height)
+            w = round(float(fixed_region.get("w", 0)) * width)
+            h = round(float(fixed_region.get("h", 0)) * height)
+        except (TypeError, ValueError):
+            return None
+    else:
+        boxes: list[tuple[int, int, int, int]] = []
+        for segment in segments:
+            if segment.get("maskOnly") or str(segment.get("layout") or "horizontal") in ("vertical", "label"):
+                continue
+            box = _segment_bbox_override(segment, width, height)
+            if box is not None:
+                boxes.append(box)
+        if not boxes:
+            return None
+        # Do not union every OCR box: minor detection drift makes that region
+        # grow through the entire video. A median bbox is the stable lane.
+        median = lambda values: sorted(values)[len(values) // 2]
+        x = median([box[0] for box in boxes])
+        y = median([box[1] for box in boxes])
+        w = median([box[2] - box[0] for box in boxes])
+        h = median([box[3] - box[1] for box in boxes])
+    x = max(0, min(width - 1, x))
+    y = max(0, min(height - 1, y))
+    w = max(0, min(width - x, w))
+    h = max(0, min(height - y, h))
+    if w < 8 or h < 8:
+        return None
+    return {
+        "id": "__persistent_blur_band__",
+        "start": 0.0,
+        "end": duration,
+        "translation": "",
+        "source": "",
+        "layout": "mid",
+        "maskOnly": True,
+        "bbox": {"x": x, "y": y, "w": w, "h": h},
+        "coverMaskStyle": style,
+        "coverMaskColor": color,
+        "coverMaskOpacity": opacity,
+    }
+
+
 def cover_and_burn(
     video: Path,
     segments: list[dict[str, Any]],
@@ -74,7 +139,7 @@ def cover_and_burn(
     caption_placement: str = "below",
     cover_mask_style: str = "blur",
     cover_mask_color: str = "#4c1d95",
-    cover_mask_opacity: int = 40,
+    cover_mask_opacity: int = 0,
     caption_text_color: str = "#ffffff",
     caption_bg_style: str = "none",
     caption_bg_color: str = "#000000",
@@ -85,6 +150,9 @@ def cover_and_burn(
     video_scale_x: float = 100.0,
     video_scale_y: float = 100.0,
     render_info: dict[str, Any] | None = None,
+    blur_band_mode: str = "off",
+    blur_band_region: dict[str, float] | None = None,
+    blur_band_auto_region: dict[str, float] | None = None,
 ) -> Path:
     """cover = blur hardsub; burn = đè chữ dịch. placement: below|above khi không cover.
 
@@ -114,10 +182,10 @@ def cover_and_burn(
     if place not in ("below", "above"):
         place = "below"
     mask_style = (cover_mask_style or "blur").lower()
-    if mask_style not in ("blur", "solid", "mosaic"):
+    if mask_style not in ("blur", "feather", "solid", "mosaic"):
         mask_style = "blur"
     mask_color = str(cover_mask_color or "#4c1d95")
-    mask_opacity = max(0, min(100, int(cover_mask_opacity if cover_mask_opacity is not None else 40)))
+    mask_opacity = max(0, min(100, int(cover_mask_opacity if cover_mask_opacity is not None else 0)))
     cap_fill_hex = str(caption_text_color or "#ffffff")
     cap_bg_style = str(caption_bg_style or "none").lower()
     if cap_bg_style not in ("none", "solid", "blur", "box"):
@@ -134,6 +202,22 @@ def cover_and_burn(
     cues: list[tuple[float, float, float, float, str, str, str]] = []
     cue_segment_ids: list[str] = []
     _is_mask_only: list[bool] = []
+    # vid_dur needed early to set mid hardsub cover to full video span.
+    vid_dur = ffprobe_duration(video) or 0.0
+    persistent_band = _persistent_blur_band_segment(
+        segments,
+        mode=str(blur_band_mode or "off").lower(),
+        region=blur_band_region,
+        auto_region=blur_band_auto_region,
+        width=w,
+        height=h,
+        duration=vid_dur,
+        style=mask_style,
+        color=mask_color,
+        opacity=mask_opacity,
+    )
+    if persistent_band is not None:
+        segments.append(persistent_band)
     for seg in segments:
         raw = (seg.get("translation") or "").strip()
         source = (seg.get("source") or "").strip()
@@ -167,8 +251,14 @@ def cover_and_burn(
             cover_start, cover_end = resolve_cover_window(seg)
             burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
         elif layout == "mid":
-            cover_start, cover_end = resolve_cover_window(seg)
-            burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
+            # blurBandMode=off: per-segment cover; auto/manual: full-video blur band.
+            if (blur_band_mode or 'off') == 'off':
+                cover_start, cover_end = resolve_cover_window(seg)
+                burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
+            else:
+                cover_start = 0.0
+                cover_end = vid_dur if vid_dur > 0 else max(resolve_cover_window(seg)[1], e0 + 0.5)
+                burn_start, burn_end = max(0.0, s0), max(e0, s0 + 0.04)
         else:
             # Cover nới để che hardsub; BURN chữ dịch = clip timeline [start,end)
             cover_start, cover_end = resolve_cover_window(seg)
@@ -249,7 +339,6 @@ def cover_and_burn(
 
     # Extend cover of the last horizontal cue to video end if there's a small gap
     # — hardsub often lingers after the last ASR segment ends.
-    vid_dur = ffprobe_duration(video) or 0.0
     if cues and vid_dur > 0:
         last_horz = -1
         for i in range(len(cues) - 1, -1, -1):
@@ -854,7 +943,14 @@ def cover_and_burn(
     # không khả thi / lỗi → đường Python cũ vẫn nguyên.
     from .ffgraph import try_render_ffmpeg
 
-    if try_render_ffmpeg(
+    has_feathered_blur = mask_style == "feather" or any(
+        str(segment.get("coverMaskStyle") or "").lower() == "feather"
+        for segment in segments_by_id.values()
+    )
+    # ponytail: feathered blur needs a spatial alpha mask. Keep it on the
+    # pixel-accurate renderer until the FFmpeg graph grows the same mask;
+    # this trades speed for matching the soft CapCut edge in exported video.
+    if not has_feathered_blur and try_render_ffmpeg(
         video,
         out,
         cues=cues,

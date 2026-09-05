@@ -2,11 +2,12 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import type { JobStatus, ProjectSettings } from '@/features/project/project.types'
 import { api } from '@/features/project/project.api'
 import { localize, useLocale } from '@/app/i18n'
-import { availableTranslators, normalizeTranslatorForEngine } from '@/app/appSettings'
+import { normalizeTranslatorForEngine, translatorOptions } from '@/app/appSettings'
 
 type AnalysisRegion = { x: number; y: number; w: number; h: number }
 
 const DEFAULT_ANALYSIS_REGION: AnalysisRegion = { x: 0.05, y: 0.55, w: 0.9, h: 0.28 }
+const DEFAULT_BLUR_BAND_REGION: AnalysisRegion = { x: 0.08, y: 0.72, w: 0.84, h: 0.16 }
 
 function clampRegion(r: AnalysisRegion): AnalysisRegion {
   const x = Math.max(0, Math.min(0.95, r.x))
@@ -194,6 +195,7 @@ export default function Sidebar({
     onSubtitleApplied?.(applied.segments, applied.settings)
   }
   const regionDragRef = useRef<{
+    target: 'analysis' | 'blur'
     mode: 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'
     startX: number
     startY: number
@@ -218,6 +220,17 @@ export default function Sidebar({
         }
       : DEFAULT_ANALYSIS_REGION,
   )
+  const showManualBlurRoi = settings.blurBandMode === 'manual' && Boolean(videoUrl) && !busy
+  const blurBandRegion = clampRegion(
+    settings.blurBandRegion && typeof settings.blurBandRegion === 'object'
+      ? {
+          x: numOr(settings.blurBandRegion.x, DEFAULT_BLUR_BAND_REGION.x),
+          y: numOr(settings.blurBandRegion.y, DEFAULT_BLUR_BAND_REGION.y),
+          w: numOr(settings.blurBandRegion.w, DEFAULT_BLUR_BAND_REGION.w),
+          h: numOr(settings.blurBandRegion.h, DEFAULT_BLUR_BAND_REGION.h),
+        }
+      : DEFAULT_BLUR_BAND_REGION,
+  )
 
   useEffect(() => {
     if (!settings.stableCaptionLocate) return
@@ -227,7 +240,14 @@ export default function Sidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only seed once when toggled on
   }, [settings.stableCaptionLocate])
 
+  useEffect(() => {
+    if (settings.blurBandMode !== 'manual' || settings.blurBandRegion) return
+    onSettings({ ...settings, blurBandRegion: { ...DEFAULT_BLUR_BAND_REGION } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed only when manual mode is selected
+  }, [settings.blurBandMode])
+
   function beginRegionDrag(
+    target: 'analysis' | 'blur',
     mode: NonNullable<typeof regionDragRef.current>['mode'],
     e: ReactPointerEvent,
   ) {
@@ -237,10 +257,11 @@ export default function Sidebar({
     if (!shell || busy) return
     const rect = shell.getBoundingClientRect()
     regionDragRef.current = {
+      target,
       mode,
       startX: e.clientX,
       startY: e.clientY,
-      origin: { ...analysisRegion },
+      origin: target === 'analysis' ? { ...analysisRegion } : { ...blurBandRegion },
       boxW: Math.max(1, rect.width),
       boxH: Math.max(1, rect.height),
     }
@@ -269,7 +290,10 @@ export default function Sidebar({
           h = drag.origin.h - dy
         }
       }
-      onSettings({ ...settings, analysisRegion: clampRegion({ x, y, w, h }) })
+      const next = clampRegion({ x, y, w, h })
+      onSettings(drag.target === 'analysis'
+        ? { ...settings, analysisRegion: next }
+        : { ...settings, blurBandRegion: next })
     }
     const onUp = () => {
       regionDragRef.current = null
@@ -392,15 +416,37 @@ export default function Sidebar({
               width: `${analysisRegion.w * 100}%`,
               height: `${analysisRegion.h * 100}%`,
             }}
-            onPointerDown={(e) => beginRegionDrag('move', e)}
-            title="Kéo di chuyển — góc/cạnh để resize. OCR chỉ quét trong khung này."
+            onPointerDown={(e) => beginRegionDrag('analysis', 'move', e)}
+            title={t('Kéo di chuyển — góc/cạnh để co giãn. OCR chỉ quét trong khung này.', 'Drag to move — use edges/corners to resize. OCR scans only inside this frame.')}
           >
-            <span className="analysis-roi-label">Vùng định vị chữ</span>
+            <span className="analysis-roi-label">{t('Vùng định vị chữ', 'Text detection zone')}</span>
             {(['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'] as const).map((h) => (
               <i
                 key={h}
                 className={`analysis-roi-handle analysis-roi-handle-${h}`}
-                onPointerDown={(e) => beginRegionDrag(h, e)}
+                onPointerDown={(e) => beginRegionDrag('analysis', h, e)}
+              />
+            ))}
+          </div>
+        )}
+        {showManualBlurRoi && (
+          <div
+            className="blur-band-roi"
+            style={{
+              left: `${blurBandRegion.x * 100}%`,
+              top: `${blurBandRegion.y * 100}%`,
+              width: `${blurBandRegion.w * 100}%`,
+              height: `${blurBandRegion.h * 100}%`,
+            }}
+            onPointerDown={(e) => beginRegionDrag('blur', 'move', e)}
+            title={t('Kéo để di chuyển vùng làm mờ — dùng góc/cạnh để co giãn.', 'Drag to move the blur zone — use edges/corners to resize.')}
+          >
+            <span className="blur-band-roi-label">{t('Vùng làm mờ', 'Blur zone')}</span>
+            {(['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'] as const).map((h) => (
+              <i
+                key={h}
+                className={`blur-band-roi-handle blur-band-roi-handle-${h}`}
+                onPointerDown={(e) => beginRegionDrag('blur', h, e)}
               />
             ))}
           </div>
@@ -496,10 +542,7 @@ export default function Sidebar({
               set('translator', e.target.value as ProjectSettings['translator'])
             }
           >
-            <option value="google">Google Translate</option>
-            <option value="mymemory">MyMemory</option>
-            <option value="tiktok">TikTok Translate</option>
-            {availableTranslators(settings.engine).map((id) => <option key={id} value={id}>{id === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : id === 'grok' ? 'Grok (xAI)' : id === 'groq' ? 'Groq' : id === 'nvidia' ? 'NVIDIA NIM' : id}</option>)}
+            {translatorOptions(settings.engine).map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
           </select>
         </Field>
       </div>
@@ -742,6 +785,39 @@ export default function Sidebar({
             }}
           />
         </label>
+        <div className="blur-zone-control">
+          <label
+            className="audio-filter-toggle blur-zone-toggle"
+            title={t(
+              'Thêm vùng làm mờ cố định chạy suốt video (che hardsub / watermark phía dưới).',
+              'Add a persistent blur band across the full video (covers hardsubs / bottom watermarks).',
+            )}
+          >
+            <span className="field-label">
+              <IconLayers size={14} />
+              {t('Vùng làm mờ', 'Blur zone')}
+            </span>
+            <input
+              type="checkbox"
+              checked={(settings.blurBandMode ?? 'off') !== 'off'}
+              disabled={busy}
+              onChange={(e) => {
+                if (!busy) onSettings({ ...settings, blurBandMode: e.target.checked ? 'auto' : 'off' })
+              }}
+            />
+          </label>
+          {(settings.blurBandMode ?? 'off') !== 'off' && (
+            <select
+              className="blur-zone-select"
+              value={settings.blurBandMode ?? 'auto'}
+              disabled={busy}
+              onChange={(e) => onSettings({ ...settings, blurBandMode: e.target.value as 'auto' | 'manual' })}
+            >
+              <option value="auto">{t('Tự động (OCR)', 'Auto (OCR)')}</option>
+              <option value="manual">{t('Thủ công (kéo khung)', 'Manual (drag frame)')}</option>
+            </select>
+          )}
+        </div>
       </div>
 
       <div className="audio-filter audio-feature-filter">

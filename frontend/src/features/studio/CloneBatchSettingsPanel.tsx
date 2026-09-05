@@ -1,5 +1,5 @@
 import { localize, useLocale } from '@/app/i18n'
-import { applyEngineProfile, availableTranslators, normalizeTranslatorForEngine, snapshotEngineProfile } from '@/app/appSettings'
+import { applyEngineProfile, normalizeTranslatorForEngine, snapshotEngineProfile, translatorOptions } from '@/app/appSettings'
 import type { ProjectSettings } from '@/features/project/project.types'
 
 type Voice = { id: string; name: string }
@@ -81,10 +81,7 @@ export function CloneBatchSettingsPanel({ settings, voices, onChange }: Props) {
             value={settings.translator}
             onChange={(e) => set('translator', e.target.value as ProjectSettings['translator'])}
           >
-            <option value="google">Google Translate</option>
-            <option value="mymemory">MyMemory</option>
-            <option value="tiktok">TikTok Translate</option>
-            {availableTranslators(settings.engine).map((id) => <option key={id} value={id}>{id === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : id === 'grok' ? 'Grok (xAI)' : id === 'groq' ? 'Groq' : id === 'nvidia' ? 'NVIDIA NIM' : id}</option>)}
+            {translatorOptions(settings.engine).map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
           </select>
         </label>
 
@@ -133,6 +130,41 @@ export function CloneBatchSettingsPanel({ settings, voices, onChange }: Props) {
             <option value="above">{t('Chèn bản dịch phía trên', 'Place translation above')}</option>
             <option value="none">{t('Không chèn chữ dịch', 'Do not burn translated text')}</option>
           </select>
+        </label>
+
+        <label className="blur-band-label">
+          <span>{t('Vùng làm mờ cố định', 'Persistent blur zone')}</span>
+          <div className="blur-band-controls">
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                id="blurBandEnabled"
+                checked={(settings.blurBandMode ?? 'off') !== 'off'}
+                onChange={(e) =>
+                  set('blurBandMode', e.target.checked ? 'auto' : 'off')
+                }
+              />
+              {t('Bật vùng làm mờ (chạy suốt video)', 'Enable blur band (full video)')}
+            </label>
+            {(settings.blurBandMode ?? 'off') !== 'off' && (
+              <select
+                id="blurBandMode"
+                value={settings.blurBandMode ?? 'auto'}
+                onChange={(e) => set('blurBandMode', e.target.value as 'auto' | 'manual')}
+              >
+                <option value="auto">{t('Tự động (phát hiện qua OCR)', 'Auto (OCR-detected)')}</option>
+                <option value="manual">{t('Thủ công (kéo chọn trong preview)', 'Manual (drag in preview)')}</option>
+              </select>
+            )}
+            {settings.blurBandMode === 'manual' && (
+              <small className="blur-band-hint">
+                {t(
+                  'Vào trình chỉnh sửa → kéo khung "Vùng làm mờ" để định vị.',
+                  'Go to the editor → drag the "Blur zone" frame to position it.',
+                )}
+              </small>
+            )}
+          </div>
         </label>
 
         <label>

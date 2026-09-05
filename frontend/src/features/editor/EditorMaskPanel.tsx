@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProjectSettings, Segment } from '@/features/project/project.types'
 import { localize, useLocale } from '@/app/i18n'
 import { cn } from '@/shared/lib/cn'
@@ -16,6 +16,8 @@ type Props = {
   busy: boolean
   settings: ProjectSettings
   onSettings: (next: ProjectSettings) => void
+  /** Paint only while the slider is dragged; persist after the gesture ends. */
+  onPreviewCoverMaskOpacity: (opacity: number) => void
   coverMaskStyle: string
   coverMaskColor: string
   coverMaskOpacity: number
@@ -41,6 +43,7 @@ export function EditorMaskPanel({
   busy,
   settings,
   onSettings,
+  onPreviewCoverMaskOpacity,
   coverMaskStyle,
   coverMaskColor,
   coverMaskOpacity,
@@ -63,6 +66,29 @@ export function EditorMaskPanel({
   const [applyMode, setApplyMode] = useState<'full' | 'range'>('full')
   const [fromSec, setFromSec] = useState(0)
   const [toSec, setToSec] = useState(0)
+  const [opacityDraft, setOpacityDraft] = useState(coverMaskOpacity)
+  const opacityDraftRef = useRef(coverMaskOpacity)
+  const opacityGestureRef = useRef(false)
+
+  useEffect(() => {
+    if (opacityGestureRef.current) return
+    opacityDraftRef.current = coverMaskOpacity
+    setOpacityDraft(coverMaskOpacity)
+  }, [coverMaskOpacity])
+
+  function previewOpacity(next: number) {
+    opacityGestureRef.current = true
+    opacityDraftRef.current = next
+    setOpacityDraft(next)
+    onPreviewCoverMaskOpacity(next)
+  }
+
+  function commitOpacity() {
+    if (!opacityGestureRef.current) return
+    opacityGestureRef.current = false
+    const next = opacityDraftRef.current
+    if (next !== coverMaskOpacity) onSettings({ ...settings, coverMaskOpacity: next })
+  }
 
   useEffect(() => {
     if (dur <= 0) return
@@ -94,6 +120,7 @@ export function EditorMaskPanel({
   const hasMask = Boolean(maskBox)
   const styleLabel = (id: string) => {
     if (id === 'blur') return localize(locale, 'Làm mờ', 'Blur')
+    if (id === 'feather') return localize(locale, 'Mờ tan mép', 'Feathered blur')
     if (id === 'solid') return localize(locale, 'Màu nền', 'Solid')
     if (id === 'mosaic') return localize(locale, 'Khối', 'Mosaic')
     return id
@@ -184,7 +211,7 @@ export function EditorMaskPanel({
           <h3 className="text-sm font-semibold text-foreground">{localize(locale, 'Kiểu che', 'Mask style')}</h3>
           <p className="mt-1 text-xs text-muted-foreground">{localize(locale, 'Chọn cách xử lý cho vùng chữ gốc.', 'Choose how the original text area is treated.')}</p>
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {COVER_MASK_STYLES.map(({ id }) => (
             <button
               key={id}
@@ -206,7 +233,7 @@ export function EditorMaskPanel({
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
               <label className="font-medium text-foreground">{localize(locale, 'Màu phủ và độ đậm', 'Tint and opacity')}</label>
-              <span className="tabular-nums text-muted-foreground">{coverMaskOpacity}%</span>
+              <span className="tabular-nums text-muted-foreground">{opacityDraft}%</span>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -223,10 +250,14 @@ export function EditorMaskPanel({
                 max={100}
                 step={1}
                 className="min-w-0 flex-1 accent-primary"
-                value={coverMaskOpacity}
+                value={opacityDraft}
                 disabled={busy}
                 aria-label={localize(locale, 'Độ đậm vùng che', 'Mask opacity')}
-                onChange={(e) => onSettings({ ...settings, coverMaskOpacity: Number(e.target.value) })}
+                onInput={(e) => previewOpacity(Number(e.currentTarget.value))}
+                onPointerUp={commitOpacity}
+                onPointerCancel={commitOpacity}
+                onBlur={commitOpacity}
+                onKeyUp={commitOpacity}
               />
             </div>
           </div>

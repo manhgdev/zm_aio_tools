@@ -558,7 +558,7 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
                         caption_placement=str(caption_flags["captionPlacement"]),
                         cover_mask_style=str(settings.get("coverMaskStyle") or "blur"),
                         cover_mask_color=str(settings.get("coverMaskColor") or "#000000"),
-                        cover_mask_opacity=int(settings.get("coverMaskOpacity", 60)),
+                        cover_mask_opacity=int(settings.get("coverMaskOpacity", 0)),
                         caption_text_color=str(settings.get("captionTextColor") or "#ffffff"),
                         caption_bg_style=str(settings.get("captionBgStyle") or "none"),
                         caption_bg_color=str(settings.get("captionBgColor") or "#000000"),

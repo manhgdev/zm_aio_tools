@@ -141,7 +141,7 @@ def build_text_overlay_cues(
                     "skipCoverMask": False,
                     "coverMaskStyle": str(item.get("maskStyle") or "blur"),
                     "coverMaskColor": str(item.get("maskColor") or "#4c1d95"),
-                    "coverMaskOpacity": int(item.get("maskOpacity") if item.get("maskOpacity") is not None else 40),
+                    "coverMaskOpacity": int(item.get("maskOpacity") if item.get("maskOpacity") is not None else 0),
                 }
             )
             continue

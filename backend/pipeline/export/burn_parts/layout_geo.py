@@ -120,9 +120,17 @@ def _fit_hardsub_box(
     # ``seed`` là hộp OCR nên có thể đã thiếu stroke phía trên. Không được
     # dùng top_slack để co hộp xuống: chính nó làm lộ nửa trên phụ đề gốc ở
     # một số part. Nới đều theo chiều cao glyph, với mức tối thiểu từ UI.
-    top_bleed = max(pad_top, int(round(sh * 0.18)))
+    # When seed already spans two rows (sh ≥ 1.5× one row), use minimal padding
+    # — extra bleed would push the cover into the caption zone above.
+    one_row_h = max(int(round(font_size * 0.9)), 28)
+    is_two_row = sh >= int(round(one_row_h * 1.5))
+    if is_two_row:
+        top_bleed = max(pad_top, int(round(sh * 0.04)))
+        bot_extra = max(pad_bot, int(round(sh * 0.06)))
+    else:
+        top_bleed = max(pad_top, int(round(sh * 0.18)))
+        bot_extra = max(pad_bot, int(round(sh * 0.4)), int(round(font_size * 0.7)))
     y0 = max(0, sy0 - top_bleed)
-    bot_extra = max(pad_bot, int(round(sh * 0.4)), int(round(font_size * 0.7)))
     y1 = min(frame_h, sy1 + bot_extra)
     x0 = max(0, int(round(cx - w / 2)))
     x1 = min(frame_w, x0 + w)

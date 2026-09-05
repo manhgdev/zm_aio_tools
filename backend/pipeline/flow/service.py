@@ -905,6 +905,24 @@ class FlowService:
                     return True
             return False
 
+        async def _model_pill_matches(target_model: str) -> bool:
+            """True when the visible model pill already shows the desired model."""
+            loc = page.locator('button[aria-haspopup="menu"]').filter(has_text=family)
+            for index in range(await loc.count()):
+                candidate = loc.nth(index)
+                if await candidate.is_visible():
+                    text = (await candidate.inner_text()).strip()
+                    if _match_model_choice(target_model, text):
+                        return True
+            return False
+
+        # Fast path: if the pill already shows the correct model, settings are already
+        # applied — skip opening the settings panel (avoids the flaky pill-click flow
+        # that errors when the same settings are re-selected).
+        if await _model_pill_matches(model):
+            _log.info("_prepare_ui_model: %s model pill already correct — skipping settings panel", kind)
+            return
+
         mode_tab = await _visible_mode_tab()
         if mode_tab is None:
             for attempt in range(3):

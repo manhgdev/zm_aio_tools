@@ -6,7 +6,7 @@ import React from 'react'
 import type { ProjectSettings, Segment, TextOverlay } from '@/features/project/project.types'
 import { resolvedSpeakerProfiles, speakerRoleOptions } from '@/features/project/speakerProfiles'
 import { localize, useLocale } from '@/app/i18n'
-import { availableTranslators, normalizeTranslatorForEngine } from '@/app/appSettings'
+import { normalizeTranslatorForEngine, translatorOptions } from '@/app/appSettings'
 import { cn } from '@/shared/lib/cn'
 import { IconHeadphones } from '@/shared/components/Icons'
 import { ScrollArea } from '@/shared/ui/scroll-area'
@@ -49,6 +49,8 @@ type Props = {
   segments: Segment[]
   settings: ProjectSettings
   onSettings: (settings: ProjectSettings) => void
+  onPreviewCoverMaskOpacity: (opacity: number) => void
+  onPreviewEffectOpacity: (overlay: TextOverlay, opacity: number) => void
   /** Retained for the hidden compatibility views; project actions render on the left rail. */
   onRunPipeline?: (previewSec: number, settingsOverride?: ProjectSettings) => void | Promise<void>
   onCancel?: () => void
@@ -152,6 +154,8 @@ export function EditorPropertiesPanel({
   segments,
   settings,
   onSettings,
+  onPreviewCoverMaskOpacity,
+  onPreviewEffectOpacity,
   onRunPipeline,
   onCancel,
   onOpenExport,
@@ -235,6 +239,53 @@ export function EditorPropertiesPanel({
 }: Props) {
   const { locale } = useLocale()
   const t = (vi: string, en: string) => localize(locale, vi, en)
+  const [coverMaskOpacityDraft, setCoverMaskOpacityDraft] = React.useState(settings.coverMaskOpacity ?? 0)
+  const coverMaskOpacityDraftRef = React.useRef(coverMaskOpacityDraft)
+  const coverMaskOpacityGestureRef = React.useRef(false)
+  const [effectOpacityDraft, setEffectOpacityDraft] = React.useState<number | null>(null)
+  const effectOpacityDraftRef = React.useRef<number | null>(null)
+  const effectOpacityGestureRef = React.useRef(false)
+
+  React.useEffect(() => {
+    if (coverMaskOpacityGestureRef.current) return
+    const next = settings.coverMaskOpacity ?? 0
+    coverMaskOpacityDraftRef.current = next
+    setCoverMaskOpacityDraft(next)
+  }, [settings.coverMaskOpacity])
+
+  React.useEffect(() => {
+    if (effectOpacityGestureRef.current) return
+    const next = selectedOverlay?.maskOpacity ?? 0
+    effectOpacityDraftRef.current = next
+    setEffectOpacityDraft(selectedOverlay?.kind === 'effect' ? next : null)
+  }, [selectedOverlay?.id, selectedOverlay?.kind, selectedOverlay?.maskOpacity])
+
+  const previewCoverMaskOpacity = (next: number) => {
+    coverMaskOpacityGestureRef.current = true
+    coverMaskOpacityDraftRef.current = next
+    setCoverMaskOpacityDraft(next)
+    onPreviewCoverMaskOpacity(next)
+  }
+  const commitCoverMaskOpacity = () => {
+    if (!coverMaskOpacityGestureRef.current) return
+    coverMaskOpacityGestureRef.current = false
+    const next = coverMaskOpacityDraftRef.current
+    if (next !== (settings.coverMaskOpacity ?? 0)) onSettings({ ...settings, coverMaskOpacity: next })
+  }
+  const previewEffectOpacity = (next: number) => {
+    if (!selectedOverlay || selectedOverlay.kind !== 'effect') return
+    effectOpacityGestureRef.current = true
+    effectOpacityDraftRef.current = next
+    setEffectOpacityDraft(next)
+    onPreviewEffectOpacity(selectedOverlay, next)
+  }
+  const commitEffectOpacity = () => {
+    if (!effectOpacityGestureRef.current || !selectedOverlay || selectedOverlay.kind !== 'effect') return
+    effectOpacityGestureRef.current = false
+    const next = effectOpacityDraftRef.current
+    if (next !== null && next !== (selectedOverlay.maskOpacity ?? 0)) editOverlay({ ...selectedOverlay, maskOpacity: next })
+  }
+  const coverMaskLabel = (id: string, label: string) => id === 'feather' ? t('Mờ tan mép', 'Feathered blur') : label
   const speakerProfiles = React.useMemo(() => resolvedSpeakerProfiles(segments, settings, locale), [segments, settings, locale])
   const selectedSpeaker = selected?.speaker
     ? speakerProfiles.find((profile) => profile.id === selected.speaker)
@@ -327,7 +378,7 @@ export function EditorPropertiesPanel({
                               </PropLabel>
                               <PropLabel label={t('Công cụ dịch', 'Translator')}>
                                 <select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.translator} disabled={busy} onChange={(event) => onSettings({ ...settings, translator: event.target.value as ProjectSettings['translator'] })}>
-                                  {availableTranslators(settings.engine).map((item) => <option key={item} value={item}>{item === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : item === 'grok' ? 'Grok (xAI)' : item === 'groq' ? 'Groq' : item === 'nvidia' ? 'NVIDIA NIM' : item}</option>)}
+                                  {translatorOptions(settings.engine).map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
                                 </select>
                               </PropLabel>
                               <PropLabel label={t('Ngôn ngữ gốc', 'Source language')}>
@@ -608,6 +659,59 @@ export function EditorPropertiesPanel({
                               </select>
                             </PropLabel>
 
+                            {/* Blur band — vùng làm mờ cố định suốt video */}
+                            <div className="border border-border rounded-md p-2 space-y-1.5 bg-muted/30">
+                              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  className="size-3.5 accent-primary"
+                                  checked={(settings.blurBandMode ?? 'off') !== 'off'}
+                                  onChange={(e) =>
+                                    onSettings({ ...settings, blurBandMode: e.target.checked ? 'auto' : 'off' })
+                                  }
+                                />
+                                <span className="text-xs font-medium">{t('Vùng làm mờ cố định', 'Persistent blur zone')}</span>
+                              </label>
+                              {(settings.blurBandMode ?? 'off') !== 'off' && (
+                                <>
+                                  <select
+                                    className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs outline-none focus:border-ring"
+                                    value={settings.blurBandMode ?? 'auto'}
+                                    onChange={(e) =>
+                                      onSettings({ ...settings, blurBandMode: e.target.value as 'auto' | 'manual' })
+                                    }
+                                  >
+                                    <option value="auto">{t('Tự động (OCR phát hiện vị trí)', 'Auto (OCR-detected position)')}</option>
+                                    <option value="manual">{t('Thủ công (kéo khung trên preview)', 'Manual (drag frame on preview)')}</option>
+                                  </select>
+                                  {settings.blurBandMode === 'manual' && (
+                                    <div className="space-y-1">
+                                      <button
+                                        type="button"
+                                        className="w-full rounded-md border border-dashed border-cyan-500 bg-cyan-500/10 px-2 py-1.5 text-[11px] text-cyan-400 hover:bg-cyan-500/20 transition-colors"
+                                        onClick={() => setTool('cover')}
+                                      >
+                                        {t('Kéo khung lam mờ trên preview →', 'Drag blur zone frame on preview →')}
+                                      </button>
+                                      {settings.blurBandRegion && (
+                                        <p className="text-[10px] text-muted-foreground">
+                                          {t('Vùng: ', 'Zone: ')}
+                                          {Math.round(settings.blurBandRegion.x * 100)}%,{' '}
+                                          {Math.round(settings.blurBandRegion.y * 100)}%{' '}
+                                          {Math.round(settings.blurBandRegion.w * 100)}×{Math.round(settings.blurBandRegion.h * 100)}%
+                                        </p>
+                                      )}
+                                      {settings.blurBandMode === 'manual' && !settings.blurBandRegion && (
+                                        <p className="text-[10px] text-amber-400">
+                                          {t('Chưa định vị — kéo khung để chọn vùng.', 'Not positioned — drag the frame to select a zone.')}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+
                             <div className="border-t border-border pt-2 space-y-2">
                               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Chữ</p>
                               <div className="grid grid-cols-2 gap-1.5">
@@ -675,7 +779,7 @@ export function EditorPropertiesPanel({
                             <div className="border-t border-border pt-2 space-y-2">
                               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Bbox · che chữ gốc</p>
                               <PropLabel label="Kiểu mặt nạ (cover)">
-                                <div className="flex gap-1">
+                                <div className="grid grid-cols-2 gap-1">
                                   {COVER_MASK_STYLES.map(({ id, label }) => (
                                     <button
                                       key={id}
@@ -689,7 +793,7 @@ export function EditorPropertiesPanel({
                                       disabled={busy}
                                       onClick={() => onSettings({ ...settings, coverMaskStyle: id })}
                                     >
-                                      {label}
+                                      {coverMaskLabel(id, label)}
                                     </button>
                                   ))}
                                 </div>
@@ -711,12 +815,16 @@ export function EditorPropertiesPanel({
                                     min={0}
                                     max={100}
                                     className="min-w-0 flex-1 accent-violet-500"
-                                    value={settings.coverMaskOpacity ?? 40}
+                                    value={coverMaskOpacityDraft}
                                     disabled={busy}
-                                    onChange={(e) => onSettings({ ...settings, coverMaskOpacity: Number(e.target.value) })}
+                                    onInput={(e) => previewCoverMaskOpacity(Number(e.currentTarget.value))}
+                                    onPointerUp={commitCoverMaskOpacity}
+                                    onPointerCancel={commitCoverMaskOpacity}
+                                    onBlur={commitCoverMaskOpacity}
+                                    onKeyUp={commitCoverMaskOpacity}
                                   />
                                   <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground w-8 text-right">
-                                    {settings.coverMaskOpacity ?? 40}%
+                                    {coverMaskOpacityDraft}%
                                   </span>
                                 </div>
                                 <div
@@ -724,7 +832,7 @@ export function EditorPropertiesPanel({
                                   style={coverMaskPreviewStyle(
                                     settings.coverMaskStyle ?? 'blur',
                                     settings.coverMaskColor || '#4c1d95',
-                                    settings.coverMaskOpacity ?? 40,
+                                    coverMaskOpacityDraft,
                                   )}
                                   title="Xem trước mask"
                                 />
@@ -1480,10 +1588,11 @@ export function EditorPropertiesPanel({
                         )}
 
                         {effectivePropTab === 'mask' && !selectedIsWatermark && (
-                          <EditorMaskPanel
+                            <EditorMaskPanel
                             busy={busy}
                             settings={settings}
-                            onSettings={onSettings}
+                              onSettings={onSettings}
+                              onPreviewCoverMaskOpacity={onPreviewCoverMaskOpacity}
                             coverMaskStyle={coverMaskStyle}
                             coverMaskColor={coverMaskColor}
                             coverMaskOpacity={coverMaskOpacity}
@@ -1561,7 +1670,7 @@ export function EditorPropertiesPanel({
                           <>
                             <div className="rounded-md border border-fuchsia-400/40 bg-fuchsia-500/5 px-2.5 py-2 text-xs text-foreground">
                               <b>{t('Vùng hiệu ứng', 'Effect region')}</b>
-                              <p className="mt-1 text-[11px] text-muted-foreground">{t('Kéo vùng trên video để di chuyển; kéo 8 nút quanh khung để co giãn.', 'Drag the region on video to move it; drag any of the 8 handles to resize it.')}</p>
+                              <p className="mt-1 text-[11px] text-muted-foreground">{t('Kéo giữa khung trên video để di chuyển; rê sát 4 góc hoặc 4 cạnh để co giãn.', 'Drag inside the frame on video to move it; hover near its 4 corners or 4 edges to resize.')}</p>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               <NumField label={t('Hiện từ', 'Start')} value={selectedOverlay.start} step={0.1} formatDisplay={formatTimecode} parseDisplay={parseTimecode} onCommit={(v) => editOverlay({ ...selectedOverlay, start: Math.max(0, Math.min(selectedOverlay.end - 0.1, v)) })} />
@@ -1573,12 +1682,12 @@ export function EditorPropertiesPanel({
                             </div>
                             <PropLabel label={t('Kiểu hiệu ứng', 'Effect style')}>
                               <select className="h-8 w-full rounded border border-border bg-background px-2 text-xs" value={selectedOverlay.maskStyle ?? 'blur'} onChange={(e) => editOverlay({ ...selectedOverlay, maskStyle: e.target.value as NonNullable<TextOverlay['maskStyle']> })}>
-                                <option value="blur">{t('Làm mờ', 'Blur')}</option><option value="solid">{t('Màu nền', 'Solid')}</option><option value="mosaic">{t('Khối', 'Mosaic')}</option>
+                                <option value="blur">{t('Làm mờ', 'Blur')}</option><option value="feather">{t('Mờ tan mép', 'Feathered blur')}</option><option value="solid">{t('Màu nền', 'Solid')}</option><option value="mosaic">{t('Khối', 'Mosaic')}</option>
                               </select>
                             </PropLabel>
                             <div className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-md border border-border p-2">
                               <input type="color" aria-label={t('Màu vùng hiệu ứng', 'Effect color')} className="h-8 w-12 cursor-pointer rounded border border-border bg-input p-1" value={selectedOverlay.maskColor ?? '#4c1d95'} onChange={(e) => editOverlay({ ...selectedOverlay, maskColor: e.target.value })} />
-                              <PropLabel label={`${t('Độ đậm', 'Opacity')}: ${selectedOverlay.maskOpacity ?? 45}%`}><input type="range" min={0} max={100} className="w-full accent-primary" value={selectedOverlay.maskOpacity ?? 45} onChange={(e) => editOverlay({ ...selectedOverlay, maskOpacity: Number(e.target.value) })} /></PropLabel>
+                            <PropLabel label={`${t('Độ đậm', 'Opacity')}: ${effectOpacityDraft ?? selectedOverlay.maskOpacity ?? 0}%`}><input type="range" min={0} max={100} className="w-full accent-primary" value={effectOpacityDraft ?? selectedOverlay.maskOpacity ?? 0} onInput={(e) => previewEffectOpacity(Number(e.currentTarget.value))} onPointerUp={commitEffectOpacity} onPointerCancel={commitEffectOpacity} onBlur={commitEffectOpacity} onKeyUp={commitEffectOpacity} /></PropLabel>
                             </div>
                             <button type="button" className="w-full rounded-md border border-border bg-accent hover:bg-muted px-3 py-1.5 text-xs transition-colors" onClick={() => editOverlay({ ...selectedOverlay, id: crypto.randomUUID(), start: Math.min(timelineDuration - 0.1, selectedOverlay.end), end: Math.min(timelineDuration, selectedOverlay.end + (selectedOverlay.end - selectedOverlay.start)) }, true)}>{t('Nhân bản vùng hiệu ứng', 'Duplicate effect region')}</button>
                             <button type="button" className="w-full rounded-md border border-destructive/50 text-destructive hover:bg-destructive/10 px-3 py-1.5 text-xs transition-colors" onClick={() => { onOverlayDelete(selectedOverlay.id); setSelectedOverlayId(null) }}>{t('Xóa vùng hiệu ứng', 'Delete effect region')}</button>

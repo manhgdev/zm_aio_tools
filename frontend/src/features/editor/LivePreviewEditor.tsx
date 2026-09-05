@@ -110,6 +110,7 @@ import {
   solidMidAt,
   solidOcrAt,
   solidOverlaysAt,
+  unionBox,
   sourceToDisplayStyle,
   splitMediaList,
   videoCropStyle,
@@ -401,6 +402,7 @@ export default function LivePreviewEditor({
   const [groupDraft, setGroupDraft] = useState<Record<string, { start: number; end: number }> | null>(null)
   const [bboxDraft, setBboxDraft] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [activeBboxId, setActiveBboxId] = useState<string | null>(null)
+  const [activeAutoBlurBand, setActiveAutoBlurBand] = useState(false)
   const [draggingBox, setDraggingBox] = useState(false)
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({ h: false, v: false })
   /** true khi đang kéo pan aspect / crop tự do — hiện tia căn giữa giống bbox */
@@ -1144,7 +1146,9 @@ export default function LivePreviewEditor({
     : appliedCrop
   const getCachedPreviewLayout = (s: Segment, override?: PixelBox) => {
     const cl = s.captionLayout
-    const key = `v15|${s.id}|${s.translation}|${s.layout}|${s.bboxInherited}|${s.bbox ? `${s.bbox.x},${s.bbox.y},${s.bbox.w},${s.bbox.h}` : ''}|${cl ? `${cl.x},${cl.y},${cl.w},${cl.h},${cl.fontSize},${(cl.lines || []).join('\\n')}` : ''}|${settings.subtitleFontSize}|${s.fontFamily || settings.subtitleFontFamily}|${crop.x},${crop.y},${crop.w},${crop.h}|${override ? `${override.x},${override.y},${override.w},${override.h}` : ''}`
+    // Cover mode changes the geometry (caption must be inside the mask), so it
+    // must invalidate a layout calculated for above/below mode.
+    const key = `v16|${s.id}|${s.translation}|${s.layout}|${s.bboxInherited}|${s.bbox ? `${s.bbox.x},${s.bbox.y},${s.bbox.w},${s.bbox.h}` : ''}|${cl ? `${cl.x},${cl.y},${cl.w},${cl.h},${cl.fontSize},${(cl.lines || []).join('\\n')}` : ''}|${settings.burnSubs}|${settings.coverHardsubs}|${settings.captionPlacement}|${settings.subtitleFontSize}|${s.fontFamily || settings.subtitleFontFamily}|${crop.x},${crop.y},${crop.w},${crop.h}|${override ? `${override.x},${override.y},${override.w},${override.h}` : ''}`
     const cached = layoutCacheRef.current[s.id]
     if (cached && cached.key === key) {
       return cached.val
@@ -1417,6 +1421,28 @@ export default function LivePreviewEditor({
   const coverSegsRaw = settings.burnSubs
     ? (() => {
         let base = overCoverMode ? segmentsAt(layoutSegs, time) : solidAtPlayhead
+        // Mid hardsub band: persistent full-video blur when blurBandMode is
+        // 'auto' (default) or 'manual'. Off = time-gated only.
+        // Pre-compute union bbox and mark bboxInherited:false so
+        // withExpandedMidHardsubBand skips expansion (keeps exact OCR height).
+        const blurBandMode = settings.blurBandMode ?? 'auto'
+        if (overCoverMode && blurBandMode !== 'off') {
+          const midHardsubSegs = layoutSegs.filter(
+            (s) => Boolean(s.bbox) && effectiveOverlayLayout(s, sourceHeight, sourceWidth) === 'mid',
+          )
+          if (midHardsubSegs.length > 0 && !base.some((s) => midHardsubSegs.includes(s))) {
+            const unionBbox = midHardsubSegs.reduce(
+              (acc, s) => acc === null
+                ? clampCoverBox(s.bbox!, sourceWidth, sourceHeight)
+                : unionBox(acc, clampCoverBox(s.bbox!, sourceWidth, sourceHeight)),
+              null as { x: number; y: number; w: number; h: number } | null,
+            )
+            if (unionBbox) {
+              // bboxInherited:false bypasses withExpandedMidHardsubBand expansion
+              base = [...base, { ...midHardsubSegs[0], bbox: unionBbox, bboxInherited: false }]
+            }
+          }
+        }
         // HACK: match backend gap-fill — extend the last horizontal cover to video end
         // if the gap is small (<1.5s), so lingering hardsubs at the end are covered.
         if (mediaDurationProp && time >= 0) {
@@ -1495,6 +1521,62 @@ export default function LivePreviewEditor({
           })
           .filter((b): b is PixelBox => !!b)
       : []
+  const persistentBlurBandBox = (() => {
+    const mode = settings.blurBandMode ?? 'off'
+    if (mode === 'off' || !settings.burnSubs || trackHidden.caption || sourceWidth <= 0 || sourceHeight <= 0) return null
+    const region = mode === 'manual'
+      ? settings.blurBandRegion
+      : settings.blurBandAutoRegionVersion === 1 ? settings.blurBandAutoRegion : null
+    if (region) {
+      const values = [region.x, region.y, region.w, region.h].map(Number)
+      if (values.some((value) => !Number.isFinite(value))) return null
+      return clampCoverBox({
+        x: values[0] * sourceWidth,
+        y: values[1] * sourceHeight,
+        w: values[2] * sourceWidth,
+        h: values[3] * sourceHeight,
+      }, sourceWidth, sourceHeight)
+    }
+    const autoBoxes = layoutSegs
+      .filter((segment) => Boolean(segment.bbox) && segment.layout !== 'vertical' && segment.layout !== 'label')
+      .map((segment) => clampCoverBox(segment.bbox!, sourceWidth, sourceHeight))
+    if (!autoBoxes.length) return null
+    // A union expands each time OCR sees a slightly different subtitle row.
+    // Use the median box instead: it represents the stable subtitle lane and
+    // rejects one-off detection noise rather than accumulating it.
+    const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+    return clampCoverBox({
+      x: median(autoBoxes.map((box) => box.x)),
+      y: median(autoBoxes.map((box) => box.y)),
+      w: median(autoBoxes.map((box) => box.w)),
+      h: median(autoBoxes.map((box) => box.h)),
+    }, sourceWidth, sourceHeight)
+  })()
+  // Freeze the OCR result on first auto use. From then on the blur band and
+  // editable caption bbox are deliberately independent project settings.
+  useEffect(() => {
+    if (settings.blurBandMode !== 'auto' || settings.blurBandAutoRegionVersion === 1 || !persistentBlurBandBox || sourceWidth <= 0 || sourceHeight <= 0) return
+    onSettings({
+      ...settings,
+      blurBandAutoRegion: {
+        x: persistentBlurBandBox.x / sourceWidth,
+        y: persistentBlurBandBox.y / sourceHeight,
+        w: persistentBlurBandBox.w / sourceWidth,
+        h: persistentBlurBandBox.h / sourceHeight,
+      },
+      blurBandAutoRegionVersion: 1,
+    })
+  }, [settings, persistentBlurBandBox, sourceWidth, sourceHeight, onSettings])
+  // A blur band is persistent, so showing the same single box at every playhead
+  // is more truthful than briefly drawing each individual OCR subtitle box.
+  const previewMaskBoxes = persistentBlurBandBox ? [persistentBlurBandBox] : maskBoxes
+  // The automatic OCR band is a project setting, not a persisted overlay.
+  // Still show it as a full-duration clip so the timeline truthfully reflects
+  // what will be rendered/exported.
+  const hasTimelineBlurBand = Boolean(persistentBlurBandBox && timelineDuration > 0)
+  const timelineBlurBandLabel = settings.blurBandMode === 'manual'
+    ? t('Vùng làm mờ thủ công', 'Manual blur zone')
+    : t('Làm mờ tự động (OCR)', 'Auto blur (OCR)')
   // Caption "over" layers: cover mode; hoặc dọc/nhãn. Mid/horizontal ở below/above → activeCaptionBox.
   const captionLayers =
     overlayBurnOn && !trackHidden.caption
@@ -1548,6 +1630,9 @@ export default function LivePreviewEditor({
   const showBboxAtPlayhead = bboxInteractiveAtPlayhead
     && activeBboxId === bboxSeg?.id
     && !selectedOverlayId
+  useEffect(() => {
+    if (activeBboxId || selectedOverlayId) setActiveAutoBlurBand(false)
+  }, [activeBboxId, selectedOverlayId])
   const captionLanes = useMemo(() => {
     const present = new Set(layoutSegs.map((s) => captionLaneOf(s, sourceHeight, sourceWidth)))
     return CAPTION_LANE_DEFS.filter((l) => l.key === 'horizontal' || present.has(l.key))
@@ -2447,7 +2532,6 @@ export default function LivePreviewEditor({
     setSelectedId(null)
     setSelectedIds([])
     setSelectedOverlayId(overlay.id)
-    setActiveBboxId(null)
     const watermark = isWatermarkOverlay(overlay)
     setTrackFocus(overlayTrack)
     setPropTab(watermark ? 'mask' : 'overlay')
@@ -2797,7 +2881,7 @@ export default function LivePreviewEditor({
       id: crypto.randomUUID(),
       start: time,
       end: Math.min(timelineDuration || time + 4, time + 4),
-      text: preset.label,
+      text: preset.id === 'feather' ? t('Mờ tan mép', 'Feathered blur') : preset.label,
       x,
       y,
       w: defaultW,
@@ -2809,6 +2893,7 @@ export default function LivePreviewEditor({
       maskColor: preset.maskColor,
       maskOpacity: preset.maskOpacity,
     }
+    setActiveBboxId(null)
     setSelectedOverlayId(overlay.id)
     setTrackFocus('text')
     setTool('select')
@@ -3871,10 +3956,31 @@ export default function LivePreviewEditor({
     activeCaptionMeta?.fontPx
     ?? overlayLaidFont
     ?? resolveCaptionFontSize(focusCaptionSeg ?? undefined, settings, sourceWidth, sourceHeight)
-  const showCoverBlur = settings.burnSubs && !trackHidden.caption && maskBoxes.length > 0
+  const showCoverBlur = settings.burnSubs && !trackHidden.caption && previewMaskBoxes.length > 0
   const coverMaskStyle = settings.coverMaskStyle ?? 'blur'
   const coverMaskColor = settings.coverMaskColor ?? '#4c1d95'
-  const coverMaskOpacity = settings.coverMaskOpacity ?? 40
+  const coverMaskOpacity = settings.coverMaskOpacity ?? 0
+
+  /** Slider drags paint only the affected mask nodes.  Saving/history happens
+   * on release, so a one-percent drag never re-renders the editor or hits API. */
+  function paintMaskOpacity(element: HTMLElement | null | undefined, style: TextOverlay['maskStyle'] | ProjectSettings['coverMaskStyle'], color: string, opacity: number) {
+    if (!element) return
+    const next = coverMaskPreviewStyle(style ?? 'blur', color, opacity)
+    for (const [key, value] of Object.entries(next)) {
+      if (value != null) (element.style as unknown as Record<string, string>)[key] = String(value)
+    }
+  }
+
+  function previewCoverMaskOpacity(opacity: number) {
+    canvasRef.current?.querySelectorAll<HTMLElement>('[data-cover-mask-preview]').forEach((element) => {
+      paintMaskOpacity(element, coverMaskStyle, coverMaskColor, opacity)
+    })
+  }
+
+  function previewEffectOpacity(overlay: TextOverlay, opacity: number) {
+    const mask = overlayElementRefs.current.get(overlay.id)?.querySelector<HTMLElement>('[data-effect-mask]')
+    paintMaskOpacity(mask, overlay.maskStyle, overlay.maskColor ?? '#4c1d95', opacity)
+  }
   const fontSizeOptions = FONT_SIZES.includes(fontSizeDraft) || fontSizeDraft === 0
     ? FONT_SIZES
     : [...FONT_SIZES, fontSizeDraft].sort((a, b) => a - b)
@@ -4430,23 +4536,25 @@ export default function LivePreviewEditor({
 
                     {assetsTab === 'add' && (
                       <PanelView title={t('Thêm vào timeline', 'Add to timeline')}>
-                        {/* Add-text card, like OpenCut TextView's "Default text" */}
-                        <button
-                          type="button"
-                          className="w-full h-16 rounded-md bg-accent hover:bg-muted transition-colors flex items-center justify-center text-xl font-semibold text-foreground mb-2"
-                          onClick={() => addTextOverlay()}
-                        >
-                          Default text
-                        </button>
-                        <button
-                          type="button"
-                          className="w-full h-12 rounded-md border border-fuchsia-400/50 bg-fuchsia-500/10 hover:bg-fuchsia-500/15 transition-colors flex items-center justify-center gap-2 text-sm font-semibold text-fuchsia-700 dark:text-fuchsia-200 mb-2"
-                          title={t('Thêm vùng blur tại playhead; kéo trực tiếp trên video để đổi vị trí và kích thước.', 'Add a blur region at the playhead; drag it on the video to move and resize.')}
-                          onClick={() => addEffectOverlay(EFFECT_PRESETS[0])}
-                        >
-                          <TabSvg><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M8 9h8M8 12h8M8 15h8" /></TabSvg>
-                          {t('Thêm vùng làm mờ', 'Add blur region')}
-                        </button>
+                        <div className="grid grid-cols-2 gap-1.5 mb-2">
+                          <button
+                            type="button"
+                            className="h-9 rounded-md bg-accent hover:bg-muted transition-colors flex items-center justify-center gap-1.5 px-2 text-xs font-medium text-foreground"
+                            onClick={() => addTextOverlay()}
+                          >
+                            <TabSvg><path d="M12 5v14M5 12h14" /></TabSvg>
+                            <span className="truncate">{t('Văn bản', 'Text')}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="h-9 rounded-md border border-fuchsia-400/50 bg-fuchsia-500/10 hover:bg-fuchsia-500/15 transition-colors flex items-center justify-center gap-1.5 px-2 text-xs font-semibold text-fuchsia-700 dark:text-fuchsia-200"
+                            title={t('Thêm vùng blur tại playhead; kéo trực tiếp trên video để đổi vị trí và kích thước.', 'Add a blur region at the playhead; drag it on the video to move and resize.')}
+                            onClick={() => addEffectOverlay(EFFECT_PRESETS[0])}
+                          >
+                            <TabSvg><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M8 9h8M8 12h8M8 15h8" /></TabSvg>
+                            <span className="truncate">{t('Làm mờ', 'Blur')}</span>
+                          </button>
+                        </div>
                         <div className="flex flex-col gap-0.5">
                           {overlays.map((overlay) => (
                             <div
@@ -4550,7 +4658,7 @@ export default function LivePreviewEditor({
                     {assetsTab === 'add' && (
                       <PanelView title="Effects">
                         <p className="px-1 pb-2 text-[11px] text-muted-foreground leading-snug">
-                          Kéo preset vào preview hoặc bấm để thêm vùng làm mờ — chỉnh khung tự do, mặt nạ blur/màu/khối.
+                          {t('Kéo preset vào preview hoặc bấm để thêm vùng làm mờ — chỉnh khung tự do, mặt nạ blur/mờ tan mép/màu/khối.', 'Drag a preset into the preview or click to add an effect region — freely resize blur, feathered blur, solid, or mosaic masks.')}
                         </p>
                         <div className="flex flex-col gap-1.5 px-0.5">
                           {EFFECT_PRESETS.map((preset) => (
@@ -4558,7 +4666,7 @@ export default function LivePreviewEditor({
                               key={preset.id}
                               type="button"
                               draggable
-                              title={`${preset.desc} — kéo vào video hoặc bấm thêm`}
+                              title={`${preset.id === 'feather' ? t('Dải kính có mặt nạ tan mềm ở hai mép', 'Glass band with a soft feathered edge') : preset.desc} — ${t('kéo vào video hoặc bấm thêm', 'drag onto video or click to add')}`}
                               className="flex items-center gap-2 rounded-md border border-border bg-accent/50 hover:bg-accent px-2 py-2 text-left transition-colors cursor-grab active:cursor-grabbing"
                               onDragStart={(e) => {
                                 e.dataTransfer.setData('application/x-videoclone-effect', preset.id)
@@ -4572,8 +4680,8 @@ export default function LivePreviewEditor({
                                 aria-hidden
                               />
                               <span className="min-w-0 flex-1">
-                                <span className="block text-[12px] font-medium text-foreground">{preset.label}</span>
-                                <span className="block text-[10px] text-muted-foreground truncate">{preset.desc}</span>
+                                <span className="block text-[12px] font-medium text-foreground">{preset.id === 'feather' ? t('Mờ tan mép', 'Feathered blur') : preset.label}</span>
+                                <span className="block text-[10px] text-muted-foreground truncate">{preset.id === 'feather' ? t('Dải kính có mặt nạ tan mềm ở hai mép', 'Glass band with a soft feathered edge') : preset.desc}</span>
                               </span>
                             </button>
                           ))}
@@ -4929,9 +5037,10 @@ export default function LivePreviewEditor({
                       )}
 
                       {/* Blur che chữ — kính CapCut (z dưới chữ; overflow hidden + isolation) */}
-                      {showCoverBlur && tool !== 'text' && maskBoxes.map((box, i) => (
+                      {showCoverBlur && tool !== 'text' && previewMaskBoxes.map((box, i) => (
                         <div
                           key={`mask-${i}-${box.x}-${box.y}`}
+                          data-cover-mask-preview
                           className="absolute z-[9] pointer-events-none overflow-hidden rounded-[1px]"
                           style={{
                             ...sourceToDisplayStyle(box, crop),
@@ -4941,13 +5050,26 @@ export default function LivePreviewEditor({
                         />
                       ))}
 
+                      {/* Auto blur is a project-wide OCR band, not a caption bbox. */}
+                      {activeAutoBlurBand && persistentBlurBandBox && tool !== 'text' && (
+                        <div
+                          aria-hidden
+                          className="pointer-events-none absolute z-[16] rounded-sm border border-dashed border-fuchsia-200/90 shadow-[0_0_0_1px_rgba(88,28,135,0.7)]"
+                          style={sourceToDisplayStyle(persistentBlurBandBox, crop)}
+                        />
+                      )}
+
                       {/* Bbox caption: same thin, unobtrusive frame as manual blur. */}
                       {bboxSeg && selectedBox && bboxInteractiveAtPlayhead && tool !== 'text' && (
                         <div
+                          data-cover-mask-preview={showBboxAtPlayhead && !maskBoxes.length && showCoverBlur ? '' : undefined}
                           className={cn(
                             // Preview subtitles render above the mask. Keep its editable hitbox
                             // above them as well, otherwise a transparent caption layer swallows clicks.
                             'group/bbox absolute border cursor-move z-[30] overflow-visible touch-none',
+                            // A selected blur owns pointer input, even where it overlaps a
+                            // subtitle. Otherwise this invisible bbox steals its move cursor.
+                            selectedOverlayId && 'pointer-events-none',
                             showBboxAtPlayhead ? 'border-white/75 border-dashed' : 'border-transparent bg-transparent',
                             showBboxAtPlayhead && !showCoverBlur && 'bg-white/5',
                             draggingBox && 'opacity-80',
@@ -5086,7 +5208,7 @@ export default function LivePreviewEditor({
                             </p>
                           ) : (
                             <p
-                              className="max-w-full h-fit text-center text-white font-bold flex flex-col items-center justify-center overflow-visible"
+                              className="h-full max-w-full text-center text-white font-bold flex flex-col items-center justify-center overflow-visible"
                               style={{
                                 // boxSource = cover (container), không dùng caption.w — caption hẹp → cqw phình chữ to hơn bbox
                                 ...captionFontStyle(
@@ -5101,6 +5223,7 @@ export default function LivePreviewEditor({
                                 padding: '0.02em 6px',
                                 boxSizing: 'border-box',
                                 width: '100%',
+                                height: '100%',
                               }}
                             >
                               {lines.map((line, i) => (
@@ -5203,7 +5326,7 @@ export default function LivePreviewEditor({
                         if (isFx) {
                           const style = overlay.maskStyle ?? 'blur'
                           const color = overlay.maskColor ?? '#4c1d95'
-                          const opacity = overlay.maskOpacity ?? 45
+                          const opacity = overlay.maskOpacity ?? 0
                           const isInpaint = style === 'inpaint'
                           return (
                             <div
@@ -5225,14 +5348,42 @@ export default function LivePreviewEditor({
                                 <div className="absolute inset-0" />
                               ) : (
                                 <div
+                                  data-effect-mask
                                   className={cn(
-                                    'absolute inset-0 overflow-hidden rounded-sm border border-dashed border-transparent transition-opacity',
-                                    // Giữ khung chọn mảnh như bbox; resize dùng Rộng/Cao ở panel.
-                                    sel && 'border-white/75',
+                                    'absolute inset-0 overflow-hidden rounded-sm',
                                   )}
                                   style={coverMaskPreviewStyle(style, color, opacity)}
                                 />
                               )}
+                              {/* Keep selection chrome separate from the mask. Backdrop filters
+                                  can otherwise visually swallow a border rendered inside them. */}
+                              {sel && (
+                                <div
+                                  aria-hidden
+                                  className="pointer-events-none absolute -inset-px z-20 rounded-sm border border-dashed border-white/90 shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+                                />
+                              )}
+                              {/* Resize hit targets stay invisible: the cursor identifies all
+                                  eight edges/corners without drawing handles over the video. */}
+                              {sel && (['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'] as const).map((edge) => {
+                                const pos: Record<typeof edge, string> = {
+                                  nw: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize',
+                                  ne: 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize',
+                                  sw: 'left-0 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize',
+                                  se: 'right-0 bottom-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize',
+                                  n: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize',
+                                  s: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-ns-resize',
+                                  e: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2 cursor-ew-resize',
+                                  w: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize',
+                                }
+                                return (
+                                  <span
+                                    key={edge}
+                                    className={cn('absolute z-30 size-4 opacity-0', pos[edge])}
+                                    onPointerDown={(event) => beginOverlayResize(event, overlay, edge)}
+                                  />
+                                )
+                              })}
                             </div>
                           )
                         }
@@ -5540,6 +5691,8 @@ export default function LivePreviewEditor({
                         segments={segments}
                         settings={settings}
                         onSettings={onSettings}
+                        onPreviewCoverMaskOpacity={previewCoverMaskOpacity}
+                        onPreviewEffectOpacity={previewEffectOpacity}
                         onRunPipeline={onRunPipeline}
                         onCancel={onCancel}
                         onOpenExport={() => setIsExportModalOpen(true)}
@@ -5863,7 +6016,9 @@ export default function LivePreviewEditor({
                       {
                         id: 'text' as const,
                         h: 'h-10',
-                        label: 'Text',
+                        label: overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr') || hasTimelineBlurBand
+                          ? t('Văn bản / Hiệu ứng', 'Text / Effects')
+                          : 'Text',
                         icon: <span className="text-xs font-semibold leading-none shrink-0">T</span>,
                         mute: false,
                         hide: true,
@@ -5889,7 +6044,7 @@ export default function LivePreviewEditor({
                       && !(logoDetection?.tracks || []).some((track) => (track.text || '').trim().startsWith('@'))
                     ) return null
                     if (row.id === 'ocr' && !overlays.some((overlay) => overlay.track === 'ocr')) return null
-                    if (row.id === 'text' && !overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr')) return null
+                    if (row.id === 'text' && !hasTimelineBlurBand && !overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr')) return null
                     const muted =
                       row.id === 'bg'
                         ? settings.processOriginalAudio && settings.originalAudioMode === 'mute'
@@ -6617,7 +6772,27 @@ export default function LivePreviewEditor({
 
 
                        {/* Text overlay track — chỉ tạo khi thực sự có text. */}
-                       {overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr') && <div className={cn('relative h-10 box-border border-b border-border/80 overflow-hidden', trackHidden.text && 'opacity-30')} style={{ backgroundColor: 'var(--background)' }}>
+                       {(hasTimelineBlurBand || overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr')) && <div className={cn('relative h-10 box-border border-b border-border/80 overflow-hidden', trackHidden.text && 'opacity-30')} style={{ backgroundColor: 'var(--background)' }}>
+                         {hasTimelineBlurBand && (
+                           <button
+                             type="button"
+                             data-blur-band-clip=""
+                             title={`${timelineBlurBandLabel} · ${t('Áp dụng toàn bộ video; đổi vùng trong Thuộc tính → Phụ đề.', 'Applies to the full video; change its region in Properties → Captions.')}`}
+                             className="absolute top-1.5 z-0 h-[calc(100%-12px)] rounded-md border border-fuchsia-300/55 bg-fuchsia-700/35 px-2 text-left text-[11px] text-fuchsia-100/90 transition-colors hover:bg-fuchsia-700/50"
+                             style={{ left: 0, width: Math.max(2, timelineDuration * pxPerSec), boxSizing: 'border-box' }}
+                             onPointerDown={(e) => e.stopPropagation()}
+                             onClick={() => {
+                               setActiveBboxId(null)
+                               setSelectedOverlayId(null)
+                               setActiveAutoBlurBand(true)
+                               setTrackFocus('text')
+                               setTool('select')
+                               setPropTab('caption')
+                             }}
+                           >
+                             <span className="truncate pointer-events-none">{timelineBlurBandLabel}</span>
+                           </button>
+                         )}
                          {overlays.filter((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr').map((overlay) => {
                            const display = groupDraft?.[overlay.id]
                              ? { ...overlay, ...groupDraft[overlay.id] }

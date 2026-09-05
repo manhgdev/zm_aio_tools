@@ -543,6 +543,18 @@ def clear_project_cache(
                 deleted,
                 "cache",
             )
+        elif "covers" in want:
+            # Bbox/cover là dữ liệu dẫn xuất từ OCR. Nếu chỉ bỏ bbox trong
+            # meta nhưng giữ các file này, lần mở/rerun sau có thể nạp lại
+            # đúng vùng cũ, khiến preview trông như "bbox/blur bị lặp".
+            _clear_cache_dir_matches(
+                cache_dir,
+                lambda p: p.is_file()
+                and any(token in p.name.lower() for token in ("bbox", "boxes", "cover", "layout")),
+                errors,
+                deleted,
+                "cache",
+            )
         if "whisper" in want or "subtitle" in want:
             _clear_cache_dir_matches(
                 cache_dir,
@@ -647,6 +659,16 @@ def clear_project_cache(
             m.pop("timelineBaseline", None)
             if all_on or "ocr" in want or "covers" in want:
                 m.pop("logoDetection", None)
+
+        if "covers" in want or "ocr" in want or all_on:
+            # Đây là cache OCR đã chốt cho auto blur, không phải vùng blur
+            # thủ công do người dùng kéo. Giữ manual region theo cam kết
+            # "settings dự án không bị xóa", nhưng buộc auto OCR tạo lại
+            # từ dữ liệu mới sau khi người dùng chạy nhận dạng.
+            settings = dict(m.get("settings") or {})
+            settings.pop("blurBandAutoRegion", None)
+            settings.pop("blurBandAutoRegionVersion", None)
+            m["settings"] = settings
 
         if scrub_tts_meta:
             segs = m.get("segments") or []

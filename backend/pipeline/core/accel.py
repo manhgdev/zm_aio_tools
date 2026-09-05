@@ -193,19 +193,30 @@ def _tts_vram_hard_cap() -> int:
     if d == "cpu":
         return 2
     if d == "mps":
-        try:
-            import psutil  # type: ignore
+        def _mps_ram_gb() -> float:
+            try:
+                import psutil  # type: ignore
+                return float(psutil.virtual_memory().total) / (1024**3)
+            except Exception:
+                pass
+            # psutil not installed — macOS native fallback (always available)
+            try:
+                import subprocess as _sp
+                out = _sp.check_output(["sysctl", "-n", "hw.memsize"], text=True, timeout=1).strip()
+                return float(out) / (1024**3)
+            except Exception:
+                return 0.0
 
-            gb = float(psutil.virtual_memory().total) / (1024**3)
-            if gb >= 36:
-                return 8
-            if gb >= 24:
-                return 6
-            if gb >= 16:
-                return 4
-            return 3
-        except Exception:
-            return 3
+        gb = _mps_ram_gb()
+        if gb >= 48:
+            return 10
+        if gb >= 36:
+            return 8
+        if gb >= 24:
+            return 6
+        if gb >= 16:
+            return 4
+        return 3
     # CUDA: hard_max theo total, actual pack theo free trong adaptive_workers
     try:
         import subprocess as sp

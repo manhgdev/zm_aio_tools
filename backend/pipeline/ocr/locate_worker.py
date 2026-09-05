@@ -35,7 +35,8 @@ def _python_can_ocr(exe: str) -> tuple[bool, str]:
                 "import cv2, rapidocr_onnxruntime, onnxruntime as ort;"
                 "p=ort.get_available_providers();"
                 "print('CUDA' if 'CUDAExecutionProvider' in p else "
-                "('DirectML' if 'DmlExecutionProvider' in p else 'CPU'))",
+                "('DirectML' if 'DmlExecutionProvider' in p else "
+                "('CoreML' if 'CoreMLExecutionProvider' in p else 'CPU')))",
             ],
             capture_output=True,
             text=True,

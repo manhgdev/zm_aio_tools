@@ -3,7 +3,7 @@ import type { ProjectSettings, Segment } from '@/features/project/project.types'
 import { api } from '@/features/project/project.api'
 import { resolvedSpeakerProfiles, speakerRoleOptions } from '@/features/project/speakerProfiles'
 import { localize, useLocale } from '@/app/i18n'
-import { availableTranslators, normalizeTranslatorForEngine } from '@/app/appSettings'
+import { normalizeTranslatorForEngine, translatorOptions } from '@/app/appSettings'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 import ProgressPopup from '@/shared/components/ProgressPopup'
 import { formatTimecode, PropLabel } from '@/features/editor/lib'
@@ -67,7 +67,7 @@ export function EditorProjectPanel({ projectId, tab, segments, settings, voices,
       <p className="text-[11px] leading-snug text-muted-foreground">{t('Thiết lập và chạy toàn bộ pipeline cho dự án này.', 'Configure and run this project’s complete pipeline.')}</p>
       <div className="grid grid-cols-2 gap-2">
         <PropLabel label={t('Nhận dạng', 'Recognition')}><select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.engine} disabled={busy} onChange={(e) => selectRecognitionEngine(e.target.value as ProjectSettings['engine'])}><option value="whisper">Whisper · {t('chất lượng', 'quality')}</option><option value="capcut">{t('CapCut cloud', 'CapCut cloud')}</option><option value="paddleocr">OCR</option><option value="subtitle">SRT</option></select></PropLabel>
-        <PropLabel label={t('Công cụ dịch', 'Translator')}><select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.translator} disabled={busy} onChange={(e) => onSettings({ ...settings, translator: e.target.value as ProjectSettings['translator'] })}>{availableTranslators(settings.engine).map((id) => <option key={id} value={id}>{id === 'capcut' ? t('CapCut cloud', 'CapCut cloud') : id === 'grok' ? 'Grok (xAI)' : id === 'groq' ? 'Groq' : id === 'nvidia' ? 'NVIDIA NIM' : id}</option>)}</select></PropLabel>
+        <PropLabel label={t('Công cụ dịch', 'Translator')}><select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.translator} disabled={busy} onChange={(e) => onSettings({ ...settings, translator: e.target.value as ProjectSettings['translator'] })}>{translatorOptions(settings.engine).map(({ id, label }) => <option key={id} value={id}>{label}</option>)}</select></PropLabel>
         <PropLabel label={t('Ngôn ngữ gốc', 'Source language')}><select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.sourceLang} disabled={busy} onChange={(e) => onSettings({ ...settings, sourceLang: e.target.value })}><option value="auto">{t('Tự động', 'Auto')}</option><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="vi">Tiếng Việt</option></select></PropLabel>
         <PropLabel label={t('Dịch sang', 'Translate to')}><select className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs" value={settings.targetLang} disabled={busy} onChange={(e) => onSettings({ ...settings, targetLang: e.target.value })}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="zh">中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="none">{t('Không dịch', 'No translation')}</option></select></PropLabel>
         <PropLabel label={t('Phụ đề', 'Subtitles')}>

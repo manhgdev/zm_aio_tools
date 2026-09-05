@@ -21,6 +21,44 @@ pytestmark = pytest.mark.skipif(
     reason="ffmpeg không có sẵn",
 )
 
+
+def test_feathered_blur_softens_the_top_and_bottom_edges():
+    from pipeline.export.cover_mask import _apply_cover_mask
+
+    source = np.zeros((100, 160, 3), dtype=np.uint8)
+    source[:, :, 0] = np.linspace(20, 220, 160, dtype=np.uint8)
+    source[:, :, 1] = 90
+    source[:, :, 2] = 160
+    result = _apply_cover_mask(source.copy(), (20, 20, 140, 80), style="feather", opacity_pct=70)
+
+    # A CapCut-style feathered band is strongest at its centre, not at the edges.
+    centre_change = np.abs(result[50, 80].astype(np.int16) - source[50, 80]).mean()
+    top_change = np.abs(result[20, 80].astype(np.int16) - source[20, 80]).mean()
+    bottom_change = np.abs(result[79, 80].astype(np.int16) - source[79, 80]).mean()
+    assert centre_change > 3
+    assert top_change < centre_change
+    assert bottom_change < centre_change
+
+
+def test_persistent_blur_band_uses_manual_region_or_auto_ocr_boxes():
+    from pipeline.export.burn_parts.pipeline import _persistent_blur_band_segment
+
+    manual = _persistent_blur_band_segment(
+        [], mode="manual", region={"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.15},
+        width=1000, height=800, duration=12, style="blur", color="#101827", opacity=0,
+    )
+    assert manual and manual["bbox"] == {"x": 100, "y": 560, "w": 800, "h": 120}
+
+    auto = _persistent_blur_band_segment(
+        [
+            {"id": "a", "layout": "horizontal", "bbox": {"x": 100, "y": 580, "w": 700, "h": 50}},
+            {"id": "b", "layout": "mid", "bbox": {"x": 150, "y": 600, "w": 650, "h": 60}},
+        ],
+        mode="auto", region=None, width=1000, height=800, duration=12,
+        style="blur", color="#101827", opacity=0,
+    )
+    assert auto and auto["bbox"] == {"x": 100, "y": 580, "w": 700, "h": 80}
+
 W, H = 640, 360
 
 

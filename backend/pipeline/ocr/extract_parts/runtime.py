@@ -56,14 +56,18 @@ def _ocr_pool_workers(
 
 
 def _ocr_semaphore() -> threading.Semaphore:
-    """Semaphore toàn cục OCR — GPU pack VRAM; CPU ≤ budget cores."""
+    """Semaphore toàn cục OCR — CUDA/DML pack VRAM, CoreML chạy tuần tự."""
     global _ocr_sem, _ocr_sem_n
     try:
         from pipeline.core.resources import pack_gpu_workers
 
         # _rapidocr_gpu_kwargs định nghĩa bên dưới cùng file
         gpu_kwargs = _rapidocr_gpu_kwargs()
-        if gpu_kwargs.get("det_use_cuda") or gpu_kwargs.get("det_use_dml"):
+        if _onnx_provider_available("CoreMLExecutionProvider"):
+            # Metal shared-memory không có VRAM độc lập để pack; nhiều OCR
+            # sessions cùng lúc gây tranh chấp GPU/ANE và chậm hơn một session.
+            n = 1
+        elif gpu_kwargs.get("det_use_cuda") or gpu_kwargs.get("det_use_dml"):
             n = pack_gpu_workers(per_job_mb=450, reserve_mb=350, hard_max=20)
         else:
             n = _cpu_budget(0.92)
@@ -106,6 +110,8 @@ def engine_device_label(engine: object) -> str:
         return "CUDA"
     if any("Dml" in p or "DirectML" in p for p in provs):
         return "DirectML"
+    if any("CoreML" in p for p in provs):
+        return "CoreML"
     return "CPU"
 
 
@@ -138,7 +144,7 @@ def _cv2_thread_cap() -> int:
     return max(1, min(2, cores - 1))
 
 
-def _ort_threads(use_cuda: bool) -> dict[str, int]:
+def _ort_threads(accelerated: bool) -> dict[str, int]:
     """Số luồng CPU cho ONNX Runtime.
 
     Mặc định của RapidOCR là -1 = ORT tự lấy HẾT core (12 core → 12 luồng busy),
@@ -149,7 +155,7 @@ def _ort_threads(use_cuda: bool) -> dict[str, int]:
         cores = os.cpu_count() or 4
     except Exception:
         cores = 4
-    if use_cuda:
+    if accelerated:
         n = 2
     else:
         n = max(1, int(cores * 0.6))
@@ -297,14 +303,23 @@ def _reset_cuda_dlls() -> None:
 
 
 def _patch_rapidocr_onnxruntime_ep() -> None:
-    """Fix ONNXRuntime CUDA failure 900 (stream capture) during multithreading with EXHAUSTIVE cudnn search."""
+    """Use CoreML on Apple and stable CUDA options in RapidOCR's limited adapter."""
     try:
         from rapidocr_onnxruntime.utils.infer_engine import OrtInferSession
         if hasattr(OrtInferSession, "_patched_ep_list"):
             return
         orig_get_ep_list = OrtInferSession._get_ep_list
+
         def patched_get_ep_list(self) -> list:
-            ep_list = orig_get_ep_list(self)
+            ep_list = list(orig_get_ep_list(self))
+            providers = set(getattr(self, "had_providers", ()) or ())
+            if (
+                "CoreMLExecutionProvider" in providers
+                and not any(name == "CoreMLExecutionProvider" for name, _opts in ep_list)
+            ):
+                # rapidocr-onnxruntime exposes CUDA/DML flags only. ONNX Runtime
+                # already has CoreML in this runtime, so add it directly before CPU.
+                ep_list.insert(0, ("CoreMLExecutionProvider", {}))
             for idx, (ep_name, ep_opts) in enumerate(ep_list):
                 if ep_name == "CUDAExecutionProvider" and isinstance(ep_opts, dict):
                     ep_opts["cudnn_conv_algo_search"] = "HEURISTIC"
@@ -345,7 +360,10 @@ def _rapidocr_labels(*, use_cuda: bool | None = None) -> Any:
     )
     return RapidOCR(
         **gpu_kwargs,
-        **_ort_threads(bool(gpu_kwargs.get("det_use_cuda"))),
+        **_ort_threads(
+            bool(gpu_kwargs.get("det_use_cuda") or gpu_kwargs.get("det_use_dml"))
+            or _onnx_provider_available("CoreMLExecutionProvider")
+        ),
         box_thresh=0.3,
         thresh=0.2,
         text_score=0.3,
@@ -372,7 +390,8 @@ def _rapidocr_gpu_kwargs() -> dict[str, bool]:
             from pipeline.core.app_log import append_log
 
             append_log(
-                f"[ocr-gpu] providers={providers} -> cuda={use_cuda} dml={use_dml}"
+                f"[ocr-gpu] providers={providers} -> cuda={use_cuda} dml={use_dml} "
+                f"coreml={'CoreMLExecutionProvider' in providers}"
             )
         except Exception:
             pass
@@ -394,6 +413,16 @@ def _rapidocr_gpu_kwargs() -> dict[str, bool]:
     }
 
 
+def _onnx_provider_available(provider: str) -> bool:
+    """Whether this runtime advertises an ONNX execution provider."""
+    try:
+        import onnxruntime as ort
+
+        return provider in ort.get_available_providers()
+    except (ImportError, OSError):
+        return False
+
+
 __all__ = [
     '_ocr_sem',
     '_ocr_sem_n',
@@ -406,6 +435,7 @@ __all__ = [
     'prepare_cuda_dlls',
     '_rapidocr_labels',
     '_rapidocr_gpu_kwargs',
+    '_onnx_provider_available',
     'engine_providers',
     'engine_device_label',
 ]
