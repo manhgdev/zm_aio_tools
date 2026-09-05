@@ -827,15 +827,59 @@ def _apply_fixed_review_bboxes(
     *,
     caption_bbox: dict[str, int] | None = None,
 ) -> None:
-    """Persist the same fixed subtitle lane used by Review export and preview."""
-    if caption_export_settings(settings)["burnSubs"]:
+    """Persist the same fixed subtitle lane used by Review export and preview.
+
+    We always prefer the original source video for OCR so that the locate runs
+    on the unmodified hardsub pixels rather than on a previously burned review
+    output (which would OCR the translated 1-row caption instead of the
+    original 2-line hardsub band, producing an incorrectly narrow bbox).
+    """
+    if not caption_export_settings(settings)["burnSubs"]:
+        return
+
+    # Locate on source.mp4 first — it has the original untouched hardsub.
+    # Fall back to the provided caption_bbox or the compiled video only when
+    # source is not available (e.g. project was stripped of the original).
+    from pipeline.core.media import video_size
+    from pipeline.core.project import ensure_layout
+
+    source = ensure_layout(project_id) / "source.mp4"
+    if source.exists():
+        bbox = dict(locate_review_caption_band(source))
+    else:
         bbox = dict(caption_bbox or locate_review_caption_band(compiled))
-        for segment in meta.get("segments") or []:
-            segment["bbox"] = dict(bbox)
-            segment["bboxInherited"] = True
-            segment["layout"] = "horizontal"
-        meta["bboxLocateVersion"] = 4
+
+    width, height = video_size(compiled)
+
+    for segment in meta.get("segments") or []:
+        segment["bbox"] = dict(bbox)
+        segment["bboxInherited"] = True
+        segment["layout"] = "horizontal"
+    meta["bboxLocateVersion"] = 4
+
+    # Keep blur band centered in the detected subtitle band so that the
+    # gaussian kernel covers both the top and bottom subtitle lines evenly.
+    # blurBandMode stays unchanged (user-chosen auto/manual/off); we only
+    # update the auto-region so the UI default is sane.
+    band_center_y = bbox["y"] + bbox["h"] / 2
+    blur_h = bbox["h"]  # full band: blur kernel radiates to cover all rows
+    blur_y = max(0, band_center_y - blur_h / 2)
+    settings_stored = meta.get("settings") or {}
+    settings_stored["blurBandAutoRegion"] = {
+        "x": 0.0,
+        "y": round(blur_y / max(1, height), 4),
+        "w": 1.0,
+        "h": round(blur_h / max(1, height), 4),
+    }
+    settings_stored["blurBandAutoRegionVersion"] = 1
+    # If the project has never chosen a mode, default to auto so the
+    # newly computed region is immediately visible in Live Preview.
+    if not settings_stored.get("blurBandMode"):
+        settings_stored["blurBandMode"] = "auto"
+    meta["settings"] = settings_stored
+
     save_meta(project_id, meta)
+
 
 
 def _faithful_story(visuals: list[dict[str, Any]]) -> dict[str, Any]:
