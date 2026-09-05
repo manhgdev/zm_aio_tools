@@ -94,6 +94,7 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
         checkpoint.update({
             "asrKey": current_cache.get("asrKey", checkpoint.get("asrKey")),
             "transKey": current_cache.get("transKey", checkpoint.get("transKey")),
+            "ocrKey": current_cache.get("ocrKey", checkpoint.get("ocrKey")),
             "segments": copy.deepcopy(current_segments),
         })
         run_caches[current_tag] = checkpoint
@@ -112,12 +113,14 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
         run_cache = {
             "asrKey": legacy_cache.get("asrKey"),
             "transKey": legacy_cache.get("transKey"),
+            "ocrKey": legacy_cache.get("ocrKey"),
             "segments": meta.get("segments"),
         }
     cached_segments = copy.deepcopy(run_cache.get("segments") or [])
     cache = {
         "asrKey": run_cache.get("asrKey"),
         "transKey": run_cache.get("transKey"),
+        "ocrKey": run_cache.get("ocrKey"),
     }
 
     try:
@@ -563,12 +566,41 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
         # Whisper/SRT provide text timing, not its on-screen position. OCR only
         # locates the hard-sub area; it does not replace the SRT's text.
         engine = settings.get("engine", "whisper")
+        locate_layout_version = 12
+        ocr_key = "|".join((
+            f"v{locate_layout_version}",
+            a_key,
+            str(bool(settings.get("stableCaptionLocate", False))),
+            json.dumps(settings.get("analysisRegion"), ensure_ascii=False, sort_keys=True, default=str),
+        ))
+
+        def _has_cached_ocr_box(seg: dict[str, Any]) -> bool:
+            source = str(seg.get("source") or "")
+            if sum(char.isalnum() for char in source) < 2:
+                return True
+            box = seg.get("bbox")
+            return isinstance(box, dict) and float(box.get("w") or 0) > 0 and float(box.get("h") or 0) > 0
+
+        ocr_cached = (
+            cache.get("ocrKey") == ocr_key
+            and bool(segments)
+            and all(_has_cached_ocr_box(seg) for seg in segments)
+        )
+        if ocr_cached:
+            set_status(
+                project_id,
+                step="translate",
+                progress=97,
+                message=f"Cache định vị OCR — {len(segments)} đoạn",
+                running=True,
+            )
         if (
             engine not in ("paddleocr", "screen")
             # Bbox is also needed when only covering existing hard-subs;
             # editor's “Không chèn chữ” disables burnSubs but not coverHardsubs.
             and (bool(settings.get("burnSubs", True)) or bool(settings.get("coverHardsubs", True)))
             and segments
+            and not ocr_cached
         ):
             # Worker count chỉ để hiện % — GPU thật nằm trong subprocess OCR.
             # Không import onnxruntime/cv2 ở đây: Whisper đã nạp ctranslate2 CUDA;
@@ -590,7 +622,6 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
             # mask over frames with no source hard-sub.
             # hits used to seed a wrong lane and then get inherited by later
             # cues, so discard only auto-detected boxes once before relocalizing.
-            locate_layout_version = 12
             stale_bbox_layout = int(meta.get("bboxLocateVersion") or 0) < locate_layout_version
             if stale_bbox_layout:
                 for seg in segments:
@@ -640,6 +671,7 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                         seg.pop("_locatorProbeEarly", None)
             if locate_ok:
                 meta["bboxLocateVersion"] = locate_layout_version
+                cache["ocrKey"] = ocr_key
             if n_box:
                 set_status(
                     project_id,
@@ -696,6 +728,7 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
         run_caches[tag] = {
             "asrKey": cache.get("asrKey"),
             "transKey": cache.get("transKey"),
+            "ocrKey": cache.get("ocrKey"),
             "segments": copy.deepcopy(segments),
         }
         meta["translationCaches"] = run_caches

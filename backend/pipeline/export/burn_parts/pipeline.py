@@ -51,6 +51,7 @@ from .layout_text import *  # noqa: F403
 from .ocr_boxes import *  # noqa: F403
 from pipeline.export.fonts import _font_for_preset, _subtitle_font, _subtitle_font_vertical
 from pipeline.export.cover_mask import _apply_cover_mask
+from pipeline.export.mux_audio import tts_caption_windows
 
 # Render loop tách sang render.py — re-export giữ import cũ (tests)
 from .render import (  # noqa: F401
@@ -175,6 +176,8 @@ def cover_and_burn(
     blur_band_mode: str = "off",
     blur_band_region: dict[str, float] | None = None,
     blur_band_auto_region: dict[str, float] | None = None,
+    tts_match: str = "preferVideo",
+    tts_bake_speed: float = 1.0,
 ) -> Path:
     """cover = blur hardsub; burn = đè chữ dịch. placement: below|above khi không cover.
 
@@ -224,6 +227,20 @@ def cover_and_burn(
     cues: list[tuple[float, float, float, float, str, str, str]] = []
     cue_segment_ids: list[str] = []
     _is_mask_only: list[bool] = []
+    _caption_uses_dub_timing: list[bool] = []
+    dub_windows: dict[str, tuple[float, float]] = {}
+    if project_id:
+        try:
+            dub_windows = tts_caption_windows(
+                segments,
+                ensure_layout(project_id),
+                match=tts_match,
+                bake_speed=tts_bake_speed,
+            )
+        except (OSError, ValueError):
+            # Captions still render on their source timeline if a project has
+            # no usable TTS file (for example a legacy/import-only project).
+            dub_windows = {}
     # vid_dur needed early to set mid hardsub cover to full video span.
     vid_dur = ffprobe_duration(video) or 0.0
     persistent_band = _persistent_blur_band_segment(
@@ -298,11 +315,18 @@ def cover_and_burn(
             cover_start, cover_end = max(0.0, s0), max(e0, s0 + 0.04)
             burn_start, burn_end = cover_start, cover_start  # zero-length burn
             burn_text = ""
+        segment_id = str(seg.get("id") or "")
+        dub_window = dub_windows.get(segment_id) if burn_text else None
+        if dub_window is not None:
+            # Only the translated text follows the spoken TTS clock.  Cover
+            # remains at the source OCR time so original hard-subs are hidden.
+            burn_start, burn_end = dub_window
         cues.append(
             (cover_start, cover_end, burn_start, burn_end, burn_text, source, layout)
         )
-        cue_segment_ids.append(str(seg.get("id") or ""))
+        cue_segment_ids.append(segment_id)
         _is_mask_only.append(mask_only)
+        _caption_uses_dub_timing.append(dub_window is not None)
     # Lấp khe cover nhỏ giữa 2 câu hardsub (không đụng tiêu đề dọc / nhãn / maskOnly).
     for i in range(len(cues) - 1):
         if _is_mask_only[i] or _is_mask_only[i + 1]:
@@ -328,9 +352,9 @@ def cover_and_burn(
         core_start = max(bs1, cs1)
         cut = (core_end + core_start) * 0.5
         if ce0 > cut:
-            cues[a] = (cs0, min(ce0, cut), bs0, min(be0, cut), t0, src0, lay0)
+            cues[a] = (cs0, min(ce0, cut), bs0, be0 if _caption_uses_dub_timing[a] else min(be0, cut), t0, src0, lay0)
         if cs1 < cut:
-            cues[b] = (max(cs1, cut), ce1, max(bs1, cut), be1, t1, src1, lay1)
+            cues[b] = (max(cs1, cut), ce1, bs1 if _caption_uses_dub_timing[b] else max(bs1, cut), be1, t1, src1, lay1)
     # Horizontal-horizontal: cắt COVER chồng (tail câu trước đè bbox sau)
     for i in range(len(cues) - 1):
         if _is_mask_only[i] or _is_mask_only[i + 1]:
@@ -356,6 +380,8 @@ def cover_and_burn(
     # vertical/label/mid khác vị trí → được phép overlap (watermark dọc xuyên clip).
     for i in range(len(cues) - 1):
         if _is_mask_only[i] or _is_mask_only[i + 1]:
+            continue
+        if _caption_uses_dub_timing[i] or _caption_uses_dub_timing[i + 1]:
             continue
         cs0, ce0, bs0, be0, t0, src0, lay0 = cues[i]
         cs1, ce1, bs1, be1, t1, src1, lay1 = cues[i + 1]
@@ -1017,7 +1043,10 @@ def cover_and_burn(
     # lanes (and feather) until the graph can reproduce that compositing.
     # Ceiling: exports with automatic blur trade throughput for WYSIWYG;
     # upgrade path: implement the same glass blend in ffgraph.py.
-    needs_preview_accurate_mask = has_feathered_blur or bool(auto_band_segments)
+    # The FFmpeg fast path has no per-cue timeline object after the graph is
+    # assembled.  Keep cascaded TTS captions on the frame renderer, where the
+    # exact spoken start/end is applied to each prepared overlay.
+    needs_preview_accurate_mask = has_feathered_blur or bool(auto_band_segments) or bool(dub_windows)
     if not needs_preview_accurate_mask and try_render_ffmpeg(
         video,
         out,

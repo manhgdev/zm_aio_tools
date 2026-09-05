@@ -1,6 +1,7 @@
 """run_export orchestrator."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -86,6 +87,39 @@ from pipeline.tts import tts_cache_key, tts_segment
 from pipeline.orchestrate.export_outputs import _project_slug, write_export_artifacts
 from pipeline.orchestrate.export_overlays import build_text_overlay_cues
 from pipeline.orchestrate.tts_fit import assign_tts_fit_speeds
+
+
+_BURN_SETTINGS_KEYS = (
+    "cover", "burn", "captionPlacement",
+    "subtitleFontSize", "subtitleFontFamily",
+    "coverMaskStyle", "coverMaskColor", "coverMaskOpacity",
+    "captionTextColor", "captionBgStyle", "captionBgColor",
+    "captionBgOpacity", "captionStroke",
+    "blurBandMode", "blurBandRegion", "blurBandAutoRegion", "blurBandAutoRegionVersion",
+    "previewAspectRatio", "previewCrop", "exportResolution",
+    "videoScale", "videoScaleX", "videoScaleY",
+)
+
+
+def _burn_cache_key(
+    video_fp: str,
+    settings: dict[str, Any],
+    segments: list[dict[str, Any]],
+    text_overlays: list[dict[str, Any]],
+    match_mode: str,
+    bake_speed: float,
+) -> str:
+    """SHA-256 digest của các input ảnh hưởng pixel burned.mp4."""
+    h = hashlib.sha256()
+    h.update(video_fp.encode())
+    for k in _BURN_SETTINGS_KEYS:
+        h.update(f"{k}={json.dumps(settings.get(k), sort_keys=True)}".encode())
+    h.update(f"match={match_mode}|bake={bake_speed:.4f}".encode())
+    seg_fields = ("id", "start", "end", "translation", "bbox", "layout",
+                  "coverStart", "coverEnd", "maskOnly", "fontFamily", "fontSize")
+    for seg in segments + text_overlays:
+        h.update(json.dumps({k: seg.get(k) for k in seg_fields}, sort_keys=True).encode())
+    return h.hexdigest()[:32]
 
 
 def _color_adjusted_video(project_id: str, root: Path, video: Path, settings: dict[str, Any]) -> Path:
@@ -499,6 +533,7 @@ def run_export(project_id: str, *, nested: bool = False) -> Path:
         render_info: dict[str, Any] = {}
 
         burned = out_burned(project_id)
+        burned_key_file = burned.with_suffix(".key")
         if not do_video:
             # Audio-only: không cần render video frame → copy nguồn làm temp để trích audio
             import shutil as _shutil
@@ -512,45 +547,72 @@ def run_export(project_id: str, *, nested: bool = False) -> Path:
                 kind="cpu",
                 cap=16,
             )
-            set_status(
-                project_id,
-                step="export",
-                progress=22,
-                message=progress_msg(msg.rstrip("…"), workers=exp_w),
-                running=True,
+            # ponytail: cache burn — tránh re-render khi setting + segments không đổi
+            _bake_speed = meta_baked_speed(meta)
+            _burn_key = _burn_cache_key(
+                video_fingerprint(video),
+                settings,
+                segments,
+                text_overlays,
+                match_mode,
+                _bake_speed,
             )
-            cover_and_burn(
-                video,
-                segments + text_overlays,
-                burned,
-                cover=cover,
-                burn=burn or bool(text_overlays),
-                subtitle_font_size=int(settings.get("subtitleFontSize", 0)),
-                subtitle_font_family=str(settings.get("subtitleFontFamily") or "system"),
-                project_id=project_id,
-                workers=exp_w,
-                caption_placement=place,
-                cover_mask_style=str(settings.get("coverMaskStyle") or "blur"),
-                cover_mask_color=str(settings.get("coverMaskColor") or "#4c1d95"),
-                cover_mask_opacity=int(settings.get("coverMaskOpacity", 0)),
-                caption_text_color=str(settings.get("captionTextColor") or "#ffffff"),
-                caption_bg_style=str(settings.get("captionBgStyle") or "none"),
-                caption_bg_color=str(settings.get("captionBgColor") or "#000000"),
-                caption_bg_opacity=int(settings.get("captionBgOpacity", 55)),
-                caption_stroke=bool(settings.get("captionStroke", True)),
-                post_crop=crop_box,
-                post_height=target_height,
-                video_scale_x=video_scale_x,
-                video_scale_y=video_scale_y,
-                render_info=render_info,
-                blur_band_mode=str(settings.get("blurBandMode") or "off"),
-                blur_band_region=settings.get("blurBandRegion") or None,
-                blur_band_auto_region=(
-                    settings.get("blurBandAutoRegion")
-                    if int(settings.get("blurBandAutoRegionVersion") or 0) == 1
-                    else None
-                ),
+            _burn_hit = (
+                burned.is_file()
+                and burned_key_file.is_file()
+                and burned_key_file.read_text().strip() == _burn_key
             )
+            if _burn_hit:
+                set_status(
+                    project_id,
+                    step="export",
+                    progress=60,
+                    message="Dùng lại bản burn đã cache (setting không đổi)",
+                    running=True,
+                )
+            else:
+                set_status(
+                    project_id,
+                    step="export",
+                    progress=22,
+                    message=progress_msg(msg.rstrip("…"), workers=exp_w),
+                    running=True,
+                )
+                cover_and_burn(
+                    video,
+                    segments + text_overlays,
+                    burned,
+                    cover=cover,
+                    burn=burn or bool(text_overlays),
+                    subtitle_font_size=int(settings.get("subtitleFontSize", 0)),
+                    subtitle_font_family=str(settings.get("subtitleFontFamily") or "system"),
+                    project_id=project_id,
+                    workers=exp_w,
+                    caption_placement=place,
+                    cover_mask_style=str(settings.get("coverMaskStyle") or "blur"),
+                    cover_mask_color=str(settings.get("coverMaskColor") or "#4c1d95"),
+                    cover_mask_opacity=int(settings.get("coverMaskOpacity", 0)),
+                    caption_text_color=str(settings.get("captionTextColor") or "#ffffff"),
+                    caption_bg_style=str(settings.get("captionBgStyle") or "none"),
+                    caption_bg_color=str(settings.get("captionBgColor") or "#000000"),
+                    caption_bg_opacity=int(settings.get("captionBgOpacity", 55)),
+                    caption_stroke=bool(settings.get("captionStroke", True)),
+                    post_crop=crop_box,
+                    post_height=target_height,
+                    video_scale_x=video_scale_x,
+                    video_scale_y=video_scale_y,
+                    render_info=render_info,
+                    blur_band_mode=str(settings.get("blurBandMode") or "off"),
+                    blur_band_region=settings.get("blurBandRegion") or None,
+                    blur_band_auto_region=(
+                        settings.get("blurBandAutoRegion")
+                        if int(settings.get("blurBandAutoRegionVersion") or 0) == 1
+                        else None
+                    ),
+                    tts_match=match_mode,
+                    tts_bake_speed=_bake_speed,
+                )
+                burned_key_file.write_text(_burn_key)
         else:
             # Không burn/cover — remux bỏ metadata (không copy2 nguyên file nguồn)
             from pipeline.core.jobs import run_cmd

@@ -4,7 +4,7 @@ from pipeline.core import media
 from pipeline.core.media import remap_timeline_for_speed_change
 from pipeline.export.burn_parts.layout_text import _caption_overlay, _preview_caption_layout
 from pipeline.export.fonts import _font_for_preset
-from pipeline.export.mux_audio import _tts_clip_plan
+from pipeline.export.mux_audio import _tts_clip_plan, tts_caption_windows
 
 
 def test_prefer_video_never_injects_legacy_070_speed():
@@ -317,6 +317,23 @@ def test_export_tts_uses_same_baked_speed_as_preview(tmp_path):
 
     assert clips[0][3] == 1.1 * 1.15
     assert clips[0][2] >= 2.0 / clips[0][3]
+
+
+def test_tts_caption_windows_follow_the_audio_cascade(tmp_path):
+    tts = tmp_path / "tts"
+    tts.mkdir()
+    (tts / "a.wav").touch()
+    (tts / "b.wav").touch()
+    segments = [
+        {"id": "a", "start": 0.0, "end": 0.5, "audioDuration": 1.0},
+        {"id": "b", "start": 0.5, "end": 1.0, "audioDuration": 1.0},
+    ]
+
+    windows = tts_caption_windows(segments, tmp_path, match="preferVideo")
+
+    assert windows["a"] == (0.0, 1.04)
+    assert windows["b"][0] == 1.06
+    assert windows["b"][1] == 2.1
 
 
 def test_export_retime_base_always_one_global_in_file_only(tmp_path):

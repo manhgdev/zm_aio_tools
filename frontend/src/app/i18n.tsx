@@ -193,6 +193,7 @@ export function localizePipelineMessage(locale: AppLocale, message: string): str
   }
   if (locale !== 'en') return message
   return message
+    .replace(/^Cache định vị OCR — (\d+) đoạn$/u, 'OCR location cache — $1 segments')
     .replace(/^REVIEW_CLOUD_GEMINI_HTTP_403$/g, 'Gemini rejected this request. Check the API key, its project, and Gemini API access in Settings → Cloud.')
     .replace(/^REVIEW_CLOUD_GEMINI_API_KEY_MISSING$/g, 'Gemini has no API key. Add one in Settings → Cloud, then retry.')
     .replace(/^REVIEW_CLOUD_GEMINI_AUTH_FAILED$/g, 'Gemini rejected the API key or it lacks Gemini API access. Check the key and project in Settings → Cloud.')

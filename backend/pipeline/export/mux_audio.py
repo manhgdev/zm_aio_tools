@@ -265,6 +265,49 @@ def _tts_clip_plan(
     return out, video_factor
 
 
+def tts_caption_windows(
+    segments: list[dict[str, Any]],
+    root: Path,
+    *,
+    match: str = "preferVideo",
+    bake_speed: float = 1.0,
+    max_tts_speed: float = 1.5,
+) -> dict[str, tuple[float, float]]:
+    """Return the exact onscreen windows used by the dubbed audio mixer.
+
+    A long sentence is deliberately cascaded instead of being cut off.  The
+    translated caption must use that same shifted clock; source-text cover
+    timing remains independent.  Keep this derived from ``_tts_clip_plan`` so
+    preview/export cannot silently drift when the mixer rules change.
+    """
+    clips, _factor = _tts_clip_plan(
+        segments,
+        root,
+        allow_video_slowdown=False,
+        match=match,
+        bake_speed=bake_speed,
+        max_tts_speed=max_tts_speed,
+    )
+    if not clips:
+        return {}
+
+    eligible: list[dict[str, Any]] = []
+    for seg in sorted((s for s in segments if s), key=lambda s: float(s.get("start") or 0)):
+        name = seg.get("audioFile") or f"{seg.get('id')}.wav"
+        wav = root / "tts" / str(name)
+        if not wav.exists():
+            wav = root / "tts" / f"{seg.get('id')}.wav"
+        if wav.exists():
+            eligible.append(seg)
+
+    windows: dict[str, tuple[float, float]] = {}
+    for seg, (_wav, start, duration, _speed, _volume) in zip(eligible, clips):
+        segment_id = str(seg.get("id") or "")
+        if segment_id:
+            windows[segment_id] = (start, start + duration)
+    return windows
+
+
 def _mix_tts_track(
     project_id: str,
     segments: list[dict[str, Any]],

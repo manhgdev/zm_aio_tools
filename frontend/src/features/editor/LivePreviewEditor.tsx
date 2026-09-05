@@ -44,6 +44,7 @@ import {
   ZOOM_MIN,
   adaptiveCoverLayout,
   autoFontFromBbox,
+  buildCascadePlan,
   fitFixedCoverCaption,
   buildExportSegments,
   captionChromeStyle,
@@ -1461,7 +1462,17 @@ export default function LivePreviewEditor({
         return base
       })()
     : []
-  const timelineSegsRaw = segmentsAt(layoutSegs, time)
+  // TTS is never cut in the mixer: when a sentence overflows its source slot,
+  // it is cascaded after the previous sentence.  Captions must follow that
+  // spoken clock, while masks/bboxes remain on the original source clock.
+  const captionPlaybackSegments = useMemo(() => {
+    const cascade = buildCascadePlan(layoutSegs, bakedSpeed)
+    return layoutSegs.map((seg) => {
+      const timing = cascade.get(seg.id)
+      return timing ? { ...seg, start: timing.effectiveStart, end: timing.effectiveEnd } : seg
+    })
+  }, [layoutSegs, bakedSpeed])
+  const captionTimelineSegsRaw = segmentsAt(captionPlaybackSegments, time)
     .filter((s) => (s.translation || '').trim() && !skipSpuriousMid(s))
   // Một mid / một caption ngang tại một thời điểm — tránh bbox trước đè bbox sau
   const pickOneMid = (list: Segment[]) => {
@@ -1479,8 +1490,9 @@ export default function LivePreviewEditor({
     return list.filter((s) => captionLaneOf(s, sourceHeight, sourceWidth) !== 'horizontal' || s.id === active.id)
   }
   const coverSegs = pickOneHorizontal(pickOneMid(withExpandedMidHardsubBand(coverSegsRaw)))
-  const timelineSegs = pickOneHorizontal(pickOneMid(withExpandedMidHardsubBand(timelineSegsRaw)))
+  const captionTimelineSegs = pickOneHorizontal(pickOneMid(captionTimelineSegsRaw))
   const timelineSeg = pickTimelineSeg(layoutSegs, time, captionPreferId)
+  const captionTimelineSeg = pickTimelineSeg(captionPlaybackSegments, time, captionPreferId)
   const coverSeg = (captionPreferId && coverSegs.find((s) => s.id === captionPreferId))
     ?? coverSegs[0]
     ?? null
@@ -1585,7 +1597,7 @@ export default function LivePreviewEditor({
   // Caption "over" layers: cover mode; hoặc dọc/nhãn. Mid/horizontal ở below/above → activeCaptionBox.
   const captionLayers =
     overlayBurnOn && !trackHidden.caption
-      ? timelineSegs.map((s) => {
+      ? captionTimelineSegs.map((s) => {
           const isVertLabel = s.layout === 'vertical' || s.layout === 'label'
           if (!overCoverMode) {
             // below/above: không vẽ mid/horizontal kiểu cover (đè OCR)
@@ -3950,7 +3962,7 @@ export default function LivePreviewEditor({
   const dubOn = selected?.layout === 'vertical' || selected?.layout === 'label'
     ? selected?.dub === true
     : selected?.dub !== false
-  const focusCaptionSeg = timelineSeg ?? selected
+  const focusCaptionSeg = captionTimelineSeg ?? timelineSeg ?? selected
   const overlayLaidFont =
     captionOverLayout?.fontPx
     ?? (timelineSeg && isOcrOverlayLayout(timelineSeg.layout) && captionOverLayout
@@ -3964,13 +3976,13 @@ export default function LivePreviewEditor({
   const placement = captionPlacement(settings)
   // below/above: mid + horizontal — cỡ = bbox che, neo trên/dưới dải OCR
   const activeCaptionMeta = (() => {
-    if (!overlayBurnOn || trackHidden.caption || !timelineSeg?.translation.trim() || placement === 'over') {
+    if (!overlayBurnOn || trackHidden.caption || !captionTimelineSeg?.translation.trim() || placement === 'over') {
       return null as null | { box: PixelBox; fontPx: number; lines: string[] }
     }
-    if (timelineSeg.layout === 'vertical' || timelineSeg.layout === 'label') return null
-    if (timelineSeg.bboxInherited === false) return null
+    if (captionTimelineSeg.layout === 'vertical' || captionTimelineSeg.layout === 'label') return null
+    if (captionTimelineSeg.bboxInherited === false) return null
     const laid = resolveBelowAboveLayout(
-      timelineSeg,
+      captionTimelineSeg,
       settings,
       sourceWidth,
       sourceHeight,
@@ -3980,7 +3992,7 @@ export default function LivePreviewEditor({
     if (!laid) return null
     return {
       box: laid.caption,
-      fontPx: laid.fontPx ?? resolveCaptionFontSize(timelineSeg, settings, sourceWidth, sourceHeight),
+      fontPx: laid.fontPx ?? resolveCaptionFontSize(captionTimelineSeg, settings, sourceWidth, sourceHeight),
       lines: laid.lines,
     }
   })()
@@ -5370,7 +5382,7 @@ export default function LivePreviewEditor({
                         )
                       })}
                       {/* below/above: soft shadow như bản đẹp — không nền, không stroke dày */}
-                      {activeCaptionBox && !trackHidden.caption && timelineSeg?.translation.trim() && (
+                      {activeCaptionBox && !trackHidden.caption && captionTimelineSeg?.translation.trim() && (
                         <div
                           className={cn(
                             '@container [container-type:size] absolute z-[22] pointer-events-none flex items-center justify-center',
@@ -5386,7 +5398,7 @@ export default function LivePreviewEditor({
                             style={{
                               ...captionFontStyle(activeCaptionPx, activeCaptionBox.h),
                               lineHeight: 1.12,
-                              ...captionChromeStyle(settings, timelineSeg),
+                              ...captionChromeStyle(settings, captionTimelineSeg),
                               transform: 'none',
                               backgroundColor: (settings.captionBgStyle || 'none') === 'none'
                                 ? 'transparent'
