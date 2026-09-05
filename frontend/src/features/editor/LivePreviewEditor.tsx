@@ -1538,18 +1538,24 @@ export default function LivePreviewEditor({
       }, sourceWidth, sourceHeight)
     }
     const autoBoxes = layoutSegs
-      .filter((segment) => Boolean(segment.bbox) && segment.layout !== 'vertical' && segment.layout !== 'label')
+      .filter((segment) => Boolean(segment.bbox) && captionLaneOf(segment, sourceHeight, sourceWidth) === 'horizontal')
       .map((segment) => clampCoverBox(segment.bbox!, sourceWidth, sourceHeight))
     if (!autoBoxes.length) return null
     // A union expands each time OCR sees a slightly different subtitle row.
     // Use the median box instead: it represents the stable subtitle lane and
     // rejects one-off detection noise rather than accumulating it.
     const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+    // Use median left/right edges so the band covers the widest stable subtitle
+    // extent on each side, without outlier boxes pulling it to the full frame edge.
+    const medianX = median(autoBoxes.map((box) => box.x))
+    const medianRight = median(autoBoxes.map((box) => box.x + box.w))
+    const medianY = median(autoBoxes.map((box) => box.y))
+    const medianH = median(autoBoxes.map((box) => box.h))
     return clampCoverBox({
-      x: median(autoBoxes.map((box) => box.x)),
-      y: median(autoBoxes.map((box) => box.y)),
-      w: median(autoBoxes.map((box) => box.w)),
-      h: median(autoBoxes.map((box) => box.h)),
+      x: medianX,
+      y: medianY,
+      w: Math.max(12, medianRight - medianX),
+      h: medianH,
     }, sourceWidth, sourceHeight)
   })()
   // Freeze the OCR result on first auto use. From then on the blur band and
@@ -1631,8 +1637,20 @@ export default function LivePreviewEditor({
     && activeBboxId === bboxSeg?.id
     && !selectedOverlayId
   useEffect(() => {
-    if (activeBboxId || selectedOverlayId) setActiveAutoBlurBand(false)
-  }, [activeBboxId, selectedOverlayId])
+    if (activeBboxId || selectedOverlayId || (activeAutoBlurBand && trackFocus !== 'text')) {
+      setActiveAutoBlurBand(false)
+    }
+  }, [activeBboxId, selectedOverlayId, trackFocus, activeAutoBlurBand])
+  useEffect(() => {
+    if (!activeAutoBlurBand) return
+    const handler = (e: PointerEvent) => {
+      if (!(e.target as HTMLElement).closest('.group\\/blurband')) {
+        setActiveAutoBlurBand(false)
+      }
+    }
+    document.addEventListener('pointerdown', handler, { capture: true })
+    return () => document.removeEventListener('pointerdown', handler, { capture: true })
+  }, [activeAutoBlurBand])
   const captionLanes = useMemo(() => {
     const present = new Set(layoutSegs.map((s) => captionLaneOf(s, sourceHeight, sourceWidth)))
     return CAPTION_LANE_DEFS.filter((l) => l.key === 'horizontal' || present.has(l.key))
@@ -3044,6 +3062,7 @@ export default function LivePreviewEditor({
   function focusDub(seg: Segment, opts?: { keepMulti?: boolean }) {
     setSelectedOverlayId(null)
     setSelectedMediaId(null)
+    setActiveBboxId(null)
     setSelectedId(seg.id)
     if (!opts?.keepMulti) {
       setSelectedIds([])
@@ -3055,6 +3074,7 @@ export default function LivePreviewEditor({
 
   function focusBg(clipId?: string) {
     setSelectedOverlayId(null)
+    setActiveBboxId(null)
     setTrackFocus('bg')
     setPropTab('audio')
     const clip = (clipId ? bgClips.find((c) => c.id === clipId) : null)
@@ -3065,6 +3085,7 @@ export default function LivePreviewEditor({
 
   function focusVideo(clipId?: string) {
     setSelectedOverlayId(null)
+    setActiveBboxId(null)
     setSelectedId(null)
     setSelectedIds([])
     setTrackFocus('video')
@@ -5053,10 +5074,73 @@ export default function LivePreviewEditor({
                       {/* Auto blur is a project-wide OCR band, not a caption bbox. */}
                       {activeAutoBlurBand && persistentBlurBandBox && tool !== 'text' && (
                         <div
-                          aria-hidden
-                          className="pointer-events-none absolute z-[16] rounded-sm border border-dashed border-fuchsia-200/90 shadow-[0_0_0_1px_rgba(88,28,135,0.7)]"
+                          data-blur-band
+                          className="absolute z-[35] cursor-move touch-none overflow-visible rounded-sm border border-dashed border-fuchsia-200/90 shadow-[0_0_0_1px_rgba(88,28,135,0.7)]"
                           style={sourceToDisplayStyle(persistentBlurBandBox, crop)}
-                        />
+                          onPointerDown={(e) => {
+                            if (busy) return
+                            e.preventDefault(); e.stopPropagation()
+                            const canvas = canvasRef.current
+                            if (!canvas) return
+                            const rect = canvas.getBoundingClientRect()
+                            const original = { ...persistentBlurBandBox }
+                            const update = (move: PointerEvent) => {
+                              const dx = ((move.clientX - e.clientX) / rect.width) * crop.w
+                              const dy = ((move.clientY - e.clientY) / rect.height) * crop.h
+                              const next = clampCoverBox({
+                                x: Math.round(original.x + dx),
+                                y: Math.round(original.y + dy),
+                                w: original.w, h: original.h,
+                              }, sourceWidth, sourceHeight)
+                              onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: next.x / sourceWidth, y: next.y / sourceHeight, w: next.w / sourceWidth, h: next.h / sourceHeight } })
+                            }
+                            const cleanup = () => { window.removeEventListener('pointermove', update); window.removeEventListener('pointerup', cleanup) }
+                            window.addEventListener('pointermove', update)
+                            window.addEventListener('pointerup', cleanup, { once: true })
+                          }}
+                        >
+                          {(['nw','n','ne','e','se','s','sw','w'] as const).map((handle) => (
+                            <span
+                              data-blur-band
+                              key={handle}
+                              className={cn(
+                                'absolute z-[31] size-3',
+                                handle === 'nw' && '-left-1.5 -top-1.5 cursor-nwse-resize',
+                                handle === 'n'  && 'left-1/2 -translate-x-1/2 -top-1.5 cursor-ns-resize',
+                                handle === 'ne' && '-right-1.5 -top-1.5 cursor-nesw-resize',
+                                handle === 'e'  && 'top-1/2 -translate-y-1/2 -right-1.5 cursor-ew-resize',
+                                handle === 'se' && '-right-1.5 -bottom-1.5 cursor-nwse-resize',
+                                handle === 's'  && 'left-1/2 -translate-x-1/2 -bottom-1.5 cursor-ns-resize',
+                                handle === 'sw' && '-left-1.5 -bottom-1.5 cursor-nesw-resize',
+                                handle === 'w'  && 'top-1/2 -translate-y-1/2 -left-1.5 cursor-ew-resize',
+                              )}
+                              onPointerDown={(e) => {
+                                if (busy) return
+                                e.preventDefault(); e.stopPropagation()
+                                const canvas = canvasRef.current
+                                if (!canvas) return
+                                const rect = canvas.getBoundingClientRect()
+                                const original = { ...persistentBlurBandBox }
+                                const minSize = 12
+                                const update = (move: PointerEvent) => {
+                                  const dx = ((move.clientX - e.clientX) / rect.width) * crop.w
+                                  const dy = ((move.clientY - e.clientY) / rect.height) * crop.h
+                                  let left = original.x, top = original.y
+                                  let right = original.x + original.w, bottom = original.y + original.h
+                                  if (handle.includes('w')) left = Math.max(0, Math.min(right - minSize, original.x + dx))
+                                  if (handle.includes('e')) right = Math.min(sourceWidth, Math.max(left + minSize, right + dx))
+                                  if (handle.includes('n')) top = Math.max(0, Math.min(bottom - minSize, original.y + dy))
+                                  if (handle.includes('s')) bottom = Math.min(sourceHeight, Math.max(top + minSize, bottom + dy))
+                                  const next = clampCoverBox({ x: Math.round(left), y: Math.round(top), w: Math.round(right - left), h: Math.round(bottom - top) }, sourceWidth, sourceHeight)
+                                  onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: next.x / sourceWidth, y: next.y / sourceHeight, w: next.w / sourceWidth, h: next.h / sourceHeight } })
+                                }
+                                const cleanup = () => { window.removeEventListener('pointermove', update); window.removeEventListener('pointerup', cleanup) }
+                                window.addEventListener('pointermove', update)
+                                window.addEventListener('pointerup', cleanup, { once: true })
+                              }}
+                            />
+                          ))}
+                        </div>
                       )}
 
                       {/* Bbox caption: same thin, unobtrusive frame as manual blur. */}
@@ -5069,7 +5153,7 @@ export default function LivePreviewEditor({
                             'group/bbox absolute border cursor-move z-[30] overflow-visible touch-none',
                             // A selected blur owns pointer input, even where it overlaps a
                             // subtitle. Otherwise this invisible bbox steals its move cursor.
-                            selectedOverlayId && 'pointer-events-none',
+                            (selectedOverlayId || activeAutoBlurBand) && 'pointer-events-none',
                             showBboxAtPlayhead ? 'border-white/75 border-dashed' : 'border-transparent bg-transparent',
                             showBboxAtPlayhead && !showCoverBlur && 'bg-white/5',
                             draggingBox && 'opacity-80',
