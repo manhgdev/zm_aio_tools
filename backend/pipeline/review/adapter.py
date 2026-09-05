@@ -129,11 +129,34 @@ def _review_caption_box_from_boxes(
         center_y = median((item[1] + item[3]) / 2 for item in row)
         return (min(1.0, span / max(1, width)) + min(0.25, len(row) * 0.05) + center_y / max(1, height) * 0.10, center_y)
 
-    chosen = max(rows, key=row_score)
-    if row_score(chosen)[0] < 0:
+    # Score all rows; negative = edge watermark, skip.
+    scored: list[tuple[float, float, list[tuple[int, int, int, int]]]] = []
+    for row in rows:
+        s0, s1 = row_score(row)
+        if s0 >= 0:
+            scored.append((s0, s1, row))
+    if not scored:
         return fallback
-    y0 = min(box[1] for box in chosen)
-    y1 = max(box[3] for box in chosen)
+
+    # Pick the best row as anchor, then union with any other subtitle row
+    # whose center-y is within one subtitle-block height from the anchor.
+    # This ensures a 2-line hardsub (OCR returns two separate row boxes)
+    # produces a single cover box instead of only covering the better row.
+    scored.sort(key=lambda item: item[0], reverse=True)
+    anchor_row = scored[0][2]
+    anchor_y0 = min(b[1] for b in anchor_row)
+    anchor_y1 = max(b[3] for b in anchor_row)
+    anchor_h = max(anchor_y1 - anchor_y0, round(height * 0.04))  # at least 4% line height
+
+    union_boxes: list[tuple[int, int, int, int]] = list(anchor_row)
+    for _, _, row in scored[1:]:
+        row_center = median((b[1] + b[3]) / 2 for b in row)
+        # Accept adjacent subtitle lines within 2× anchor height distance.
+        if abs(row_center - (anchor_y0 + anchor_y1) / 2) <= anchor_h * 2:
+            union_boxes.extend(row)
+
+    y0 = min(box[1] for box in union_boxes)
+    y1 = max(box[3] for box in union_boxes)
     # OCR thường chỉ trả phần ruột ký tự và bỏ stroke/viền ngoài. Cover phải
     # tràn lên trên đủ xa để không còn lộ viền subtitle gốc, nhất là CJK có
     # outline dày; vẫn giữ dải dưới cùng để không bắt nhầm watermark ở giữa.
