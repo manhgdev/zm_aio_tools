@@ -424,6 +424,61 @@ export function EditorPropertiesPanel({
                           </section>
                         )}
 
+                        {/* Blur band — project-level, hiện dù có/không có segment đang chọn */}
+                        {effectivePropTab === 'caption' && (
+                          <div className="border border-border rounded-md p-2 space-y-1.5 bg-muted/30">
+                            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                className="size-3.5 accent-primary"
+                                checked={(settings.blurBandMode ?? 'off') !== 'off'}
+                                onChange={(e) =>
+                                  onSettings({ ...settings, blurBandMode: e.target.checked ? 'auto' : 'off' })
+                                }
+                              />
+                              <span className="text-xs font-medium">{t('Vùng làm mờ cố định', 'Persistent blur zone')}</span>
+                            </label>
+                            {(settings.blurBandMode ?? 'off') !== 'off' && (
+                              <>
+                                <select
+                                  className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs outline-none focus:border-ring"
+                                  value={settings.blurBandMode ?? 'auto'}
+                                  onChange={(e) =>
+                                    onSettings({ ...settings, blurBandMode: e.target.value as 'auto' | 'manual' })
+                                  }
+                                >
+                                  <option value="auto">{t('Tự động (OCR phát hiện vị trí)', 'Auto (OCR-detected position)')}</option>
+                                  <option value="manual">{t('Thủ công (kéo khung trên preview)', 'Manual (drag frame on preview)')}</option>
+                                </select>
+                                {settings.blurBandMode === 'manual' && (
+                                  <div className="space-y-1">
+                                    <button
+                                      type="button"
+                                      className="w-full rounded-md border border-dashed border-cyan-500 bg-cyan-500/10 px-2 py-1.5 text-[11px] text-cyan-400 hover:bg-cyan-500/20 transition-colors"
+                                      onClick={() => setTool('cover')}
+                                    >
+                                      {t('Kéo khung làm mờ trên preview →', 'Drag blur zone frame on preview →')}
+                                    </button>
+                                    {settings.blurBandRegion && (
+                                      <p className="text-[10px] text-muted-foreground">
+                                        {t('Vùng: ', 'Zone: ')}
+                                        {Math.round(settings.blurBandRegion.x * 100)}%,{' '}
+                                        {Math.round(settings.blurBandRegion.y * 100)}%{' '}
+                                        {Math.round(settings.blurBandRegion.w * 100)}×{Math.round(settings.blurBandRegion.h * 100)}%
+                                      </p>
+                                    )}
+                                    {!settings.blurBandRegion && (
+                                      <p className="text-[10px] text-amber-400">
+                                        {t('Chưa định vị — kéo khung để chọn vùng.', 'Not positioned — drag the frame to select a zone.')}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+
                         {effectivePropTab === 'caption' && selected && (
                           <>
                             <PropLabel label="Ngôn ngữ gốc">
@@ -658,59 +713,6 @@ export function EditorPropertiesPanel({
                                 <option value="none">Không chèn chữ</option>
                               </select>
                             </PropLabel>
-
-                            {/* Blur band — vùng làm mờ cố định suốt video */}
-                            <div className="border border-border rounded-md p-2 space-y-1.5 bg-muted/30">
-                              <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                <input
-                                  type="checkbox"
-                                  className="size-3.5 accent-primary"
-                                  checked={(settings.blurBandMode ?? 'off') !== 'off'}
-                                  onChange={(e) =>
-                                    onSettings({ ...settings, blurBandMode: e.target.checked ? 'auto' : 'off' })
-                                  }
-                                />
-                                <span className="text-xs font-medium">{t('Vùng làm mờ cố định', 'Persistent blur zone')}</span>
-                              </label>
-                              {(settings.blurBandMode ?? 'off') !== 'off' && (
-                                <>
-                                  <select
-                                    className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs outline-none focus:border-ring"
-                                    value={settings.blurBandMode ?? 'auto'}
-                                    onChange={(e) =>
-                                      onSettings({ ...settings, blurBandMode: e.target.value as 'auto' | 'manual' })
-                                    }
-                                  >
-                                    <option value="auto">{t('Tự động (OCR phát hiện vị trí)', 'Auto (OCR-detected position)')}</option>
-                                    <option value="manual">{t('Thủ công (kéo khung trên preview)', 'Manual (drag frame on preview)')}</option>
-                                  </select>
-                                  {settings.blurBandMode === 'manual' && (
-                                    <div className="space-y-1">
-                                      <button
-                                        type="button"
-                                        className="w-full rounded-md border border-dashed border-cyan-500 bg-cyan-500/10 px-2 py-1.5 text-[11px] text-cyan-400 hover:bg-cyan-500/20 transition-colors"
-                                        onClick={() => setTool('cover')}
-                                      >
-                                        {t('Kéo khung lam mờ trên preview →', 'Drag blur zone frame on preview →')}
-                                      </button>
-                                      {settings.blurBandRegion && (
-                                        <p className="text-[10px] text-muted-foreground">
-                                          {t('Vùng: ', 'Zone: ')}
-                                          {Math.round(settings.blurBandRegion.x * 100)}%,{' '}
-                                          {Math.round(settings.blurBandRegion.y * 100)}%{' '}
-                                          {Math.round(settings.blurBandRegion.w * 100)}×{Math.round(settings.blurBandRegion.h * 100)}%
-                                        </p>
-                                      )}
-                                      {settings.blurBandMode === 'manual' && !settings.blurBandRegion && (
-                                        <p className="text-[10px] text-amber-400">
-                                          {t('Chưa định vị — kéo khung để chọn vùng.', 'Not positioned — drag the frame to select a zone.')}
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                            </div>
 
                             <div className="border-t border-border pt-2 space-y-2">
                               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Chữ</p>

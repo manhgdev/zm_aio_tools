@@ -97,10 +97,12 @@ def _review_caption_box_from_boxes(
 ) -> dict[str, int]:
     """Return one subtitle row, never the union of unrelated OCR labels."""
     fallback = _fallback_review_bbox(width, height)
-    # OCR can see a lower-third subtitle together with a corner logo/badge.
-    # Group words into rows first; taking one giant y-union was what made the
-    # cover jump to a label when both happened to be in the lower quarter.
-    bottom_boxes = [box for box in boxes if box[1] >= height * 0.70]
+    # Portrait videos (TikTok/Reels 9:16) have hardsubs at 45-80% from top.
+    # Landscape videos (16:9) have hardsubs at 70-90% from top.
+    is_portrait = height > width
+    # Only consider boxes below this fraction of the frame.
+    band_threshold = 0.45 if is_portrait else 0.68
+    bottom_boxes = [box for box in boxes if box[1] >= height * band_threshold]
     if not bottom_boxes:
         return fallback
     rows: list[list[tuple[int, int, int, int]]] = []
@@ -137,7 +139,9 @@ def _review_caption_box_from_boxes(
     # outline dày; vẫn giữ dải dưới cùng để không bắt nhầm watermark ở giữa.
     pad_top = max(8, round(height * 0.018))
     pad_bottom = max(7, round(height * 0.012))
-    top = max(round(height * 0.75), y0 - pad_top)
+    # Clamp top: portrait → 40%, landscape → 70%
+    min_top_fraction = 0.40 if is_portrait else 0.70
+    top = max(round(height * min_top_fraction), y0 - pad_top)
     bottom = min(height, y1 + pad_bottom)
     band_h = bottom - top
     return {
@@ -175,7 +179,10 @@ def locate_review_caption_bands(video: Path) -> list[tuple[float, dict[str, int]
                 if not ok:
                     continue
                 h, w = frame.shape[:2]
-                y_crop = int(h * 0.75)
+                # Portrait videos (9:16) have hardsubs 45-80% from top → scan bottom 60%.
+                # Landscape videos (16:9) keep bottom 30% scan.
+                crop_fraction = 0.40 if h > w else 0.70
+                y_crop = int(h * crop_fraction)
                 bottom_roi = frame[y_crop:h, 0:w]
                 results, _ = ocr(bottom_roi)
                 boxes: list[tuple[int, int, int, int]] = []

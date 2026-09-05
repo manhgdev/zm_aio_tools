@@ -1538,7 +1538,16 @@ export default function LivePreviewEditor({
       }, sourceWidth, sourceHeight)
     }
     const autoBoxes = layoutSegs
-      .filter((segment) => Boolean(segment.bbox) && captionLaneOf(segment, sourceHeight, sourceWidth) === 'horizontal')
+      .filter((segment) => {
+        if (!segment.bbox) return false
+        const lane = captionLaneOf(segment, sourceHeight, sourceWidth)
+        // Exclude structural overlays (vertical CJK, field labels). mid = hardsub.
+        if (lane === 'vertical' || lane === 'label') return false
+        // Exclude boxes whose centre-y is in top 30% — likely title/watermark.
+        const box = clampCoverBox(segment.bbox, sourceWidth, sourceHeight)
+        const cy = box.y + box.h / 2
+        return cy >= sourceHeight * 0.30
+      })
       .map((segment) => clampCoverBox(segment.bbox!, sourceWidth, sourceHeight))
     if (!autoBoxes.length) return null
     // A union expands each time OCR sees a slightly different subtitle row.
