@@ -92,99 +92,69 @@ def _fallback_review_bbox(width: int, height: int) -> dict[str, int]:
     }
 
 
+def _is_edge_watermark(box: tuple[int, int, int, int], width: int) -> bool:
+    """True if box is a narrow corner element (logo/watermark), not a subtitle."""
+    x0, _y0, x1, _y1 = box
+    span = x1 - x0
+    cx = (x0 + x1) / 2
+    return span < width * 0.15 and (cx < width * 0.25 or cx > width * 0.75)
+
+
 def _review_caption_box_from_boxes(
     boxes: list[tuple[int, int, int, int]], width: int, height: int
-) -> dict[str, int]:
-    """Return one subtitle row, never the union of unrelated OCR labels."""
-    fallback = _fallback_review_bbox(width, height)
-    # Portrait videos (TikTok/Reels 9:16) have hardsubs at 45-80% from top.
-    # Landscape videos (16:9) have hardsubs at 70-90% from top.
+) -> "dict[str, int] | None":
+    """Build a fixed subtitle band from ALL OCR boxes in the subtitle zone.
+
+    Hardsub captions from audio-driven translation sit in a fixed Y band and
+    only vary in horizontal extent (short vs long lines, 1-3 rows).  We take
+    the *union* of every detected box, then expand upward by ~1 row height to
+    cover any first line that OCR missed (e.g. strikethrough-style subtitles).
+    """
     is_portrait = height > width
-    # Only consider boxes below this fraction of the frame.
-    band_threshold = 0.45 if is_portrait else 0.68
-    bottom_boxes = [box for box in boxes if box[1] >= height * band_threshold]
-    if not bottom_boxes:
-        return fallback
-    rows: list[list[tuple[int, int, int, int]]] = []
-    y_tolerance = max(8, round(height * 0.022))
-    for box in sorted(bottom_boxes, key=lambda item: (item[1] + item[3]) / 2):
-        center = (box[1] + box[3]) / 2
-        for row in rows:
-            row_center = median((item[1] + item[3]) / 2 for item in row)
-            if abs(center - row_center) <= y_tolerance:
-                row.append(box)
-                break
-        else:
-            rows.append([box])
+    # Subtitle zone lower boundary: portrait 50%, landscape 63%.
+    zone_top = height * (0.50 if is_portrait else 0.63)
+    # Absolute top clamp: never treat top-half UI elements as subtitles.
+    min_top = height * (0.45 if is_portrait else 0.60)
 
-    def row_score(row: list[tuple[int, int, int, int]]) -> tuple[float, float]:
-        x0 = min(item[0] for item in row)
-        x1 = max(item[2] for item in row)
-        center_x = (x0 + x1) / 2
-        span = x1 - x0
-        # A small edge-only label is normally a watermark, not a subtitle.
-        edge_label = span < width * 0.12 and (center_x < width * 0.24 or center_x > width * 0.76)
-        if edge_label:
-            return (-1.0, 0.0)
-        center_y = median((item[1] + item[3]) / 2 for item in row)
-        return (min(1.0, span / max(1, width)) + min(0.25, len(row) * 0.05) + center_y / max(1, height) * 0.10, center_y)
+    sub = [
+        b for b in boxes
+        if b[1] >= zone_top and not _is_edge_watermark(b, width)
+    ]
+    if not sub:
+        return None
 
-    # Score all rows; negative = edge watermark, skip.
-    scored: list[tuple[float, float, list[tuple[int, int, int, int]]]] = []
-    for row in rows:
-        s0, s1 = row_score(row)
-        if s0 >= 0:
-            scored.append((s0, s1, row))
-    if not scored:
-        return fallback
+    y0 = min(b[1] for b in sub)
+    y1 = max(b[3] for b in sub)
 
-    # Pick the best row as anchor, then union with any other subtitle row
-    # whose center-y is within one subtitle-block height from the anchor.
-    # This ensures a 2-line hardsub (OCR returns two separate row boxes)
-    # produces a single cover box instead of only covering the better row.
-    scored.sort(key=lambda item: item[0], reverse=True)
-    anchor_row = scored[0][2]
-    anchor_y0 = min(b[1] for b in anchor_row)
-    anchor_y1 = max(b[3] for b in anchor_row)
-    anchor_h = max(anchor_y1 - anchor_y0, round(height * 0.04))  # at least 4% line height
+    # Median individual box height ≈ one subtitle row height.
+    heights = sorted(b[3] - b[1] for b in sub)
+    row_h = max(round(height * 0.035), heights[len(heights) // 2])
 
-    union_boxes: list[tuple[int, int, int, int]] = list(anchor_row)
-    for _, _, row in scored[1:]:
-        row_center = median((b[1] + b[3]) / 2 for b in row)
-        # Accept adjacent subtitle lines within 2× anchor height distance.
-        if abs(row_center - (anchor_y0 + anchor_y1) / 2) <= anchor_h * 2:
-            union_boxes.extend(row)
+    # Expand up by ~1 row to catch undetected first line (OCR misses on
+    # decorative/strikethrough hardsubs are common in portrait clips).
+    # Expand down lightly for stroke/shadow below the last detected glyph.
+    pad_top = max(round(height * 0.015), row_h)
+    pad_bot = max(round(height * 0.012), round(row_h * 0.35))
 
-    y0 = min(box[1] for box in union_boxes)
-    y1 = max(box[3] for box in union_boxes)
-    # OCR thường chỉ trả phần ruột ký tự và bỏ stroke/viền ngoài. Cover phải
-    # tràn lên trên đủ xa để không còn lộ viền subtitle gốc, nhất là CJK có
-    # outline dày; vẫn giữ dải dưới cùng để không bắt nhầm watermark ở giữa.
-    pad_top = max(8, round(height * 0.018))
-    pad_bottom = max(7, round(height * 0.012))
-    # Clamp top: portrait → 40%, landscape → 70%
-    min_top_fraction = 0.40 if is_portrait else 0.70
-    top = max(round(height * min_top_fraction), y0 - pad_top)
-    bottom = min(height, y1 + pad_bottom)
-    band_h = bottom - top
-    return {
-        "x": 0,
-        "y": max(0, min(height - band_h, top)),
-        "w": width,
-        "h": band_h,
-    }
+    top = max(round(min_top), y0 - pad_top)
+    bot = min(height, y1 + pad_bot)
+    return {"x": 0, "y": top, "w": width, "h": bot - top}
 
 
-def locate_review_caption_bands(video: Path) -> list[tuple[float, dict[str, int]]]:
-    """Collect actual subtitle candidates from the start, middle and end.
 
-    Missing OCR is deliberately omitted instead of represented by ``fallback``:
-    a real subtitle row can legitimately sit at exactly the fallback position.
+
+def locate_review_caption_bands(
+    video: Path,
+) -> list[tuple[float, list[tuple[int, int, int, int]]]]:
+    """Return raw OCR subtitle boxes per sampled frame.
+
+    Each entry is (time_fraction, boxes) where boxes are raw pixel rectangles
+    (x0, y0, x1, y1) in the subtitle zone.  Frames with no subtitle text are
+    omitted.  The caller aggregates across all frames for stability.
     """
     from pipeline.core.media import ffprobe_duration, video_size
 
     width, height = video_size(video)
-    fallback = _fallback_review_bbox(width, height)
     try:
         import cv2
         from pipeline.ocr.extract import _rapidocr_labels
@@ -192,22 +162,21 @@ def locate_review_caption_bands(video: Path) -> list[tuple[float, dict[str, int]
         duration = max(0.1, float(ffprobe_duration(video) or 0))
         ocr = _rapidocr_labels()
         cap = cv2.VideoCapture(str(video))
-        bands: list[tuple[float, dict[str, int]]] = []
+        frames: list[tuple[float, list[tuple[int, int, int, int]]]] = []
+        is_portrait = height > width
+        # Scan bottom 60% for portrait (hardsubs at 45-80%), bottom 37% for landscape.
+        crop_fraction = 0.40 if is_portrait else 0.63
+        zone_top = height * (0.50 if is_portrait else 0.63)
         try:
-            # Three samples per temporal third make a transient title card or
-            # animated brand label lose to the persistent subtitle lane.
+            # 9 evenly spaced samples → 3 per temporal third for stability.
             for fraction in (0.06, 0.16, 0.28, 0.42, 0.50, 0.58, 0.72, 0.84, 0.94):
                 cap.set(cv2.CAP_PROP_POS_MSEC, duration * fraction * 1000.0)
                 ok, frame = cap.read()
                 if not ok:
                     continue
                 h, w = frame.shape[:2]
-                # Portrait videos (9:16) have hardsubs 45-80% from top → scan bottom 60%.
-                # Landscape videos (16:9) keep bottom 30% scan.
-                crop_fraction = 0.40 if h > w else 0.70
                 y_crop = int(h * crop_fraction)
-                bottom_roi = frame[y_crop:h, 0:w]
-                results, _ = ocr(bottom_roi)
+                results, _ = ocr(frame[y_crop:, :])
                 boxes: list[tuple[int, int, int, int]] = []
                 if results:
                     for item in results:
@@ -216,68 +185,42 @@ def locate_review_caption_bands(video: Path) -> list[tuple[float, dict[str, int]
                         by0 = int(min(p[1] for p in pts)) + y_crop
                         bx1 = int(max(p[0] for p in pts))
                         by1 = int(max(p[1] for p in pts)) + y_crop
-                        boxes.append((bx0, by0, bx1, by1))
+                        if by0 >= zone_top and not _is_edge_watermark((bx0, by0, bx1, by1), width):
+                            boxes.append((bx0, by0, bx1, by1))
                 if boxes:
-                    bands.append((fraction, _review_caption_box_from_boxes(boxes, width, height)))
+                    frames.append((fraction, boxes))
         finally:
             cap.release()
-        return bands
+        return frames
     except Exception:
         return []
 
 
 def locate_review_caption_band(video: Path) -> dict[str, int]:
-    """Resolve one stable Review subtitle lane from all sampled frames.
+    """Find the fixed subtitle band for the whole video.
 
-    Review narration is intentionally fixed on screen.  Choosing an OCR box
-    per cue makes both the blur mask and translated caption jump whenever OCR
-    sees a different subtitle line or a false positive.
+    Hardsub captions sit in a stable Y band (1-3 rows, varying left/right
+    extent).  We collect *all* OCR detections across the video, take their
+    union Y range, then expand upward by ~1 row to catch first lines that
+    OCR misses due to decorative hardsub styles (strikethrough, outline, etc.).
     """
     from pipeline.core.media import video_size
 
     width, height = video_size(video)
     fallback = _fallback_review_bbox(width, height)
-    candidates = locate_review_caption_bands(video)
-    if not candidates:
+    frame_boxes = locate_review_caption_bands(video)
+    if not frame_boxes:
         return fallback
 
-    # Cluster rows by geometry. A winning group must recur in at least two of
-    # the start/middle/end thirds; this rejects an animated label, scene title
-    # or logo that only occurs during one part of the movie.
-    groups: list[list[tuple[float, dict[str, int]]]] = []
-    y_tolerance = max(10, round(height * 0.028))
-    h_tolerance = max(10, round(height * 0.030))
-    for sample in sorted(candidates, key=lambda item: item[1]["y"]):
-        fraction, box = sample
-        for group in groups:
-            gy = median(int(item[1]["y"]) for item in group)
-            gh = median(int(item[1]["h"]) for item in group)
-            if abs(int(box["y"]) - gy) <= y_tolerance and abs(int(box["h"]) - gh) <= h_tolerance:
-                group.append(sample)
-                break
-        else:
-            groups.append([sample])
-
-    stable_groups = [
-        group for group in groups
-        if len(group) >= 2 and len({min(2, int(fraction * 3)) for fraction, _box in group}) >= 2
-    ]
-    if not stable_groups:
+    # Require detections in at least 2 different time thirds to reject
+    # a transient scene title or animated logo that only appears once.
+    thirds = {min(2, int(frac * 3)) for frac, _ in frame_boxes}
+    all_boxes = [b for _, boxes in frame_boxes for b in boxes]
+    if len(thirds) < 2 and len(all_boxes) < 3:
         return fallback
 
-    def group_score(group: list[tuple[float, dict[str, int]]]) -> tuple[int, int, float]:
-        thirds = len({min(2, int(fraction * 3)) for fraction, _box in group})
-        # For equally persistent rows, subtitles are normally lower than UI.
-        y = median(int(box["y"]) for _fraction, box in group)
-        return (thirds, len(group), y)
-
-    winner = max(stable_groups, key=group_score)
-    return {
-        "x": 0,
-        "y": int(round(median(int(box["y"]) for _fraction, box in winner))),
-        "w": max(64, int(width or fallback["w"])),
-        "h": max(24, int(round(median(int(box["h"]) for _fraction, box in winner)))),
-    }
+    result = _review_caption_box_from_boxes(all_boxes, width, height)
+    return result or fallback
 
 
 def apply_edit_plan(
