@@ -82,13 +82,14 @@ export function coverMaskPreviewStyle(
     }
   }
   if (style === 'feather') {
-    // CapCut-style band: the backdrop blur and tint fade only at the top/bottom.
-    const tintA = Math.min(0.52, a * 0.52)
-    const blurPx = Math.round(28 + a * 24)
+    // CapCut's blur effect is a pure optical blur, not a dark coloured plate.
+    // Opacity remains available for other mask styles; feather always keeps
+    // the source luminance/colour and fades only its blur at the two edges.
+    const blurPx = 22
     return {
-      backgroundColor: `rgba(${r},${g},${b},${tintA})`,
-      backdropFilter: `blur(${blurPx}px) saturate(0.78) brightness(0.82)`,
-      WebkitBackdropFilter: `blur(${blurPx}px) saturate(0.78) brightness(0.82)`,
+      backgroundColor: 'transparent',
+      backdropFilter: `blur(${blurPx}px) saturate(0.88)`,
+      WebkitBackdropFilter: `blur(${blurPx}px) saturate(0.88)`,
       maskImage: 'linear-gradient(to bottom, transparent 0%, #000 20%, #000 80%, transparent 100%)',
       WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, #000 20%, #000 80%, transparent 100%)',
       isolation: 'isolate' as const,

@@ -32,28 +32,44 @@ export function TimelineFilmstrip({
     if (!stableUrl || duration <= 0 || stripW <= 0) return
     let cancelled = false
     const video = document.createElement('video')
-    video.src = stableUrl
     video.muted = true
     video.playsInline = true
-    video.preload = 'metadata'
+    // Electron/WebKit often never emits loadeddata for a detached video when
+    // preload is "metadata". Register listeners before assigning src and ask
+    // for decoded data, otherwise the canvas stays transparent over black.
+    video.preload = 'auto'
     const span = Math.max(0.05, t1 - t0)
     const mediaCap = Math.max(duration, t1)
 
     const seekTo = (t: number) => new Promise<void>((resolve) => {
-      const done = () => { video.removeEventListener('seeked', done); resolve() }
+      const done = () => {
+        video.removeEventListener('seeked', done)
+        window.clearTimeout(timer)
+        resolve()
+      }
+      const timer = window.setTimeout(done, 2500)
       video.addEventListener('seeked', done)
       try {
         video.currentTime = Math.max(0, Math.min(mediaCap - 0.04, t))
       } catch {
-        resolve()
+        done()
       }
     })
 
     void (async () => {
       try {
         await new Promise<void>((resolve, reject) => {
-          video.onloadeddata = () => resolve()
+          const ready = () => {
+            video.removeEventListener('loadeddata', ready)
+            video.removeEventListener('loadedmetadata', ready)
+            resolve()
+          }
+          video.addEventListener('loadeddata', ready, { once: true })
+          video.addEventListener('loadedmetadata', ready, { once: true })
           video.onerror = () => reject(new Error('filmstrip'))
+          video.src = stableUrl
+          video.load()
+          if (video.readyState >= HTMLMediaElement.HAVE_METADATA) ready()
         })
         if (cancelled) return
         const canvas = canvasRef.current
@@ -105,4 +121,3 @@ export function TimelineFilmstrip({
     />
   )
 }
-

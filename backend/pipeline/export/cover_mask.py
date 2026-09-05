@@ -193,15 +193,9 @@ def _blur_tint_region(
     alpha = _blur_tint_alpha(opacity_pct)
     if alpha >= 0.005:
         covered = covered * (1.0 - alpha) + tint_bgr * alpha
-    # Browser backdrop compositing lifts dark detail while compressing bright
-    # detail.  Apply the same frosted-glass tone curve before the highlight cap;
-    # a raw OpenCV blur otherwise renders materially darker than the editor.
-    covered = covered * 0.65 + np.array([66.0, 63.0, 59.0], dtype=np.float32)
-    # The preview's frosted plate has a deliberately narrow luminance range.
-    # Preserve gentle scene variation, but stop a bright shirt/light directly
-    # behind the old subtitle from washing out the cover in the encoded video.
-    channel_median = np.median(covered.reshape(-1, 3), axis=0)
-    covered = np.minimum(covered, channel_median + 64.0)
+    # A CapCut blur preserves the scene colour and luminance.  Do not add a
+    # fixed dark "glass plate": that made the feather option look like a black
+    # rectangle even when the user left overlay opacity at 0%.
     # The normal blur needs only a small seam feather. Feathered blur passes a
     # larger value to reproduce CapCut's soft-top/soft-bottom band mask.
     roi = frame_bgr[y0:y1, x0:x1].copy()
@@ -311,12 +305,13 @@ def _apply_cover_mask(
         # ponytail: "Khối" = _blur_region cũ (median + pixelate + gaussian) — che hardsub thật
         return _blur_region(frame_bgr, box)
     if st == "feather":
+        # Pure CapCut-style optical blur: no tint or fixed dark overlay.
         # 20% of the band on each side matches the preview's 20→80% mask ramp.
         return _blur_tint_region(
             frame_bgr,
             box,
             color_hex,
-            opacity_pct,
+            0,
             feather_px=max(12, round(max(1, box[3] - box[1]) * 0.2)),
         )
     return _blur_tint_region(frame_bgr, box, color_hex, opacity_pct)
