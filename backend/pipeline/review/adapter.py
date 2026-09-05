@@ -130,10 +130,12 @@ def _review_caption_box_from_boxes(
     heights = sorted(b[3] - b[1] for b in sub)
     row_h = max(round(height * 0.035), heights[len(heights) // 2])
 
-    # Expand up by ~1 row to catch undetected first line (OCR misses on
-    # decorative/strikethrough hardsubs are common in portrait clips).
-    # Expand down lightly for stroke/shadow below the last detected glyph.
-    pad_top = max(round(height * 0.015), row_h)
+    # Expand up to catch undetected first line. OCR on short clips or
+    # strikethrough-style hardsubs often detects only the LOWER row of a
+    # 2-line subtitle. 1×row_h (≈70 px) is not enough to reach the upper
+    # row top (≈80-90 px above); use 1.5× for portrait, 1× for landscape.
+    row_expand = round(row_h * 1.5) if is_portrait else row_h
+    pad_top = max(round(height * 0.015), row_expand)
     pad_bot = max(round(height * 0.012), round(row_h * 0.35))
 
     top = max(round(min_top), y0 - pad_top)

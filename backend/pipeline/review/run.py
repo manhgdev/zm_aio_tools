@@ -521,7 +521,18 @@ def run_review_job(job: dict[str, Any]) -> dict[str, Any]:
             # while this part is composed at the export resolution (1920×1080).
             # Locate after crop/scale so both the blur and replacement caption
             # use the coordinates actually rendered to the viewer.
-            part_caption_bbox = locate_review_caption_band(raw_part)
+            # Prefer the cached subtitle band from project meta (written by
+            # _apply_fixed_review_bboxes at the end of the PREVIOUS run).
+            # Fresh locate on raw_part is non-deterministic and can return
+            # only 1 row for short clips, causing incorrect cover placement.
+            from pipeline.core.project import load_meta as _load_meta
+            _proj_meta = _load_meta(project_id) or {}
+            _cached_band = (_proj_meta.get("settings") or {}).get("subtitleBand")
+            if _cached_band and isinstance(_cached_band, dict) and _cached_band.get("h", 0) > 0:
+                part_caption_bbox = dict(_cached_band)
+            else:
+                part_caption_bbox = locate_review_caption_band(raw_part)
+
             audio_segments = _part_export_segments(
                 plan, raw_part, caption_bbox=part_caption_bbox,
             )
