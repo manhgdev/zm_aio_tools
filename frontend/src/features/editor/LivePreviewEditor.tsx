@@ -1653,7 +1653,11 @@ export default function LivePreviewEditor({
   useEffect(() => {
     if (!activeAutoBlurBand) return
     const handler = (e: PointerEvent) => {
-      if (!(e.target as HTMLElement).closest('.group\\/blurband')) {
+      const target = e.target as HTMLElement
+      // data-blur-band marks both the interactive band div and its 8 resize handles.
+      // data-blur-band-clip marks the timeline clip button that activates the band.
+      const inBand = target.closest('[data-blur-band]') || target.closest('[data-blur-band-clip]')
+      if (!inBand) {
         setActiveAutoBlurBand(false)
       }
     }
