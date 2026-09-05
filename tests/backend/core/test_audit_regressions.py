@@ -237,6 +237,14 @@ def test_desktop_build_uses_the_ci_release_version_file() -> None:
     assert "readFileSync(releaseVersionFilePath, \"utf8\")" in build
 
 
+def test_windows_bundle_keeps_pdb_for_external_transformers() -> None:
+    """Transformers loaded from the runtime venv still imports stdlib pdb."""
+    build = Path("build_app/build.mjs").read_text(encoding="utf-8")
+    assert "'--hidden-import', 'pdb'" in build
+    excludes = build.split("for (const mod of [", 1)[1].split("]) args.push", 1)[0]
+    assert "'pdb'" not in excludes
+
+
 def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     """A stable payload prevents every update from adding another .app."""
     workflow = Path(".github/workflows/release-macos.yml").read_text(encoding="utf-8")

@@ -24,6 +24,7 @@ from .probe import (
     _ocr_venv_fast,
     _runtime_torch_accel,
     _runtime_mod_ok,
+    _runtime_modules_batch_ok,
     _runtime_venv_fast,
     _torch_broken,
     _torch_cuda_ready,
@@ -140,6 +141,44 @@ _ORT_GPU_PKG = "onnxruntime-gpu==1.19.2"
 _ORT_DIRECTML_PKG = "onnxruntime-directml"
 _SHERPA_CUDA_SPEC = "sherpa-onnx==1.13.5+cuda12.cudnn9"
 _SHERPA_CUDA_INDEX = "https://k2-fsa.github.io/sherpa/onnx/cuda.html"
+
+# Frozen APP packages live in a user-owned runtime venv.  Only repair modules
+# that fail to import; upgrading every package on each click makes uv reject
+# locally-installed wheels that have no newer index release.
+_FROZEN_PACKAGE_MODULES: dict[str, tuple[str, ...]] = {
+    "faster-whisper>=1.1.0": ("faster_whisper",),
+    "rapidocr-onnxruntime>=1.3.20": ("rapidocr_onnxruntime",),
+    "pillow": ("PIL",),
+    "opencv-python-headless": ("cv2",),
+    "huggingface-hub>=0.34": ("transformers", "vieneu"),
+    "transformers>=4.46.0": ("transformers",),
+    "tokenizers": ("transformers",),
+    "soundfile": ("soundfile",),
+    "cffi": ("cffi",),
+    "sherpa-onnx>=1.12.0": ("sherpa_onnx",),
+    "sherpa-onnx-bin>=1.12.0": ("sherpa_onnx",),
+    "httpx": ("vieneu",),
+    "pyyaml": ("vieneu",),
+    "perth": ("vieneu",),
+    "sea-g2p": ("vieneu",),
+    "soxr": ("vieneu",),
+}
+
+
+def _frozen_runtime_missing_modules() -> list[str]:
+    """Return runtime modules that fail a real import probe, not dist metadata."""
+    status = _runtime_modules_batch_ok(list(_AI_RUNTIME_MODULES))
+    return [name for name in _AI_RUNTIME_MODULES if not status.get(name, (False, "missing"))[0]]
+
+
+def _frozen_runtime_package_specs(missing: list[str]) -> list[str]:
+    """Map failed modules to a stable, de-duplicated package install list."""
+    wanted = {
+        package
+        for package, modules in _FROZEN_PACKAGE_MODULES.items()
+        if any(module in missing for module in modules)
+    }
+    return [package for package in _AI_RUNTIME_PACKAGES if package in wanted]
 
 
 def _sherpa_cuda_ready(python: Path | str = sys.executable) -> bool:
@@ -443,16 +482,27 @@ def install_ai_runtime() -> dict[str, Any]:
     ensure_diarization_models(DATA / "models" / "pyannote", log=_install_log_fn)
     if getattr(sys, "frozen", False):
         ok, detail = _runtime_venv_fast()
-        cv2_ok = ok and _runtime_mod_ok("cv2")[0]
-        if ok and cv2_ok and (_runtime_ort_accel() != "cuda" or _sherpa_cuda_ready(_video_clone_home() / ".venv-runtime" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python"))):
+        # Filesystem metadata is only a fast hint; import every runtime module
+        # before declaring success so a broken wheel is repaired on demand.
+        missing = _frozen_runtime_missing_modules()
+        needs_torch = _runtime_torch_needs_install()
+        if ok and not missing and not needs_torch and (
+            _runtime_ort_accel() != "cuda"
+            or _sherpa_cuda_ready(
+                _video_clone_home()
+                / ".venv-runtime"
+                / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+            )
+        ):
             return {
                 "ok": True,
                 "message": "Gói AI đã sẵn sàng",
                 "detail": detail,
             }
-        missing = list(_AI_RUNTIME_MODULES)
-        # Máy trắng luôn cần torch + torchaudio; installer tự chọn CUDA/macOS/CPU.
-        needs_torch = True
+        # Probe imports in the runtime venv.  A package that is installed and
+        # usable must not be upgraded just because its dist-info is unusual.
+        # ``missing`` and ``needs_torch`` were calculated above for this branch.
+        cv2_ok = "cv2" not in missing
     else:
         # Phát hiện torch bị corrupt (file mix version) — phải reinstall khi dừng backend.
         if _torch_broken():
@@ -502,12 +552,13 @@ def install_ai_runtime() -> dict[str, Any]:
             except (OSError, subprocess.SubprocessError):
                 pass  # bỏ qua nếu file bị lock
 
-        # Lọc bỏ opencv nếu cv2.pyd đang bị lock
-        packages = [
-            p for p in _AI_RUNTIME_PACKAGES
-            if not (_cv2_locked and p.startswith(("opencv-python", "pillow")))
-        ] if _cv2_locked else list(_AI_RUNTIME_PACKAGES)
-
+        # Lọc bỏ OpenCV nếu cv2.pyd đang bị lock.
+        packages = _frozen_runtime_package_specs(missing)
+        if _cv2_locked:
+            packages = [
+                p for p in packages
+                if not p.startswith("opencv-python")
+            ]
         base_cmd = [uv, "pip", "install", "--python", str(py), "--upgrade", *packages]
         ort_accel = _runtime_ort_accel()
         if ort_accel == "cuda":

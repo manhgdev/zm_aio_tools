@@ -229,3 +229,57 @@ def test_ai_runtime_installs_when_transformers_missing(monkeypatch):
 
     assert result["ok"] is True
     assert any("transformers" in " ".join(map(str, c)) for c in calls)
+
+
+def test_frozen_runtime_does_not_upgrade_importable_packages(monkeypatch):
+    """An existing runtime must not fail on uv's no-newer-version result."""
+    statuses = {name: (True, "ok") for name in system_check._AI_RUNTIME_MODULES}
+    monkeypatch.setattr(system_check, "_runtime_modules_batch_ok", lambda _names: statuses)
+    assert system_check._frozen_runtime_missing_modules() == []
+    assert system_check._frozen_runtime_package_specs([]) == []
+
+
+def test_frozen_runtime_scopes_packages_to_missing_module():
+    specs = system_check._frozen_runtime_package_specs(["transformers"])
+    assert specs == [
+        "huggingface-hub>=0.34",
+        "tokenizers",
+        "transformers>=4.46.0",
+    ]
+
+
+def test_frozen_ai_install_skips_uv_when_runtime_imports_are_ready(monkeypatch, tmp_path):
+    """Stale dist-info must not trigger a failing no-newer-version upgrade."""
+    monkeypatch.setattr(system_check.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(system_check, "_runtime_venv_fast", lambda: (False, "stale metadata"))
+    statuses = {name: (True, "ok") for name in system_check._AI_RUNTIME_MODULES}
+    monkeypatch.setattr(system_check, "_runtime_modules_batch_ok", lambda _names: statuses)
+    monkeypatch.setattr(system_check, "_runtime_mod_ok", lambda _name: (True, "ok"))
+    monkeypatch.setattr(system_check, "_runtime_torch_needs_install", lambda: False)
+    monkeypatch.setattr(system_check, "_runtime_ort_accel", lambda: "cpu")
+    monkeypatch.setattr(system_check, "_sherpa_cuda_ready", lambda *_args: True)
+    monkeypatch.setattr(system_check, "_video_clone_home", lambda: tmp_path)
+    monkeypatch.setattr(system_check, "_find_uv", lambda: "uv.exe")
+    monkeypatch.setattr(
+        system_check,
+        "_ensure_frozen_runtime_venv",
+        lambda _uv, _venv: tmp_path / "python.exe",
+    )
+    monkeypatch.setattr(
+        "pipeline.asr.speaker.ensure_diarization_models",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(system_check, "_ai_runtime_detail", lambda: "ready")
+    monkeypatch.setattr(system_check, "_invalidate_checks_cache", lambda: None)
+    monkeypatch.setattr(
+        system_check.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    def unexpected_pip(*_args, **_kwargs):
+        raise AssertionError("ready runtime must not run uv upgrade")
+
+    monkeypatch.setattr(system_check, "_pip_stream", unexpected_pip)
+    result = system_check.install_ai_runtime()
+    assert result["ok"] is True
