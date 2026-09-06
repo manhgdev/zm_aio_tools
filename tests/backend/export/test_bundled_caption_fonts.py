@@ -13,6 +13,7 @@ from pipeline.export import fonts
 from pipeline.export.burn_parts.layout_text import (
     _layout_caption,
     _layout_caption_over,
+    _layout_mid_caption,
     _layout_caption_vertical,
 )
 from pipeline.export.burn_parts.ocr_boxes import (
@@ -20,6 +21,7 @@ from pipeline.export.burn_parts.ocr_boxes import (
     _merge_ocr_samples,
     _segment_bbox_override,
 )
+from pipeline.export.burn_parts.pipeline import _merge_overlapping_caption_cue_boxes
 
 
 EXPECTED = {
@@ -170,6 +172,65 @@ class BundledCaptionFontTest(unittest.TestCase):
             _expand_mid_box_to_subtitle_band(matched, band, 1080, 1920),
             [(268, 1322, 814, 1499)],
         )
+
+    def test_simultaneous_three_row_cues_share_one_tight_cover(self) -> None:
+        cues = [
+            (1.0, 2.0, 1.0, 2.0, "a", "a", "mid"),
+            (1.0, 2.0, 1.0, 2.0, "b", "b", "mid"),
+            (1.0, 2.0, 1.0, 2.0, "c", "c", "mid"),
+        ]
+        boxes = [
+            [(250, 1200, 820, 1250)],
+            [(230, 1255, 840, 1305)],
+            [(260, 1310, 810, 1360)],
+        ]
+        merged = _merge_overlapping_caption_cue_boxes(
+            cues,
+            ["a", "b", "c"],
+            boxes,
+            {key: {"layout": "mid"} for key in ("a", "b", "c")},
+            1080,
+            1920,
+        )
+        for result in merged:
+            self.assertLessEqual(result[0][1], 1200)
+            self.assertGreaterEqual(result[0][3], 1360)
+
+    def test_non_overlapping_cues_are_not_merged(self) -> None:
+        cues = [
+            (1.0, 2.0, 1.0, 2.0, "a", "a", "mid"),
+            (2.0, 3.0, 2.0, 3.0, "b", "b", "mid"),
+        ]
+        boxes = [[(250, 1200, 820, 1250)], [(250, 1260, 820, 1310)]]
+        self.assertEqual(
+            _merge_overlapping_caption_cue_boxes(
+                cues,
+                ["a", "b"],
+                boxes,
+                {"a": {"layout": "mid"}, "b": {"layout": "mid"}},
+                1080,
+                1920,
+            ),
+            boxes,
+        )
+
+    def test_multiline_translation_fits_inside_and_centres_on_cover(self) -> None:
+        font_path = fonts._font_for_preset("system")
+        layout = _layout_mid_caption(
+            "Bản dịch dài cần tự xuống dòng và nằm giữa vùng che",
+            lambda size: ImageFont.truetype(font_path, size),
+            (220, 1180, 860, 1380),
+            1080,
+            1920,
+            preferred_fs=40,
+        )
+        x0, y0, x1, y1 = layout["box"]
+        self.assertGreaterEqual(x0, 0)
+        self.assertLessEqual(x1, 1080)
+        self.assertGreaterEqual(y0, 0)
+        self.assertLessEqual(y1, 1920)
+        self.assertLessEqual(layout["text_h"], y1 - y0)
+        self.assertAlmostEqual((y0 + y1) / 2, 1280, delta=1)
 
     def test_ocr_sample_merge_ignores_a_previous_subtitle_lane(self) -> None:
         # The first probe is still on the preceding subtitle; four following

@@ -87,6 +87,42 @@ def _filter_subtitle_boxes(
     return kept or boxes
 
 
+def _expand_mid_box_to_subtitle_band(
+    matched: list[tuple[int, int, int, int]],
+    band: list[tuple[int, int, int, int]],
+    fw: int,
+    fh: int,
+) -> list[tuple[int, int, int, int]]:
+    """Keep the source-matched width, but cover every nearby subtitle row."""
+    current = _union_box(matched)
+    if current is None:
+        return []
+    nearby: list[tuple[int, int, int, int]] = []
+    current_w = max(1, current[2] - current[0])
+    current_h = max(1, current[3] - current[1])
+    current_cy = (current[1] + current[3]) * 0.5
+    for candidate in band:
+        overlap = max(
+            0,
+            min(current[2], candidate[2]) - max(current[0], candidate[0]),
+        )
+        candidate_w = max(1, candidate[2] - candidate[0])
+        candidate_h = max(1, candidate[3] - candidate[1])
+        candidate_cy = (candidate[1] + candidate[3]) * 0.5
+        if (
+            overlap >= min(current_w, candidate_w) * 0.35
+            and abs(current_cy - candidate_cy) <= max(current_h, candidate_h) * 1.6
+        ):
+            nearby.append(candidate)
+    if not nearby:
+        return [current]
+    top = min(current[1], *(box[1] for box in nearby))
+    bottom = max(current[3], *(box[3] for box in nearby))
+    if bottom - top > round(fh * 0.18):
+        return [current]
+    return [(current[0], max(0, top), current[2], min(fh, bottom))]
+
+
 def _merge_ocr_samples(
     samples: list[tuple[int, int, int, int]], fw: int, fh: int
 ) -> list[tuple[int, int, int, int]]:
@@ -116,13 +152,26 @@ def _merge_ocr_samples(
         center = 1.0 - abs(cx / max(1, fw) - 0.5) * 1.4
         return float(bw) * max(0.15, center) + (_scy(b) / max(1, fh)) * fw * 0.35
 
-    best = max(pool, key=_sub_score)
+    def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+        ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+        iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+        inter = ix * iy
+        area_a = max(1, (a[2] - a[0]) * (a[3] - a[1]))
+        area_b = max(1, (b[2] - b[0]) * (b[3] - b[1]))
+        return inter / max(1, area_a + area_b - inter)
+
+    # Five probes can straddle a subtitle change. Pick the geometry supported
+    # by most frames before applying the visual subtitle score.
+    support = {
+        box: sum(1 for other in pool if _iou(box, other) >= 0.45)
+        for box in pool
+    }
+    best = max(pool, key=lambda box: (support[box], _sub_score(box)))
     bcx = (best[0] + best[2]) * 0.5
-    bcy = _scy(best)
     near = [
         b
         for b in pool
-        if abs(_scy(b) - bcy) <= fh * 0.09
+        if _iou(best, b) >= 0.45
         and abs((b[0] + b[2]) * 0.5 - bcx) <= fw * 0.42
         and not _is_corner_ui_box(b, fw, fh)
     ] or [best]
@@ -202,7 +251,13 @@ def _ocr_cue_boxes(
                     if fh * 0.18 < cy0 < fh * mid_bottom_cutoff(fw, fh):
                         b = mid_b
                     else:
-                        b, _tx = _ocr_band_subs(frame, ocr)
+                        band_b, _tx = _ocr_band_subs(frame, ocr)
+                        # Source matching can see only one line. Preserve its
+                        # precise horizontal anchor while borrowing the full
+                        # vertical extent from the lower subtitle detector.
+                        b = _expand_mid_box_to_subtitle_band(
+                            mid_b, band_b, fw, fh,
+                        ) or mid_b
                 else:
                     b, _tx = _ocr_band_subs(frame, ocr)
                     # Band có thể bắt nhầm chữ đáy khác — nếu source mid flash ngắn, thử mid không lọc
@@ -655,9 +710,15 @@ def _expand_vertical_watermark_cover(
 
 
 def _segment_bbox_override(
-    segment: dict[str, Any], width: int, height: int
+    segment: dict[str, Any], width: int, height: int, *, accept_automatic: bool = False
 ) -> tuple[int, int, int, int] | None:
-    """User bbox wins over OCR — giữ đúng w/h preview (chỉ kẹp trong khung video)."""
+    """Return an editor bbox, never an unverified inherited OCR hint by default."""
+    # ``bboxInherited`` means the locator supplied geometry.  A failed probe
+    # can borrow that geometry from a different cue, so it is unsafe as an
+    # export override.  Callers that explicitly need a *verified* automatic
+    # result opt in with ``accept_automatic``.
+    if segment.get("bboxInherited") is True and not accept_automatic:
+        return None
     bbox = segment.get("bbox")
     if not isinstance(bbox, dict):
         return None
@@ -944,6 +1005,7 @@ __all__ = [
     '_blur_hardsubs',
     '_is_corner_ui_box',
     '_filter_subtitle_boxes',
+    '_expand_mid_box_to_subtitle_band',
     '_merge_ocr_samples',
     '_ocr_cue_boxes',
     '_resolve_workers',

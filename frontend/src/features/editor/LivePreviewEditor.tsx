@@ -1374,11 +1374,16 @@ export default function LivePreviewEditor({
   const selectedFontPx = resolveCaptionFontSize(selectedLayout ?? undefined, settings, sourceWidth, sourceHeight)
   const fallbackBox = seedCoverBox(selectedLayout ?? undefined, sourceWidth, sourceHeight, selectedFontPx)
     ?? fallbackCoverBox(sourceWidth, sourceHeight, selectedFontPx)
+  const hasPreviewCoverBbox = (segment: Segment | null | undefined) => Boolean(segment?.bbox)
+  const hasVerifiedCoverBbox = (segment: Segment | null | undefined) => hasPreviewCoverBbox(segment)
+    && (segment?.bboxDetected === true || segment?.bboxInherited !== true)
   const selectedLayoutSource = resolveOverLayout(selectedLayout ?? undefined, settings, sourceWidth, sourceHeight)
   // Ưu tiên layout đã nới ngang — không dùng raw bbox hẹp (che hở chữ Trung)
   const selectedBoxSource = bboxDraft
     ?? selectedLayoutSource?.cover
-    ?? (selectedLayout?.bbox ? clampCoverBox(selectedLayout.bbox, sourceWidth, sourceHeight) : null)
+    ?? (hasPreviewCoverBbox(selectedLayout) && selectedLayout?.bbox
+      ? clampCoverBox(selectedLayout.bbox, sourceWidth, sourceHeight)
+      : null)
     ?? resolveSegmentCover(selectedLayout ?? undefined, settings, sourceWidth, sourceHeight)
     ?? fallbackBox
   const verticalWatermarkSegs = useMemo(
@@ -1393,7 +1398,7 @@ export default function LivePreviewEditor({
   const solidAtPlayhead = solidOverlaysAt(layoutSegs, time)
   const withExpandedMidHardsubBand = (items: Segment[]) => {
     const mids = items.filter((seg) =>
-      Boolean(seg.bbox)
+      hasVerifiedCoverBbox(seg)
       && effectiveOverlayLayout(seg, sourceHeight, sourceWidth) === 'mid',
     )
     if (!mids.length) return items
@@ -1411,7 +1416,7 @@ export default function LivePreviewEditor({
             const peerWords = peer.words || []
             const peerStart = peerWords[0]?.start
             const peerEnd = peerWords[peerWords.length - 1]?.end
-            return Boolean(peer.bbox)
+            return hasVerifiedCoverBbox(peer)
               && effectiveOverlayLayout(peer, sourceHeight, sourceWidth) === 'mid'
               && typeof peerStart === 'number'
               && typeof peerEnd === 'number'
@@ -1517,11 +1522,9 @@ export default function LivePreviewEditor({
       ? coverSegs
           .filter((s) => {
             if (overCoverMode) {
-              // A carried-forward OCR box is still the only known location of
-              // the old glyphs.  Skipping it left the source subtitle visible
-              // under its translation whenever the persistent blur band was
-              // disabled.
-              return Boolean(s.bbox)
+              // Preview has no live OCR pass. Show inherited geometry as a
+              // temporary mask; export still re-measures it from video.
+              return hasPreviewCoverBbox(s)
             }
             // below/above: không che chữ hardsub mid/ngang — chỉ dọc/nhãn
             return s.layout === 'vertical' || s.layout === 'label'

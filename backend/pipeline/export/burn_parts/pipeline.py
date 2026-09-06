@@ -118,7 +118,7 @@ def _auto_blur_band_segments(
     for segment in segments:
         if segment.get("bboxDetected") is not True:
             continue
-        bbox = _segment_bbox_override(segment, width, height)
+        bbox = _segment_bbox_override(segment, width, height, accept_automatic=True)
         if bbox is not None:
             boxes.append(bbox)
     bands: list[dict[str, Any]] = []
@@ -146,6 +146,69 @@ def _auto_blur_band_segments(
             "coverMaskOpacity": opacity,
         })
     return bands
+
+
+def _merge_overlapping_caption_cue_boxes(
+    cues: list[tuple],
+    cue_segment_ids: list[str],
+    cue_boxes: list[list[tuple[int, int, int, int]]],
+    segments_by_id: dict[str, dict[str, Any]],
+    width: int,
+    height: int,
+) -> list[list[tuple[int, int, int, int]]]:
+    """Union simultaneous rows from one visual subtitle block."""
+    merged = [list(boxes) for boxes in cue_boxes]
+    for i, box_list in enumerate(cue_boxes):
+        current = _union_box(box_list) if box_list else None
+        if current is None:
+            continue
+        layout_i = str(segments_by_id.get(cue_segment_ids[i], {}).get("layout") or "horizontal")
+        if layout_i not in ("horizontal", "mid"):
+            continue
+        peer_indices = {i}
+        cs0, ce0 = float(cues[i][0]), float(cues[i][1])
+        frontier = [i]
+        while frontier:
+            base_idx = frontier.pop()
+            base = _union_box(cue_boxes[base_idx])
+            if base is None:
+                continue
+            for j, other_list in enumerate(cue_boxes):
+                if j in peer_indices or not other_list:
+                    continue
+                layout_j = str(segments_by_id.get(cue_segment_ids[j], {}).get("layout") or "horizontal")
+                if layout_j not in ("horizontal", "mid"):
+                    continue
+                cs1, ce1 = float(cues[j][0]), float(cues[j][1])
+                if max(cs0, cs1) >= min(ce0, ce1):
+                    continue
+                other = _union_box(other_list)
+                if other is None:
+                    continue
+                overlap = max(0, min(base[2], other[2]) - max(base[0], other[0]))
+                row_h = max(base[3] - base[1], other[3] - other[1], 1)
+                center_gap = abs((base[1] + base[3] - other[1] - other[3]) * 0.5)
+                if overlap >= min(base[2] - base[0], other[2] - other[0]) * 0.35 and center_gap <= row_h * 1.55:
+                    peer_indices.add(j)
+                    frontier.append(j)
+        peers = [
+            box
+            for idx in peer_indices
+            for box in [_union_box(cue_boxes[idx])]
+            if box is not None
+        ]
+        union = _union_box(peers)
+        if len(peers) == 1 or union is None or union[3] - union[1] > round(height * 0.18):
+            continue
+        pad_x = max(4, round(width * 0.004))
+        pad_y = max(3, round(height * 0.002))
+        merged[i] = [(
+            max(0, union[0] - pad_x),
+            max(0, union[1] - pad_y),
+            min(width, union[2] + pad_x),
+            min(height, union[3] + pad_y),
+        )]
+    return merged
 
 
 def cover_and_burn(
@@ -409,7 +472,7 @@ def cover_and_burn(
     ocr = None
     segments_by_id = {str(seg.get("id") or ""): seg for seg in segments}
     auto_band_boxes = [
-        box for box in (_segment_bbox_override(seg, w, h) for seg in auto_band_segments)
+        box for box in (_segment_bbox_override(seg, w, h, accept_automatic=True) for seg in auto_band_segments)
         if box is not None
     ]
     manual_by_idx: list[tuple[int, int, int, int] | None] = []
@@ -425,7 +488,7 @@ def cover_and_burn(
             and not seg.get("maskOnly")
             and layout in ("horizontal", "mid")
         ):
-            raw_box = _segment_bbox_override(seg, w, h)
+            raw_box = _segment_bbox_override(seg, w, h, accept_automatic=True)
             center = ((raw_box[1] + raw_box[3]) * 0.5) if raw_box else h * 0.84
             mb = min(
                 auto_band_boxes,
@@ -434,12 +497,13 @@ def cover_and_burn(
             unverified_auto_by_idx.append(False)
             manual_by_idx.append(mb)
             continue
-        # An inherited bbox is the locator's latest usable position for this
-        # cue.  It must still cover the source glyphs in normal “cover old +
-        # insert translation” mode.  Previously it was discarded here, so
-        # turning off the project-wide blur exposed the old subtitle below the
-        # newly rendered translation.
-        unverified_auto = False
+        # A borrowed locator bbox is only a hint.  It may be from a different
+        # subtitle row/shot, so re-measure this cue instead of rendering a
+        # huge or vertically shifted cover from stale cache geometry.
+        unverified_auto = (
+            seg.get("bboxInherited") is True
+            and seg.get("bboxDetected") is not True
+        )
         unverified_auto_by_idx.append(unverified_auto)
         mb = _segment_bbox_override(seg, w, h)
         # Bbox đáy bake sẵn + source CJK → bỏ, OCR lại vị trí thật (giữa/đáy)
@@ -449,41 +513,6 @@ def cover_and_burn(
     for i, mb in enumerate(manual_by_idx):
         if mb is not None:
             cue_boxes[i] = [mb]
-
-    if cover:
-        # OCR sometimes emits the two visible subtitle rows as separate cues.
-        # Keep their individual text/timing, but use one union cover for each
-        # active visual block.  This mirrors the automatic blur-band logic and
-        # prevents the untouched upper/lower source row from leaking through.
-        for i, box_list in enumerate(cue_boxes):
-            if not box_list:
-                continue
-            layout_i = str(cue_segment_map.get(cue_segment_ids[i], {}).get("layout") or "horizontal")
-            if layout_i not in ("horizontal", "mid"):
-                continue
-            current = _union_box(box_list)
-            if current is None:
-                continue
-            peers = [current]
-            cs0, ce0 = float(cues[i][0]), float(cues[i][1])
-            for j, other_list in enumerate(cue_boxes):
-                if i == j or not other_list:
-                    continue
-                layout_j = str(cue_segment_map.get(cue_segment_ids[j], {}).get("layout") or "horizontal")
-                if layout_j not in ("horizontal", "mid"):
-                    continue
-                cs1, ce1 = float(cues[j][0]), float(cues[j][1])
-                if max(cs0, cs1) >= min(ce0, ce1):
-                    continue
-                other = _union_box(other_list)
-                if other is None:
-                    continue
-                overlap = max(0, min(current[2], other[2]) - max(current[0], other[0]))
-                height = max(current[3] - current[1], other[3] - other[1], 1)
-                center_gap = abs((current[1] + current[3] - other[1] - other[3]) * 0.5)
-                if overlap >= min(current[2] - current[0], other[2] - other[0]) * 0.35 and center_gap <= height * 1.55:
-                    peers.append(other)
-            cue_boxes[i] = [_union_box(peers)] if len(peers) > 1 else box_list
 
     need_ocr_idx = [i for i, mb in enumerate(manual_by_idx) if mb is None]
     manual_n = len(cues) - len(need_ocr_idx)
@@ -556,6 +585,13 @@ def cover_and_burn(
             progress=15,
             message=f"Dùng vùng che đã chỉnh trong preview ({manual_n} câu)",
             running=True,
+        )
+
+    if cover:
+        # Run after missing boxes have been OCR'd; doing this before OCR left
+        # newly detected upper/lower rows uncovered when blurBandMode was off.
+        cue_boxes = _merge_overlapping_caption_cue_boxes(
+            cues, cue_segment_ids, cue_boxes, cue_segment_map, w, h,
         )
 
     if project_id and (cover or burn) and cues:

@@ -268,7 +268,10 @@ test('Clone CapCut recognition and translation UI is bilingual', () => {
 test('Drawing tab uses bilingual localized UI', async () => {
   const source = await readFile(new URL('../frontend/src/pages/DrawingPage.tsx', import.meta.url), 'utf8')
   assert.match(source, /localize\(locale,/)
-  assert.match(source, /Image → Drawing Video/)
+  assert.match(source, /Dự án vẽ tay/)
+  assert.match(source, /Drawing project/)
+  assert.match(source, /Không gian vẽ tay/)
+  assert.match(source, /Drawing workspace/)
   assert.match(source, /Tạo video vẽ tay/)
   assert.match(source, /Đường đi nét/)
   assert.match(source, /Stroke route/)
@@ -276,6 +279,11 @@ test('Drawing tab uses bilingual localized UI', async () => {
   assert.match(source, /Centre outward/)
   assert.match(source, /OutputFolderField/)
   assert.match(source, /appFolder="drawing"/)
+  assert.match(source, /Kịch bản hoặc SRT/)
+  assert.match(source, /Script or SRT/)
+  assert.match(source, /\/api\/srt-image\/jobs/)
+  assert.match(source, /drawing: \{ enabled: true/)
+  assert.match(source, /resolve-output-folder\?tab=drawing/)
 })
 
 test('Automation queue UI is bilingual and keeps per-job controls', async () => {

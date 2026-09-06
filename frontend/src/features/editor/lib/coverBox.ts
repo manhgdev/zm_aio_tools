@@ -27,6 +27,28 @@ export function captionCenterInCover(coverY: number, coverH: number, textBlockH:
   return Math.round(coverY + Math.max(0, (coverH - textBlockH) / 2))
 }
 
+/** Cover cuối phải ôm trọn mọi dòng caption, mở đều quanh tâm OCR. */
+export function expandCoverForCaptionLines(
+  cover: PixelBox,
+  lineCount: number,
+  fontPx: number,
+  frameW: number,
+  frameH: number,
+): PixelBox {
+  const lines = Math.max(1, Math.round(lineCount))
+  const fs = Math.max(1, fontPx)
+  const padY = Math.max(4, Math.round(fs * 0.16))
+  const neededH = Math.ceil(lines * fs * 1.1 + padY * 2)
+  if (neededH <= cover.h) return clampCoverBox(cover, frameW, frameH)
+  const cy = cover.y + cover.h / 2
+  const h = Math.min(frameH, neededH)
+  return clampCoverBox(
+    { ...cover, y: Math.round(cy - h / 2), h },
+    frameW,
+    frameH,
+  )
+}
+
 /** Nới cover theo bề ngang cần, giữ tâm — không lệch 1 phía khi chạm mép frame. */
 export function expandCoverCentered(
   box: PixelBox,

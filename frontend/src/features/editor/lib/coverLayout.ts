@@ -29,6 +29,7 @@ import {
   coverToAnchor,
   cropCoversFull,
   expandCoverCentered,
+  expandCoverForCaptionLines,
   fallbackCoverBox,
   fitHardsubCover,
   frameMaxInnerWidth,
@@ -387,10 +388,30 @@ export function resolvePreviewOverLayout(
     overlayLay === 'vertical' ||
     seg?.bbox
   ) {
+    const finalCover = overlayLay === 'mid'
+      ? expandCoverForCaptionLines(
+          base.cover,
+          base.lines.length,
+          base.fontPx ?? resolveCaptionFontSize(seg, settings, frameW, frameH),
+          frameW,
+          frameH,
+        )
+      : base.cover
+    const finalBase = finalCover.h === base.cover.h && finalCover.y === base.cover.y
+      ? base
+      : {
+          ...base,
+          cover: finalCover,
+          caption: {
+            ...base.caption,
+            y: finalCover.y,
+            h: finalCover.h,
+          },
+        }
     const fullCrop = cropCoversFull(crop, frameW, frameH)
-    const cover = fullCrop ? base.cover : fitBoxToCrop(base.cover, crop)
-    const caption = fullCrop ? base.caption : fitBoxToCrop(base.caption, crop)
-    return { ...base, cover, caption, mask: base.cover }
+    const cover = fullCrop ? finalBase.cover : fitBoxToCrop(finalBase.cover, crop)
+    const caption = fullCrop ? finalBase.caption : fitBoxToCrop(finalBase.caption, crop)
+    return { ...finalBase, cover, caption, mask: cover }
   }
 
   // Dưới đây là logic dành cho Whisper (dịch giọng nói, KHÔNG CÓ BBOX)
