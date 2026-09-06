@@ -182,8 +182,12 @@ def api_no_vocals_progress(project_id: str):
 
 
 @router.get("/api/projects/{project_id}/audio/download")
-def api_project_audio_download(project_id: str, kind: str = "original"):
-    """Tải WAV theo chế độ: original | no_vocals | vocals."""
+async def api_project_audio_download(project_id: str, kind: str = "original"):
+    """Tải WAV theo chế độ: original | no_vocals | vocals.
+
+    ponytail: chạy trong asyncio.to_thread — no_vocals có thể gọi Demucs (~5–30 phút).
+    """
+    import anyio
     from pipeline.export.mux import export_project_audio
 
     meta = load_meta(project_id)
@@ -194,7 +198,9 @@ def api_project_audio_download(project_id: str, kind: str = "original"):
         raise HTTPException(404, "Thiếu video nguồn")
     k = (kind or "original").strip().lower()
     try:
-        path = export_project_audio(project_id, video, k, report=False)
+        path = await anyio.to_thread.run_sync(
+            lambda: export_project_audio(project_id, video, k, report=False)
+        )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -217,6 +223,7 @@ def api_project_audio_download(project_id: str, kind: str = "original"):
         filename=f"{project_id}_{label}.wav",
         content_disposition_type="attachment",
     )
+
 
 
 @router.get("/api/projects/{project_id}/cache/{name}")

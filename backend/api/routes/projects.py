@@ -169,7 +169,8 @@ def api_project_asset_file(project_id: str, asset_id: str):
 
 
 @router.get("/api/projects/{project_id}/assets/{asset_id}/thumbnail")
-def api_project_asset_thumbnail(project_id: str, asset_id: str):
+async def api_project_asset_thumbnail(project_id: str, asset_id: str):
+    import anyio
     meta = load_meta(project_id)
     if not meta: raise HTTPException(404)
     item = next((x for x in meta.get("mediaAssets") or [] if x.get("id") == asset_id), None)
@@ -181,13 +182,21 @@ def api_project_asset_thumbnail(project_id: str, asset_id: str):
     thumb = ensure_layout(project_id) / "assets" / f"{asset_id}.thumb.jpg"
     if not thumb.is_file() or thumb.stat().st_mtime < src.stat().st_mtime:
         temp = thumb.with_suffix(".tmp.jpg")
-        try:
-            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "0.5", "-i", str(src), "-frames:v", "1", "-vf", "scale=320:-2", str(temp)], check=True, timeout=45)
+        def _make_thumb() -> None:
+            subprocess.run(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-ss", "0.5", "-i", str(src), "-frames:v", "1",
+                 "-vf", "scale=320:-2", str(temp)],
+                check=True, timeout=45,
+            )
             temp.replace(thumb)
+        try:
+            await anyio.to_thread.run_sync(_make_thumb)
         except (OSError, subprocess.SubprocessError):
             temp.unlink(missing_ok=True)
             raise HTTPException(422, "Không tạo được thumbnail video") from None
     return FileResponse(thumb, media_type="image/jpeg")
+
 
 
 @router.delete("/api/projects/{project_id}/assets/{asset_id}")

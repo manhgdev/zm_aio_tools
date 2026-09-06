@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { localize, useLocale } from '@/app/i18n'
 import { BackTitle } from '@/shared/components/BackTitle'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
+
 import './DrawingPage.css'
 
 type PreviewTab = 'preview' | 'line-map' | 'stroke-path'
