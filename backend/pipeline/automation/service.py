@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from pipeline.core.app_config import load_app_config
-from pipeline.core.output_paths import downloads_folder, safe_output_part
+from pipeline.core.output_paths import downloads_folder, safe_output_part, selected_or_default
 from .prompts import audio_first_prompt
 from .store import AutomationStore
 
