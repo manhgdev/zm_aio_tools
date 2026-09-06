@@ -458,17 +458,16 @@ class AutomationService:
 
         prompts = canonical.get("prompts")
         if not prompts and (srt or audio):
-            self.set_stage(job_id, "image_prompt", 39, "Đang phân tích audio/SRT và tạo prompt ảnh.")
+            self.set_stage(job_id, "image_prompt", 39, "Đang phân tích SRT và tạo prompt ảnh.")
             # Prefer SRT (text) for timing and dialogue; chat LLMs do not accept audio attachments.
             files = [path for path in (srt,) if path] or ([script] if script else [])
             content, artifact = self._request_chat(job_id, self._image_prompt_request(settings), files)
             prompts = workspace / "image_prompts.txt"
             self._write_text_result(prompts, artifact, content)
-            # If AI pasted content inline (no artifact), further filter to timecode lines only
-            if not artifact:
-                clean = self._extract_prompt_lines(prompts.read_text(encoding="utf-8"))
-                if clean:
-                    prompts.write_text(clean + "\n", encoding="utf-8")
+            # Format prompt file so each prompt is separated by a blank line
+            clean = self._extract_prompt_lines(prompts.read_text(encoding="utf-8"))
+            if clean:
+                prompts.write_text(clean + "\n", encoding="utf-8")
             self._validate_prompt_file(prompts)
             self.save_artifact(job_id, "prompts", prompts, stage="image_prompt")
             inputs["prompts"] = str(prompts); inputs["generatedPrompts"] = True
@@ -547,11 +546,11 @@ class AutomationService:
         language = "English" if str(settings.get("language") or "vi").lower() == "en" else "Vietnamese"
         instruction = (
             "Read the attached SRT with timecodes (or script), split visual beats by meaning, then output ONLY the image prompt lines. "
-            "One prompt per line: 001_[00:00:00.000-00:00:05.000] <English description>. "
+            "Format: 001_[00:00:00.000-00:00:05.000] <English description>. Separate each prompt with a blank line. "
             "No preamble, no explanation, no filename mention — start immediately with line 001."
             if language == "English" else
             "Đọc file SRT có timecode (hoặc kịch bản) đính kèm, chia visual beat theo ý nghĩa, rồi chỉ xuất ra các dòng prompt ảnh. "
-            "Mỗi dòng theo dạng: 001_[00:00:00.000-00:00:05.000] <mô tả tiếng Anh>. "
+            "Mỗi prompt theo dạng: 001_[00:00:00.000-00:00:05.000] <mô tả tiếng Anh>. Mỗi prompt cách nhau 1 dòng trống. "
             "Không mở đầu, không giải thích, không nhắc tên file — bắt đầu ngay bằng dòng 001."
         )
         instruction = self._audio_first_engine_prompt(settings) + "\n" + instruction
@@ -628,12 +627,12 @@ class AutomationService:
 
     @staticmethod
     def _extract_prompt_lines(text: str) -> str:
-        """Keep only valid timecode prompt lines (NNN_[HH:MM:SS...] ...)."""
+        """Keep only valid timecode prompt lines (NNN_[HH:MM:SS...] ...), separated by a blank line."""
         lines = [
-            ln for ln in text.splitlines()
+            ln.strip() for ln in text.splitlines()
             if re.match(r"^\d{3}_\[", ln.strip())
         ]
-        return "\n".join(lines)
+        return "\n\n".join(lines)
 
     @staticmethod
     def _validate_prompt_file(path: Path) -> None:

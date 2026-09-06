@@ -257,7 +257,7 @@ def test_automation_language_changes_chat_instructions(tmp_path):
 
     assert "exactly 5" in service._topic_prompt("space", settings)
     assert "English" in service._script_prompt("space", settings)
-    assert "Output prompts in English" in service._image_prompt_request(settings)
+    assert "Format: 001_[" in service._image_prompt_request(settings)
 
 
 def test_audio_first_topic_prompt_uses_the_full_engine_contract(tmp_path):
@@ -521,7 +521,6 @@ def test_audio_first_engine_rules_are_included_for_script_and_image_prompts(tmp_
     for prompt in (script, image):
         assert "ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE V1.0" in prompt
         assert "Audio là nguồn chính" in prompt
-        assert "visual beat" in prompt
     assert "đúng 5 ý tưởng video YouTube giáo dục" in service._topic_prompt("", settings)
-    assert "đính kèm một file TXT để tải xuống" in script
-    assert "đính kèm đúng một file TXT để tải xuống" in image
+    assert "lời thuyết minh thuần văn bản" in script
+    assert "chia visual beat theo ý nghĩa" in image

@@ -207,11 +207,14 @@ def _is_settings_trigger(text: str, aria_label: str = "") -> bool:
     """Identify the generation settings pill without clicking grid settings."""
     text = str(text or "")
     aria_label = str(aria_label or "")
-    if re.search(r"x[1-4]\b", text, re.IGNORECASE):
+    combined = f"{aria_label} {text}"
+    if re.search(r"\bx[1-4]\b", text, re.IGNORECASE):
+        return True
+    if re.search(r"\b(?:Nano Banana|Imagen|Veo|Video|Image|H\u00ecnh \u1ea3nh|16:9|9:16|1:1)\b", combined, re.IGNORECASE):
         return True
     return bool(re.search(
         r"(?:điều kiện kích hoạt|generation settings|trigger settings)",
-        f"{aria_label} {text}",
+        combined,
         re.IGNORECASE,
     ))
 
@@ -925,24 +928,28 @@ class FlowService:
 
         # ------------------------------------------------------------------
         # Step 2: switch to the correct mode tab (Image / Video)
-        # Prefer flow-py's ui.switch_mode() — it uses get_by_role("tab") which
-        # is locale-independent and handles open_settings_panel internally.
-        # ponytail: manual fallback kept only for callers that pass ui=None.
         # ------------------------------------------------------------------
+        # Focus prompt input first so clicking the settings pill opens the
+        # settings panel instead of the reference-image media picker.
+        try:
+            ed = page.locator('textarea, [contenteditable="true"][role="textbox"], div[contenteditable]').first
+            if await ed.count() > 0:
+                await ed.click()
+                await asyncio.sleep(0.3)
+        except Exception:
+            pass
+
+        switched = False
         if ui is not None:
             try:
                 from flow._models import GenerationMode
                 gen_mode = GenerationMode.IMAGE if kind == "image" else GenerationMode.VIDEO
                 switched = await ui.switch_mode(page, gen_mode)
-                if not switched and not await _model_pill_already_visible():
-                    raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
-            except ImportError:
-                pass  # fall through to manual path
-            else:
-                # Mode switched (or pill already correct) — proceed to model selector.
-                pass
-        else:
-            # Manual fallback: find the tab by text and click it.
+            except Exception:
+                switched = False
+
+        if not switched and not await _model_pill_already_visible():
+            # Fallback: find the tab by text and click it.
             mode_tab = await _visible_mode_tab()
             if mode_tab is None:
                 for attempt in range(3):
