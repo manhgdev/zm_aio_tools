@@ -27,6 +27,32 @@ from pipeline.core.resources import adaptive_workers, run_with_adaptive_workers
 
 ROOT = DATA / "drawing"
 ROOT.mkdir(parents=True, exist_ok=True)
+HANDS_DIR = ROOT / "hands"  # custom user-uploaded sprites
+HANDS_DIR.mkdir(parents=True, exist_ok=True)
+
+_ASSETS = Path(__file__).parent / "assets" / "images"
+# ponytail: built-in sprite IDs → file trong pipeline/drawing/assets/images/
+BUILTIN_HANDS: dict[str, str] = {
+    "default": "drawing-hand.png",
+    "left": "drawing-hand-left.png",
+    "marker": "drawing-marker.png",
+    "pen": "drawing-pen.png",
+}
+
+
+def resolve_hand_png(hand_id: str | None) -> Path | None:
+    """Return absolute path cho sprite id; None nếu bare-tip."""
+    if not hand_id or hand_id == "bare":
+        return None
+    if hand_id in BUILTIN_HANDS:
+        p = _ASSETS / BUILTIN_HANDS[hand_id]
+        return p if p.is_file() else (_ASSETS / BUILTIN_HANDS["default"])
+    if hand_id.startswith("custom:"):
+        name = hand_id[7:]
+        p = HANDS_DIR / name
+        return p if p.is_file() else None
+    return None
+
 _LOCK = threading.Lock()
 _JOBS: dict[str, dict[str, Any]] = {}
 _PROCS: dict[str, subprocess.Popen] = {}
@@ -357,6 +383,13 @@ def run(job_id: str) -> None:
         # even when the user leaves the general drawing mode selected.
         if mode != "hand" and tool not in {"pen", "marker", "brush"}:
             render_command.append("--bare-tip")
+        # Custom / built-in hand sprite
+        hand_id = str(options.get("handId") or "default")
+        hand_png = resolve_hand_png(hand_id)
+        if hand_png:
+            render_command += ["--hand-png", str(hand_png)]
+        elif mode != "hand" and tool not in {"pen", "marker", "brush"}:
+            pass  # --bare-tip already appended
         _run_streaming_renderer(job_id, render_command, timeout=max(900, int(duration * 90)))
         if (get_job(job_id) or {}).get("status") == "cancelled":
             return

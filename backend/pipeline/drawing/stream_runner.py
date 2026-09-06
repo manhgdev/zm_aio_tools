@@ -272,10 +272,14 @@ def main() -> int:
     parser.add_argument("--thickness", type=int, default=2)
     parser.add_argument("--stroke-order", choices=("natural", "outline", "region", "reading", "center", "horizontal", "vertical"), default="natural")
     parser.add_argument("--bare-tip", action="store_true")
+    parser.add_argument("--hand-png", default=None, help="Override hand sprite PNG path")
     parser.add_argument("--skip-transcode", action="store_true")
     args = parser.parse_args()
 
     renderer_module, hand_asset = _load_reference()
+    # Custom sprite overrides default; --bare-tip suppresses all hand rendering
+    if args.hand_png and Path(args.hand_png).is_file():
+        hand_asset = Path(args.hand_png)
     source = Path(args.image)
     image = renderer_module._imread_any(source)
     if image is None:

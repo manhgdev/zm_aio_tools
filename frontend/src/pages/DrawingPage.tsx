@@ -142,6 +142,12 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
   const [rendering, setRendering] = useState(false)
   const [includeCaptions, setIncludeCaptions] = useState(true)
   const [isPortrait, setIsPortrait] = useState(false)
+  const [handId, setHandId] = useState<string>(() => window.localStorage.getItem('zm-tool:drawing-hand-id:v1') || 'default')
+  const [hands, setHands] = useState<Array<{ id: string; nameVi: string; nameEn: string; url: string | null; builtin: boolean }>>(
+    [{ id: 'default', nameVi: 'Tay phải + bút chì', nameEn: 'Right hand + pencil', url: '/api/drawing/hands/default', builtin: true }]
+  )
+  const [uploadingHand, setUploadingHand] = useState(false)
+  const handUploadRef = useRef<HTMLInputElement>(null)
   const allJobs = useMemo(() => [job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item)), [batchJobs, job])
 
   const isInitialMount = useRef(true)
@@ -196,6 +202,11 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
   useEffect(() => { window.localStorage.setItem(DRAWING_OUTPUT_DIR_KEY, outputDir) }, [outputDir])
   useEffect(() => { void fetch('/api/config').then(async (r) => r.ok && setIsDesktopApp(Boolean((await r.json() as { desktop?: boolean }).desktop))).catch(() => undefined) }, [])
   useEffect(() => {
+    void fetch('/api/drawing/hands').then(async (r) => r.ok ? (await r.json() as { items: typeof hands }).items : hands)
+      .then(setHands).catch(() => undefined)
+  }, [])
+  useEffect(() => { window.localStorage.setItem('zm-tool:drawing-hand-id:v1', handId) }, [handId])
+  useEffect(() => {
     if (!jobsRestored) return
     const ids = [job, ...batchJobs].filter((item): item is DrawingJob => Boolean(item)).map((item) => item.id)
     window.localStorage.setItem(DRAWING_JOBS_KEY, JSON.stringify(ids))
@@ -237,7 +248,7 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
     try {
       const body = new FormData()
       accepted.forEach((item) => body.append('images', item))
-      body.append('options', JSON.stringify({ preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd, outputDir }))
+      body.append('options', JSON.stringify({ preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd, outputDir, handId }))
       body.append('start_now', 'false')
       const response = await fetch('/api/drawing/jobs/batch', { method: 'POST', body })
       if (!response.ok) throw new Error(await response.text())
@@ -261,7 +272,7 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
   const generate = async () => {
     if (!queuedJobs.length || active || savingSource) return
     try {
-      const options = { preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd, outputDir }
+      const options = { preset, mode, tool, duration, detail, thickness, fps, resolution, strokeOrder, showOriginalEnd, outputDir, handId }
       const updates = await Promise.all(queuedJobs.map(async (item) => {
         const response = await fetch(`/api/drawing/jobs/${item.id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options),
@@ -364,6 +375,28 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
                       : active ? t('Đang tạo video vẽ tay', 'Creating drawing video') : t('Sẵn sàng render cục bộ', 'Ready for local rendering')
 
   const clearAll = () => { setJob(null); setBatchJobs([]); setSelectedJobId(null); setLocalPreview('') }
+
+  const uploadHand = async (files: FileList | null) => {
+    const file = files?.[0]
+    if (!file) return
+    setUploadingHand(true)
+    try {
+      const body = new FormData()
+      body.append('file', file)
+      const response = await fetch('/api/drawing/hands', { method: 'POST', body })
+      if (!response.ok) throw new Error(await response.text())
+      const created = await response.json() as { id: string; url: string }
+      setHands((prev) => [...prev, { id: created.id, nameVi: file.name.replace(/\.png$/i, ''), nameEn: file.name.replace(/\.png$/i, ''), url: created.url, builtin: false }])
+      setHandId(created.id)
+      toast.success(t('Đã tải lên sprite thành công.', 'Sprite uploaded.'))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setUploadingHand(false)
+      if (handUploadRef.current) handUploadRef.current.value = ''
+    }
+  }
+
   const renderQueue = (compact = false) => (
     <div className={`drawing-queue-list${compact ? ' is-compact' : ''}`}>
       {allJobs.length === 0 && !localPreview && <div className="drawing-queue-empty">{t('Chưa có ảnh nào', 'No images yet')}</div>}
@@ -392,6 +425,24 @@ export default function DrawingPage({ onBack }: { onBack: () => void }) {
         <label className="drawing-field"><span>{t('Chế độ vẽ', 'Drawing mode')}</span><select value={mode} onChange={(event) => setMode(event.target.value as 'drawing' | 'hand')}><option value="drawing">{t('Vẽ nét liên tục', 'Continuous strokes')}</option><option value="hand">{t('Tay cầm bút vẽ nét', 'Hand drawing strokes')}</option></select></label>
         <span className="drawing-label">{t('Loại dụng cụ', 'Tool')}</span>
         <div className="drawing-tools">{(['pencil', 'pen', 'marker', 'brush'] as Tool[]).map((id) => <button key={id} type="button" className={tool === id ? 'is-active' : ''} onClick={() => setTool(id)}>{({ pencil: t('Chì', 'Pencil'), pen: t('Bút', 'Pen'), marker: 'Marker', brush: t('Cọ', 'Brush') })[id]}</button>)}</div>
+        <span className="drawing-label">{t('Sprite bút vẽ', 'Pen sprite')}</span>
+        <div className="drawing-hand-grid">
+          {hands.map((h) => (
+            <button key={h.id} type="button" title={locale === 'vi' ? h.nameVi : h.nameEn}
+              className={`drawing-hand-chip${handId === h.id ? ' is-active' : ''}`}
+              onClick={() => setHandId(h.id)}>
+              {h.url
+                ? <img src={h.url} alt={locale === 'vi' ? h.nameVi : h.nameEn} loading="lazy" />
+                : <span className="drawing-hand-bare">•</span>}
+              <span>{locale === 'vi' ? h.nameVi : h.nameEn}</span>
+            </button>
+          ))}
+          <button type="button" className="drawing-hand-upload" onClick={() => handUploadRef.current?.click()} disabled={uploadingHand}>
+            {uploadingHand ? '...' : '+'}
+            <span>{t('Tải PNG lên', 'Upload PNG')}</span>
+          </button>
+          <input ref={handUploadRef} type="file" accept="image/png" className="drawing-visually-hidden" onChange={(e) => void uploadHand(e.target.files)} />
+        </div>
         <label className="drawing-field"><span>{t('Đường đi nét', 'Stroke route')}</span><select value={strokeOrder} onChange={(event) => setStrokeOrder(event.target.value as StrokeOrder)}><option value="natural">{t('Tự nhiên theo đối tượng', 'Natural by object')}</option><option value="outline">{t('Theo viền thật', 'True outlines')}</option><option value="region">{t('Từng vùng hoàn chỉnh', 'Complete one region')}</option><option value="reading">{t('Theo chữ · trái sang phải', 'Text · left to right')}</option><option value="center">{t('Từ tâm lan ra', 'Centre outward')}</option><option value="horizontal">{t('Quét ngang', 'Horizontal sweep')}</option><option value="vertical">{t('Quét dọc', 'Vertical sweep')}</option></select></label>
       </> : <>
         <label className="drawing-field"><span>Preset</span><select value={preset} onChange={(event) => applyPreset(event.target.value as Preset)}><option value="pencil">{t('Chì chân dung', 'Portrait pencil')}</option><option value="ink">{t('Nét mực', 'Ink line art')}</option><option value="whiteboard">Whiteboard</option><option value="speed">{t('Vẽ nhanh', 'Speed drawing')}</option><option value="watercolor">{t('Lộ màu nước', 'Watercolor reveal')}</option></select></label>

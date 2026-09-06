@@ -12,7 +12,10 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
 
-from pipeline.drawing.jobs import artifact, cancel, create_job, get_job, list_jobs, remove, start, start_batch, update_options
+from pipeline.drawing.jobs import (
+    artifact, cancel, create_job, get_job, list_jobs, remove, start, start_batch,
+    update_options, BUILTIN_HANDS, HANDS_DIR, _ASSETS,
+)
 from pipeline.core.output_paths import downloads_folder
 
 router = APIRouter()
@@ -147,3 +150,80 @@ def drawing_reveal(job_id: str):
     except OSError as exc:
         raise HTTPException(500, f"Không mở được thư mục: {exc}") from exc
     return {"ok": True, "path": str(path if path.is_file() else folder)}
+
+
+# ── Hand sprite API ──────────────────────────────────────────────────────────
+
+_BUILTIN_LABELS: dict[str, tuple[str, str]] = {
+    "default": ("Tay phải + bút chì", "Right hand + pencil"),
+    "left":    ("Tay trái + bút chì", "Left hand + pencil"),
+    "marker":  ("Tay + marker", "Hand + marker"),
+    "pen":     ("Tay + bút bi", "Hand + ballpoint pen"),
+    "bare":    ("Chỉ bút (không tay)", "Tip only (no hand)"),
+}
+
+
+@router.get("/api/drawing/hands")
+def drawing_list_hands():
+    """List built-in sprites + custom uploads."""
+    items = []
+    # built-ins (always listed; bare = virtual, no file)
+    for hand_id, (vi, en) in _BUILTIN_LABELS.items():
+        if hand_id == "bare":
+            items.append({"id": "bare", "nameVi": vi, "nameEn": en, "url": None, "builtin": True})
+            continue
+        filename = BUILTIN_HANDS.get(hand_id, "")
+        p = _ASSETS / filename if filename else None
+        items.append({
+            "id": hand_id,
+            "nameVi": vi,
+            "nameEn": en,
+            "url": f"/api/drawing/hands/{hand_id}" if (p and p.is_file()) else None,
+            "builtin": True,
+        })
+    # custom uploads
+    for f in sorted(HANDS_DIR.glob("*.png")):
+        items.append({
+            "id": f"custom:{f.name}",
+            "nameVi": f.stem,
+            "nameEn": f.stem,
+            "url": f"/api/drawing/hands/custom:{f.name}",
+            "builtin": False,
+        })
+    return {"items": items}
+
+
+@router.post("/api/drawing/hands")
+async def drawing_upload_hand(file: UploadFile = File(...)):
+    """Upload custom PNG sprite (≤2 MB)."""
+    if not (file.filename or "").lower().endswith(".png"):
+        raise HTTPException(400, "Chỉ chấp nhận file PNG")
+    data = await file.read()
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(413, "File quá lớn (tối đa 2 MB)")
+    import uuid as _uuid, re as _re
+    safe = _re.sub(r"[^\w.\-]", "_", Path(file.filename or "sprite").stem)[:40]
+    name = f"{safe}_{_uuid.uuid4().hex[:8]}.png"
+    dest = HANDS_DIR / name
+    dest.write_bytes(data)
+    return {"id": f"custom:{name}", "url": f"/api/drawing/hands/custom:{name}"}
+
+
+@router.get("/api/drawing/hands/{hand_id:path}")
+def drawing_serve_hand(hand_id: str):
+    """Serve sprite file by id."""
+    import re as _re
+    if hand_id == "bare":
+        raise HTTPException(404)
+    if hand_id in BUILTIN_HANDS:
+        p = _ASSETS / BUILTIN_HANDS[hand_id]
+    elif hand_id.startswith("custom:"):
+        name = hand_id[7:]
+        if not _re.fullmatch(r"[\w.\-]+\.png", name):
+            raise HTTPException(400)
+        p = HANDS_DIR / name
+    else:
+        raise HTTPException(404)
+    if not p.is_file():
+        raise HTTPException(404)
+    return FileResponse(p, media_type="image/png")
