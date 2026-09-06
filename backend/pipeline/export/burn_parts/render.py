@@ -287,15 +287,20 @@ def render_burned_video(
                 sid = cue_segment_ids[bi] if bi < len(cue_segment_ids) else ""
                 sm = segments_by_id.get(sid, {}) if sid else {}
                 alpha = max(0.0, min(1.0, float(sm.get("logoOpacity", 1.0))))
-                now = fi / fps
-                start = float(sm.get("start") or 0)
-                end = float(sm.get("end") or now)
-                fade_in_end = float(sm.get("logoFadeInEnd") or start)
-                fade_out_start = float(sm.get("logoFadeOutStart") or end)
-                if now < fade_in_end:
-                    alpha *= max(0.0, (now - start) / max(1e-6, fade_in_end - start))
-                if now > fade_out_start:
-                    alpha *= max(0.0, (end - now) / max(1e-6, end - fade_out_start))
+                # Caption timing can be cascaded after its source segment to
+                # preserve a full TTS sentence.  Logo fades are source-clock
+                # effects only; applying their source end to a shifted caption
+                # made every delayed caption fully transparent.
+                if sm.get("logoFadeInEnd") is not None or sm.get("logoFadeOutStart") is not None:
+                    now = fi / fps
+                    start = float(sm.get("start") or 0)
+                    end = float(sm.get("end") or now)
+                    fade_in_end = float(sm.get("logoFadeInEnd") or start)
+                    fade_out_start = float(sm.get("logoFadeOutStart") or end)
+                    if now < fade_in_end:
+                        alpha *= max(0.0, (now - start) / max(1e-6, fade_in_end - start))
+                    if now > fade_out_start:
+                        alpha *= max(0.0, (end - now) / max(1e-6, end - fade_out_start))
                 fr = _blit_overlay(fr, ov, alpha)
         return fi, fr.tobytes()
 
