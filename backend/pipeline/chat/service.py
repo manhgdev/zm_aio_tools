@@ -438,9 +438,25 @@ class ChatService:
         if not conv:
             raise KeyError(conversation_id)
         attachment_ids = self.validate_attachments(conversation_id, payload.get("attachmentIds", []))
-        user_message = self.store.create_message(conversation_id, "user", content)
-        attachments = self.store.attach_to_message(conversation_id, user_message["id"], attachment_ids)
-        assistant = self.store.create_message(conversation_id, "assistant", "", status="streaming")
+        retry_assistant_id = str(payload.get("retry_assistant_id") or "").strip()
+        if retry_assistant_id:
+            # Retry in-place: reuse the failed assistant message; no new user message.
+            # Delete any messages that were created after the failed one.
+            all_msgs = self.store.list_messages(conversation_id)
+            after = [m for m in all_msgs if m["id"] == retry_assistant_id]
+            if not after:
+                raise KeyError(retry_assistant_id)
+            idx = next(i for i, m in enumerate(all_msgs) if m["id"] == retry_assistant_id)
+            for m in all_msgs[idx + 1:]:
+                self.store.delete_message(m["id"])
+            self.store.update_message(retry_assistant_id, content="", status="streaming", error=None)
+            assistant = self.store.get_message(retry_assistant_id)
+            prior_user = next((m for m in reversed(all_msgs[:idx]) if m["role"] == "user"), None)
+            attachments = self.store.attach_to_message(conversation_id, prior_user["id"], []) if prior_user else []
+        else:
+            user_message = self.store.create_message(conversation_id, "user", content)
+            attachments = self.store.attach_to_message(conversation_id, user_message["id"], attachment_ids)
+            assistant = self.store.create_message(conversation_id, "assistant", "", status="streaming")
         cancel = threading.Event()
         self._cancels[conversation_id] = cancel
         accumulated = ""

@@ -184,6 +184,15 @@ class ChatStore:
             self._db.commit()
         return self._row(self._db.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone())
 
+    def delete_messages_after(self, conversation_id: str, after_created_at: str) -> None:
+        """Delete all messages in a conversation created after the given timestamp."""
+        with self._lock:
+            self._db.execute(
+                "DELETE FROM messages WHERE conversation_id=? AND created_at>?",
+                (conversation_id, after_created_at),
+            )
+            self._db.commit()
+
     def list_messages(self, conversation_id):
         with self._lock:
             return [dict(x) for x in self._db.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at", (conversation_id,))]
