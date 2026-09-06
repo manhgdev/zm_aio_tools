@@ -24,6 +24,17 @@ def test_windows_asset_is_selected_for_windows(monkeypatch):
     assert asset and asset["name"].endswith("-windows-x64.zip")
 
 
+def test_action_tag_selects_the_same_release_asset(monkeypatch):
+    monkeypatch.setattr(system.sys, "platform", "win32")
+    release = {
+        "tag_name": "action/5.3.7",
+        "assets": [{"name": "ZM_AIO_TOOL_v5.3.7-windows-x64.zip"}],
+    }
+    asset = system._release_asset(release)
+    assert asset and asset["name"] == "ZM_AIO_TOOL_v5.3.7-windows-x64.zip"
+    assert system._version_key("action/5.3.7") == (5, 3, 7)
+
+
 def test_update_rejects_asset_with_a_different_version(monkeypatch):
     monkeypatch.setattr(system.sys, "platform", "win32")
     release = _release({"name": "ZM_AIO_TOOL_v3.5.6-windows-x64.zip"})

@@ -103,8 +103,15 @@ _UPDATE_STATE: dict[str, Any] = {
 }
 
 
+def _release_version(value: str) -> str:
+    normalized = str(value).strip()
+    if normalized.startswith("action/"):
+        normalized = normalized.removeprefix("action/")
+    return normalized.removeprefix("v")
+
+
 def _version_key(value: str) -> tuple[int, int, int]:
-    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", str(value).strip())
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", _release_version(value))
     return tuple(map(int, match.groups())) if match else (0, 0, 0)
 
 
@@ -144,8 +151,9 @@ def _release_asset(release: dict[str, Any]) -> dict[str, Any] | None:
     suffix = _desktop_platform_asset_suffix()
     if not suffix:
         return None
-    version = str(release.get("tag_name") or "").lstrip("v")
-    if _version_key(version) == (0, 0, 0):
+    tag = str(release.get("tag_name") or "")
+    version = _release_version(tag)
+    if _version_key(tag) == (0, 0, 0):
         return None
     expected_name = f"ZM_AIO_TOOL_v{version}{suffix}"
     for asset in release.get("assets") or []:
@@ -864,11 +872,12 @@ def api_update_check():
         release = _latest_release()
         tag = str(release.get("tag_name") or "")
         asset = _release_asset(release)
+        version = _release_version(tag)
         return {
             "desktop": True,
             "supported": _update_supported(),
             "currentVersion": _desktop_version(),
-            "latestVersion": tag.lstrip("v"),
+            "latestVersion": version,
             "releaseAvailable": _version_key(tag) > _version_key(_desktop_version()),
             "updateAvailable": bool(asset and _version_key(tag) > _version_key(_desktop_version())),
             "assetAvailable": bool(asset),
@@ -893,6 +902,7 @@ def api_update_install():
         try:
             release = _latest_release()
             tag = str(release.get("tag_name") or "")
+            version = _release_version(tag)
             asset = _release_asset(release)
             if not asset or _version_key(tag) <= _version_key(_desktop_version()):
                 _set_update_state(phase="complete", progress=100, message="Đã là phiên bản mới nhất")
@@ -909,7 +919,7 @@ def api_update_install():
             else:
                 updates = Path(os.environ.get("VIDEO_CLONE_HOME") or DATA) / "updates"
             updates.mkdir(parents=True, exist_ok=True)
-            package = _download_update(asset, updates, tag.lstrip("v"))
+            package = _download_update(asset, updates, version)
             _set_update_state(phase="ready", progress=100, message="Đã tải gói cập nhật", packagePath=str(package))
         except Exception as exc:
             _set_update_state(phase="error", error=str(exc), message="Không thể tải bản cập nhật")
