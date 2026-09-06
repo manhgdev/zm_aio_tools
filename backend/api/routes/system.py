@@ -181,27 +181,38 @@ def _download_update(asset: dict[str, Any], updates: Path, version: str) -> Path
     target = updates / name
     partial = target.with_suffix(target.suffix + ".part")
     _set_update_state(phase="downloading", progress=0, message="Đang tải bản cập nhật…", assetName=name, latestVersion=version)
-    try:
-        # Large desktop bundles can take several minutes on a slow connection;
-        # this is a socket-idle timeout, not a total-download deadline.
-        with urllib.request.urlopen(url, timeout=_UPDATE_DOWNLOAD_TIMEOUT_SECONDS) as response, partial.open("wb") as output:
-            try:
-                total = max(0, int(response.headers.get("Content-Length") or 0))
-            except (TypeError, ValueError):
-                total = 0
-            received = 0
-            while chunk := response.read(1024 * 1024):
-                output.write(chunk)
-                received += len(chunk)
-                progress = min(99, int(received * 100 / total)) if total else 0
-                _set_update_state(progress=progress)
-        partial.replace(target)
-    except Exception:
+    last_error: Exception | None = None
+    for attempt in range(3):
         try:
-            partial.unlink()
-        except OSError:
-            pass
-        raise
+            # Large desktop bundles can take several minutes on a slow connection;
+            # this is a socket-idle timeout, not a total-download deadline.
+            with urllib.request.urlopen(url, timeout=_UPDATE_DOWNLOAD_TIMEOUT_SECONDS) as response, partial.open("wb") as output:
+                try:
+                    total = max(0, int(response.headers.get("Content-Length") or 0))
+                except (TypeError, ValueError):
+                    total = 0
+                received = 0
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+                    received += len(chunk)
+                    progress = min(99, int(received * 100 / total)) if total else 0
+                    _set_update_state(progress=progress)
+            partial.replace(target)
+            last_error = None
+            break
+        except (BrokenPipeError, ConnectionError, TimeoutError, OSError) as exc:
+            last_error = exc
+            try:
+                partial.unlink()
+            except OSError:
+                pass
+            if attempt < 2:
+                _set_update_state(message=f"Kết nối gián đoạn, đang thử lại ({attempt + 2}/3)…")
+                time.sleep(0.5 * (attempt + 1))
+            else:
+                raise
+    if last_error is not None:
+        raise last_error
     _set_update_state(progress=100)
     return target
 
