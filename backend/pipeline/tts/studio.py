@@ -150,12 +150,16 @@ def set_job_progress(job_id: str, current: int, total: int, message: str = "") -
 def get_job_progress(job_id: str) -> dict[str, Any]:
     """Lấy tiến độ thực tế hiện tại của job."""
     if not job_id:
-        return {"current": 0, "total": 0, "pct": 0, "message": ""}
+        return {"current": 0, "total": 0, "pct": 0, "message": "", "done": False, "running": False}
     with _jobs_lock:
-        return _job_progress.get(
+        prog = dict(_job_progress.get(
             job_id,
             {"current": 0, "total": 0, "pct": 0, "message": ""},
-        )
+        ))
+        is_running = job_id in _running
+    prog["running"] = is_running
+    prog["done"] = not is_running and prog.get("pct", 0) >= 99
+    return prog
 
 
 def mark_cancel(job_id: str) -> None:

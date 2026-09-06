@@ -663,20 +663,8 @@ export default function TtsStudio({
     const requestJobId = crypto.randomUUID().replaceAll('-', '').slice(0, 12)
     activeJobIdRef.current = requestJobId
 
-    let progressTimer: number | undefined = window.setInterval(async () => {
-      if (cancelledJobIdsRef.current.has(requestJobId)) return
-      try {
-        const p = await api.ttsStudioJobProgress(requestJobId)
-        if (p && p.pct > 0) {
-          setBusyProgress(p.pct)
-          if (p.message) setBusyCustomMessage(p.message)
-        }
-      } catch {
-        /* ignore */
-      }
-    }, 300)
-
     try {
+      // Kick off — backend trả {id, running:true} ngay (không block)
       const res = await api.ttsStudioSynth({
         jobId: requestJobId,
         text: useSrt ? undefined : text.trim(),
@@ -697,9 +685,34 @@ export default function TtsStudio({
         publishOutput: true,
       })
       if (cancelledJobIdsRef.current.has(requestJobId)) return
+      const jobIdFromRes = (res as { id?: string; job_id?: string }).id || (res as { id?: string; job_id?: string }).job_id || requestJobId
+
+      // Poll /progress đến khi done=true
+      for (let i = 0; i < 1200; i++) {
+        if (cancelledJobIdsRef.current.has(requestJobId)) return
+        await new Promise((r) => window.setTimeout(r, 300))
+        try {
+          const p = await api.ttsStudioJobProgress(jobIdFromRes)
+          if (p && p.pct > 0) {
+            setBusyProgress(p.pct)
+            if (p.message) setBusyCustomMessage(p.message)
+          }
+          if ((p as { done?: boolean }).done) break
+        } catch {
+          /* ignore transient errors */
+        }
+      }
+      if (cancelledJobIdsRef.current.has(requestJobId)) return
+
       setBusyProgress(100)
       setBusyCustomMessage('Đã hoàn thành!')
-      applyJobUrls(res)
+      // applyJobUrls với fallback URL-based (file đã có sau khi done=true)
+      applyJobUrls({
+        id: jobIdFromRes,
+        duration: (res as { duration?: number }).duration || 0,
+        audioUrl: (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${jobIdFromRes}/audio.wav`,
+        mp3Url: (res as { mp3Url?: string }).mp3Url,
+      })
       const resAny = res as { publishError?: string; publishedDir?: string }
       if (resAny.publishError) {
         toast.error(t(`Lỗi xuất kết quả: ${resAny.publishError}`, `Output error: ${resAny.publishError}`))
@@ -714,10 +727,6 @@ export default function TtsStudio({
         setError(e instanceof Error ? e.message : 'Tạo giọng thất bại')
       }
     } finally {
-      if (progressTimer) {
-        window.clearInterval(progressTimer)
-        progressTimer = undefined
-      }
       setBusyCustomMessage('')
       cancelledJobIdsRef.current.delete(requestJobId)
       if (activeJobIdRef.current === requestJobId) {
