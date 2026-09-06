@@ -40,18 +40,18 @@ def _opencl_device() -> tuple[bool, str]:
 
 def _load_reference():
     current = Path(__file__).resolve()
+    # ponytail: assets đã được chuyển vào pipeline/drawing/assets/ để tránh phụ thuộc submodule
+    bundled = current.parent / "assets" / "scripts" / "stream_render.py"
     candidates = [
-        Path(os.environ["VIDEO_CLONE_BUNDLE"]) if os.environ.get("VIDEO_CLONE_BUNDLE") else None,
-        current.parents[2],  # packaged Resources/_internal root
-        current.parents[3],  # repository root in development
+        bundled if bundled.is_file() else None,
+        # Legacy: tìm trong references/ nếu dev vẫn còn submodule local
+        Path(os.environ["VIDEO_CLONE_BUNDLE"]) / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py"
+        if os.environ.get("VIDEO_CLONE_BUNDLE") else None,
+        current.parents[2] / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py",
+        current.parents[3] / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py",
     ]
     source = next(
-        (
-            root / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py"
-            for root in candidates
-            if root is not None
-            and (root / "references" / "whiteboard-stream-animation" / "scripts" / "stream_render.py").is_file()
-        ),
+        (p for p in candidates if p is not None and p.is_file()),
         None,
     )
     if source is None:
@@ -64,7 +64,10 @@ def _load_reference():
     # reference module is executing.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    return module, source.parent.parent / "assets" / "drawing-hand.png"
+    # Bundled: pipeline/drawing/assets/images/ ; Legacy (references/): source.parent.parent/assets/
+    bundled_hand = Path(__file__).parent / "assets" / "images" / "drawing-hand.png"
+    hand = bundled_hand if bundled_hand.is_file() else source.parent.parent / "assets" / "drawing-hand.png"
+    return module, hand
 
 
 def _transcode_with_app_encoder(raw: Path, final: Path, fps: int, renderer_module):

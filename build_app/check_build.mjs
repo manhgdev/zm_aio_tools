@@ -110,7 +110,7 @@ check('pipeline/ dir', existsSync(pipeDir))
 const voiceRef = path.join(internalDir, 'resources', 'voice-ref')
 check('voice-ref', existsSync(voiceRef))
 
-// Drawing streaming renderer must be available to the managed Python runtime.
+// Drawing streaming renderer — source moved to pipeline/drawing/assets/, bundled to references/ dest path
 const drawingReference = path.join(internalDir, 'references', 'whiteboard-stream-animation')
 check(
   'drawing stream renderer',
