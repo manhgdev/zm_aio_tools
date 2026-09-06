@@ -59,6 +59,13 @@ class AutomationStore:
               ON automation_logs(job_id, id);
             """
         )
+        # The pipeline writes its final durable checkpoint (done/100) just
+        # before the worker returns.  A restart in that tiny window must not
+        # turn a finished video into a resumable interruption.
+        self._db.execute(
+            "UPDATE automation_jobs SET status='completed', error_json=NULL "
+            "WHERE status = 'running' AND stage = 'done' AND progress >= 100"
+        )
         self._db.execute(
             "UPDATE automation_jobs SET status='interrupted', error_json=? "
             "WHERE status = 'running'",
