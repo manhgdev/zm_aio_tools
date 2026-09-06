@@ -1393,8 +1393,7 @@ export default function LivePreviewEditor({
   const solidAtPlayhead = solidOverlaysAt(layoutSegs, time)
   const withExpandedMidHardsubBand = (items: Segment[]) => {
     const mids = items.filter((seg) =>
-      seg.bboxDetected === true
-      && Boolean(seg.bbox)
+      Boolean(seg.bbox)
       && effectiveOverlayLayout(seg, sourceHeight, sourceWidth) === 'mid',
     )
     if (!mids.length) return items
@@ -1412,8 +1411,7 @@ export default function LivePreviewEditor({
             const peerWords = peer.words || []
             const peerStart = peerWords[0]?.start
             const peerEnd = peerWords[peerWords.length - 1]?.end
-            return peer.bboxDetected === true
-              && Boolean(peer.bbox)
+            return Boolean(peer.bbox)
               && effectiveOverlayLayout(peer, sourceHeight, sourceWidth) === 'mid'
               && typeof peerStart === 'number'
               && typeof peerEnd === 'number'
@@ -1425,8 +1423,11 @@ export default function LivePreviewEditor({
         if (!peer.bbox) return false
         const candidate = clampCoverBox(peer.bbox, sourceWidth, sourceHeight)
         const overlap = Math.max(0, Math.min(box.x + box.w, candidate.x + candidate.w) - Math.max(box.x, candidate.x))
-        const sameRow = Math.abs((box.y + box.h / 2) - (candidate.y + candidate.h / 2)) <= Math.max(box.h, candidate.h) * 0.5
-        return sameRow && overlap >= Math.min(box.w, candidate.w) * 0.35
+        // Two OCR rows have distinct Y centres; they are still one visual
+        // hard-sub block.  The old “same row” gate discarded one of them.
+        const sameSubtitleBlock = Math.abs((box.y + box.h / 2) - (candidate.y + candidate.h / 2))
+          <= Math.max(box.h, candidate.h) * 1.55
+        return sameSubtitleBlock && overlap >= Math.min(box.w, candidate.w) * 0.35
       })
       const sourceGlyphs = [...(seg.source || '')].filter((char) => /[\p{L}\p{N}]/u.test(char)).length
       const likelyTwoRows = peers.length > 1 || (box.w >= sourceWidth * 0.9 && sourceGlyphs >= 24)

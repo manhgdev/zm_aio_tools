@@ -49,6 +49,10 @@ type Props = {
   segments: Segment[]
   settings: ProjectSettings
   onSettings: (settings: ProjectSettings) => void
+  applyCaptionToAll: boolean
+  setApplyCaptionToAll: (value: boolean) => void
+  /** Seed and focus the directly draggable manual blur frame in the preview. */
+  onEditManualBlurBand: () => void
   onPreviewCoverMaskOpacity: (opacity: number) => void
   onPreviewEffectOpacity: (overlay: TextOverlay, opacity: number) => void
   /** Retained for the hidden compatibility views; project actions render on the left rail. */
@@ -154,6 +158,9 @@ export function EditorPropertiesPanel({
   segments,
   settings,
   onSettings,
+  applyCaptionToAll,
+  setApplyCaptionToAll,
+  onEditManualBlurBand,
   onPreviewCoverMaskOpacity,
   onPreviewEffectOpacity,
   onRunPipeline,
@@ -239,6 +246,7 @@ export function EditorPropertiesPanel({
 }: Props) {
   const { locale } = useLocale()
   const t = (vi: string, en: string) => localize(locale, vi, en)
+  const captionScope = applyCaptionToAll ? 'all' : 'one'
   const [coverMaskOpacityDraft, setCoverMaskOpacityDraft] = React.useState(settings.coverMaskOpacity ?? 0)
   const coverMaskOpacityDraftRef = React.useRef(coverMaskOpacityDraft)
   const coverMaskOpacityGestureRef = React.useRef(false)
@@ -443,9 +451,10 @@ export function EditorPropertiesPanel({
                                 <select
                                   className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs outline-none focus:border-ring"
                                   value={settings.blurBandMode ?? 'auto'}
-                                  onChange={(e) =>
-                                    onSettings({ ...settings, blurBandMode: e.target.value as 'auto' | 'manual' })
-                                  }
+                                  onChange={(e) => {
+                                    if (e.target.value === 'manual') onEditManualBlurBand()
+                                    else onSettings({ ...settings, blurBandMode: 'auto' })
+                                  }}
                                 >
                                   <option value="auto">{t('Tự động (OCR phát hiện vị trí)', 'Auto (OCR-detected position)')}</option>
                                   <option value="manual">{t('Thủ công (kéo khung trên preview)', 'Manual (drag frame on preview)')}</option>
@@ -455,7 +464,7 @@ export function EditorPropertiesPanel({
                                     <button
                                       type="button"
                                       className="w-full rounded-md border border-dashed border-cyan-500 bg-cyan-500/10 px-2 py-1.5 text-[11px] text-cyan-400 hover:bg-cyan-500/20 transition-colors"
-                                      onClick={() => setTool('cover')}
+                                      onClick={onEditManualBlurBand}
                                     >
                                       {t('Kéo khung làm mờ trên preview →', 'Drag blur zone frame on preview →')}
                                     </button>
@@ -481,6 +490,16 @@ export function EditorPropertiesPanel({
 
                         {effectivePropTab === 'caption' && selected && (
                           <>
+                            <label className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2 py-1.5 text-xs font-medium cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                className="size-3.5 accent-primary"
+                                checked={applyCaptionToAll}
+                                disabled={busy}
+                                onChange={(e) => setApplyCaptionToAll(e.target.checked)}
+                              />
+                              {t('Áp dụng cho tất cả phụ đề', 'Apply to all captions')}
+                            </label>
                             <PropLabel label="Ngôn ngữ gốc">
                               <textarea
                                 className="w-full rounded-md border border-border bg-input px-2 py-1.5 text-xs resize-none outline-none focus:border-ring"
@@ -569,7 +588,7 @@ export function EditorPropertiesPanel({
                                     className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs outline-none focus:border-ring"
                                     value={selected.fontFamily || settings.subtitleFontFamily || 'system'}
                                     disabled={busy}
-                                    onChange={(e) => void applyFontFamily('one', e.target.value)}
+                                    onChange={(e) => void applyFontFamily(captionScope, e.target.value)}
                                   >
                                     {CAPTION_FONT_PRESETS.map((font) => (
                                       <option key={font.id} value={font.id} style={{ fontFamily: font.css }}>{font.label}</option>
@@ -582,7 +601,7 @@ export function EditorPropertiesPanel({
                                     className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent"
                                     value={selected.textColor || settings.captionTextColor || '#ffffff'}
                                     disabled={busy}
-                                    onChange={(e) => applyCaptionColor('one', e.target.value)}
+                                    onChange={(e) => applyCaptionColor(captionScope, e.target.value)}
                                   />
                                 </PropLabel>
                               </div>
@@ -602,7 +621,7 @@ export function EditorPropertiesPanel({
                                     )}
                                     style={{ background: color }}
                                     disabled={busy}
-                                    onClick={() => applyCaptionColor('one', color)}
+                                    onClick={() => applyCaptionColor(captionScope, color)}
                                   />
                                 ))}
                               </div>
@@ -611,7 +630,7 @@ export function EditorPropertiesPanel({
                                   className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs outline-none focus:border-ring"
                                   value={String(fontSizeDraft)}
                                   disabled={busy}
-                                  onChange={(e) => applyFontSize('one', Number(e.target.value))}
+                                  onChange={(e) => applyFontSize(captionScope, Number(e.target.value))}
                                 >
                                   <option value="0">
                                     {isOverlaySeg
@@ -628,9 +647,9 @@ export function EditorPropertiesPanel({
                                   type="button"
                                   className="rounded-md border border-border bg-accent hover:bg-muted px-2 py-1.5 text-[11px] transition-colors disabled:opacity-50"
                                   disabled={busy || !selected}
-                                  onClick={() => applyFontSize('one')}
+                                  onClick={() => applyFontSize(captionScope)}
                                 >
-                                  Áp dụng đoạn này
+                                  {applyCaptionToAll ? t('Áp dụng tất cả', 'Apply all') : t('Áp dụng đoạn này', 'Apply this caption')}
                                 </button>
                                 <button
                                   type="button"
@@ -646,9 +665,9 @@ export function EditorPropertiesPanel({
                                 <button
                                   type="button"
                                   className="text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
-                                  onClick={() => applyFontSize('one', 0)}
+                                  onClick={() => applyFontSize(captionScope, 0)}
                                 >
-                                  Reset đoạn này về tự động
+                                  {applyCaptionToAll ? t('Reset tất cả về tự động', 'Reset all to automatic') : t('Reset đoạn này về tự động', 'Reset this caption to automatic')}
                                 </button>
                               )}
                               {isOverlaySeg && (

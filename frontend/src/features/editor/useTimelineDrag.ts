@@ -14,6 +14,7 @@ import {
   type TrackId,
   MIN_CLIP_SEC,
   autoFontFromBbox,
+  captionLaneOf,
   clampCoverBox,
   effectiveOverlayLayout,
   isOcrOverlayLayout,
@@ -54,6 +55,7 @@ type TimelineDragDeps = {
   selectedBox: PixelBox
   fallbackBox: PixelBox
   bboxDraft: Box | null
+  applyCaptionToAll: boolean
   videoClips: MediaClip[]
   bgClips: MediaClip[]
   // Refs (component sở hữu — còn dùng ở effect/JSX khác)
@@ -132,6 +134,7 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
     selectedBox,
     fallbackBox,
     bboxDraft,
+    applyCaptionToAll,
     videoClips,
     bgClips,
     tracksScrollRef,
@@ -174,6 +177,45 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
     onSegmentsReplace,
     onOverlaysReplace,
   } = deps
+
+  function commitCaptionBoxResult(next: Segment, skipHistory: boolean) {
+    if (!applyCaptionToAll || !next.bbox) {
+      editSegment(next, { skipHistory })
+      return
+    }
+    const box = next.bbox
+    const lane = captionLaneOf(next, sourceHeight, sourceWidth)
+    const all = segments.map((peer) => {
+      if (!(peer.translation || '').trim() || captionLaneOf(peer, sourceHeight, sourceWidth) !== lane) return peer
+      const overlayLay = effectiveOverlayLayout(peer, sourceHeight, sourceWidth)
+        ?? (isOcrOverlayLayout(peer.layout) ? peer.layout : null)
+      if (overlayLay && settings.burnSubs) {
+        const laid = layoutOcrOverlay(
+          overlayLay,
+          box,
+          peer.translation,
+          resolveOverlayFontPreferred(peer),
+          sourceWidth,
+          sourceHeight,
+        )
+        return segmentWithLayout({ ...peer, bbox: box, bboxInherited: false }, {
+          cover: box,
+          caption: laid.caption,
+          lines: laid.lines,
+          fontPx: laid.fontPx,
+        }, laid.fontPx)
+      }
+      if (settings.burnSubs) {
+        const laid = getCachedPreviewLayout(peer, box)
+        if (laid) {
+          const fontPx = laid.fontPx ?? autoFontFromBbox(laid.cover, peer.translation, 0)
+          return segmentWithLayout({ ...peer, bbox: box, bboxInherited: false }, laid, fontPx)
+        }
+      }
+      return { ...peer, bbox: box, bboxInherited: false, captionLayout: null }
+    })
+    void onSegmentsReplace(all)
+  }
 
   /**
    * Kéo clip segment (Caption / TTS) — CapCut free:
@@ -790,12 +832,12 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
             sourceWidth,
             sourceHeight,
           )
-          editSegment(segmentWithLayout({ ...seg, bboxInherited: false }, {
+          commitCaptionBoxResult(segmentWithLayout({ ...seg, bboxInherited: false }, {
             cover: norm,
             caption: laid.caption,
             lines: laid.lines,
             fontPx: laid.fontPx,
-          }, laid.fontPx), { skipHistory: histGate.current })
+          }, laid.fontPx), histGate.current)
           return
         }
         // Caption ngang: commit the exact live-drag layout; do not fit again.
@@ -803,13 +845,13 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
           const live = getCachedPreviewLayout(seg, norm)
           if (live) {
             const fitFs = live.fontPx ?? autoFontFromBbox(live.cover, seg.translation, 0)
-            editSegment(segmentWithLayout({ ...seg, bboxInherited: false }, live, fitFs), { skipHistory: histGate.current })
+            commitCaptionBoxResult(segmentWithLayout({ ...seg, bboxInherited: false }, live, fitFs), histGate.current)
           } else {
-            editSegment({ ...seg, bbox: norm, bboxInherited: false, captionLayout: seg.captionLayout ?? null }, { skipHistory: histGate.current })
+            commitCaptionBoxResult({ ...seg, bbox: norm, bboxInherited: false, captionLayout: seg.captionLayout ?? null }, histGate.current)
           }
           return
         }
-        editSegment({ ...seg, bbox: norm, bboxInherited: false, captionLayout: seg.captionLayout ?? null }, { skipHistory: histGate.current })
+        commitCaptionBoxResult({ ...seg, bbox: norm, bboxInherited: false, captionLayout: seg.captionLayout ?? null }, histGate.current)
       }
     }
     window.addEventListener('pointermove', update)

@@ -434,21 +434,56 @@ def cover_and_burn(
             unverified_auto_by_idx.append(False)
             manual_by_idx.append(mb)
             continue
-        unverified_auto = bool(
-            cover
-            and not seg.get("maskOnly")
-            and layout in ("horizontal", "mid")
-            and seg.get("bboxInherited") is not False
-            and seg.get("bboxDetected") is not True
-        )
+        # An inherited bbox is the locator's latest usable position for this
+        # cue.  It must still cover the source glyphs in normal “cover old +
+        # insert translation” mode.  Previously it was discarded here, so
+        # turning off the project-wide blur exposed the old subtitle below the
+        # newly rendered translation.
+        unverified_auto = False
         unverified_auto_by_idx.append(unverified_auto)
-        mb = None if unverified_auto else _segment_bbox_override(seg, w, h)
+        mb = _segment_bbox_override(seg, w, h)
         # Bbox đáy bake sẵn + source CJK → bỏ, OCR lại vị trí thật (giữa/đáy)
         manual_by_idx.append(mb)
+    cue_segment_map = {str(seg.get("id") or ""): seg for seg in segments}
     cue_boxes: list[list[tuple[int, int, int, int]]] = [[] for _ in cues]
     for i, mb in enumerate(manual_by_idx):
         if mb is not None:
             cue_boxes[i] = [mb]
+
+    if cover:
+        # OCR sometimes emits the two visible subtitle rows as separate cues.
+        # Keep their individual text/timing, but use one union cover for each
+        # active visual block.  This mirrors the automatic blur-band logic and
+        # prevents the untouched upper/lower source row from leaking through.
+        for i, box_list in enumerate(cue_boxes):
+            if not box_list:
+                continue
+            layout_i = str(cue_segment_map.get(cue_segment_ids[i], {}).get("layout") or "horizontal")
+            if layout_i not in ("horizontal", "mid"):
+                continue
+            current = _union_box(box_list)
+            if current is None:
+                continue
+            peers = [current]
+            cs0, ce0 = float(cues[i][0]), float(cues[i][1])
+            for j, other_list in enumerate(cue_boxes):
+                if i == j or not other_list:
+                    continue
+                layout_j = str(cue_segment_map.get(cue_segment_ids[j], {}).get("layout") or "horizontal")
+                if layout_j not in ("horizontal", "mid"):
+                    continue
+                cs1, ce1 = float(cues[j][0]), float(cues[j][1])
+                if max(cs0, cs1) >= min(ce0, ce1):
+                    continue
+                other = _union_box(other_list)
+                if other is None:
+                    continue
+                overlap = max(0, min(current[2], other[2]) - max(current[0], other[0]))
+                height = max(current[3] - current[1], other[3] - other[1], 1)
+                center_gap = abs((current[1] + current[3] - other[1] - other[3]) * 0.5)
+                if overlap >= min(current[2] - current[0], other[2] - other[0]) * 0.35 and center_gap <= height * 1.55:
+                    peers.append(other)
+            cue_boxes[i] = [_union_box(peers)] if len(peers) > 1 else box_list
 
     need_ocr_idx = [i for i, mb in enumerate(manual_by_idx) if mb is None]
     manual_n = len(cues) - len(need_ocr_idx)
