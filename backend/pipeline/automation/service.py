@@ -207,14 +207,20 @@ class AutomationService:
                 # A queued future can be cancelled before _execute starts;
                 # no worker will run its finally block to clean this marker.
                 active_future = False
-        # Provider children have their own queues, so stop them before deleting
-        # the parent record. Their original Flow output remains untouched.
+        # Provider children have their own queues. Delete them rather than only
+        # cancelling: each child owns a Flow output file which belongs solely to
+        # this parent automation job.
         for child_id in job.get("child_job_ids") or []:
             try:
                 from pipeline.flow import service as flow_service
-                flow_service.cancel(str(child_id))
+                flow_service.delete_job(str(child_id))
             except Exception:
                 pass
+        # _compose creates exactly one isolated directory per automation job.
+        # Do not remove the configured root because other jobs may share it.
+        compose_root = selected_or_default("automation", str((job.get("settings") or {}).get("outputDir") or ""))
+        output_dir = compose_root / safe_output_part(job.get("title"), "job") / job_id
+        shutil.rmtree(output_dir, ignore_errors=True)
         deleted = self.store.delete_job(job_id)
         workspace = self.store.jobs_root / job_id
         shutil.rmtree(workspace, ignore_errors=True)

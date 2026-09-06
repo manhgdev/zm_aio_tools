@@ -67,6 +67,9 @@ class AutomationStore:
             "WHERE status = 'running' AND stage = 'done' AND progress >= 100"
         )
         self._db.execute(
+            "UPDATE automation_jobs SET error_json=NULL WHERE status = 'completed'"
+        )
+        self._db.execute(
             "UPDATE automation_jobs SET status='interrupted', error_json=? "
             "WHERE status = 'running'",
             (json.dumps({"code": "AUTOMATION_INTERRUPTED", "message": "Job interrupted by app restart"}),),
