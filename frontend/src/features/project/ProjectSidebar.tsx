@@ -375,8 +375,10 @@ export default function Sidebar({
           <video
             key={videoUrl}
             src={videoUrl}
+            poster={projectId ? `/api/projects/${encodeURIComponent(projectId)}/thumbnail` : undefined}
             controls
             playsInline
+            preload="auto"
             onTimeUpdate={(e) => setPreviewTime(e.currentTarget.currentTime)}
             onSeeked={(e) => setPreviewTime(e.currentTarget.currentTime)}
             onLoadedMetadata={(e) => {

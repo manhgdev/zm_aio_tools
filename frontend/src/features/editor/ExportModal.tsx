@@ -27,6 +27,7 @@ interface ExportModalProps {
   projectTitle?: string
   settings: ProjectSettings
   videoCoverUrl?: string | null
+  videoPosterUrl?: string | null
   durationSec?: number
 }
 
@@ -74,6 +75,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   projectTitle = '',
   settings,
   videoCoverUrl,
+  videoPosterUrl,
   durationSec = 0,
 }) => {
   const { locale } = useLocale()
@@ -160,9 +162,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     }
     const vid = document.createElement('video')
     vid.crossOrigin = 'anonymous'
-    vid.src = videoCoverUrl
-    vid.preload = 'metadata'
     vid.muted = true
+    vid.playsInline = true
+    // Electron/WebKit needs decoded data, not metadata, before canvas capture.
+    vid.preload = 'auto'
     const capture = () => {
       try {
         const canvas = document.createElement('canvas')
@@ -182,6 +185,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       vid.currentTime = Math.min(0.5, (vid.duration || 1) * 0.1)
     }, { once: true })
     vid.addEventListener('error', () => setCoverDataUrl(null), { once: true })
+    vid.src = videoCoverUrl
     vid.load()
     return () => { vid.src = '' }
   }, [isOpen, videoCoverUrl])
@@ -263,9 +267,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               ) : videoCoverUrl ? (
                 <video
                   src={videoCoverUrl}
+                  poster={videoPosterUrl || undefined}
                   className="w-full h-full object-contain bg-black"
                   muted
-                  preload="metadata"
+                  playsInline
+                  preload="auto"
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center gap-2 opacity-50">

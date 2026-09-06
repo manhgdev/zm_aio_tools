@@ -38,7 +38,7 @@ from api.deps import (
 )
 from api.job_spawn import spawn
 from api.video_serve import serve_video_file
-from pipeline.core.project import apply_meta_patch
+from pipeline.core.project import apply_meta_patch, resolve_project_video
 from pipeline import (
     DATA,
     PUBLIC_DATA,
@@ -376,9 +376,50 @@ def api_video(project_id: str, request: Request, _rev: str | None = None):
     meta = load_meta(project_id)
     if not meta:
         raise HTTPException(404)
-    from pipeline.core.project import resolve_project_video
-
     return _serve_video_file(resolve_project_video(meta, project_id), request)
+
+
+def ensure_project_thumbnail(project_id: str, meta: dict[str, Any]) -> Path:
+    """Create one cached still frame for the current project video."""
+    source = resolve_project_video(meta, project_id)
+    if not source.is_file():
+        raise FileNotFoundError(str(source))
+    thumbnail = ensure_layout(project_id) / "cache" / "input_thumbnail.jpg"
+    if thumbnail.is_file() and thumbnail.stat().st_mtime >= source.stat().st_mtime:
+        return thumbnail
+    thumbnail.parent.mkdir(parents=True, exist_ok=True)
+    temp = thumbnail.with_name(f"{thumbnail.stem}.{uuid.uuid4().hex}.jpg")
+    try:
+        command = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-ss", "0.5", "-i", str(source), "-frames:v", "1",
+            "-vf", "scale=640:-2", "-q:v", "3", str(temp),
+        ]
+        try:
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        except subprocess.SubprocessError:
+            # Very short clips may not have a frame at 0.5s; use the first frame.
+            temp.unlink(missing_ok=True)
+            command[command.index("0.5")] = "0"
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        temp.replace(thumbnail)
+        return thumbnail
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+@router.get("/api/projects/{project_id}/thumbnail")
+async def api_project_thumbnail(project_id: str):
+    import anyio
+
+    meta = load_meta(project_id)
+    if not meta:
+        raise HTTPException(404)
+    try:
+        thumbnail = await anyio.to_thread.run_sync(lambda: ensure_project_thumbnail(project_id, meta))
+    except (OSError, subprocess.SubprocessError, KeyError):
+        raise HTTPException(422, "Không tạo được thumbnail video") from None
+    return FileResponse(thumbnail, media_type="image/jpeg")
 
 
 @router.post("/api/projects/{project_id}/rebake-speed")

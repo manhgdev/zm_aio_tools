@@ -229,6 +229,7 @@ export default function LivePreviewEditor({
 }: Props) {
   const { locale } = useLocale()
   const t = (vi: string, en: string) => localize(locale, vi, en)
+  const videoPosterUrl = `/api/projects/${encodeURIComponent(projectId)}/thumbnail`
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const dubAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -4911,8 +4912,10 @@ export default function LivePreviewEditor({
                             filter: previewColorFilter,
                           }}
                           src={videoUrl}
+                          poster={videoPosterUrl}
                           controls={false}
                           playsInline
+                          preload="auto"
                           onPlay={() => {
                             setPlaying(true)
                             syncDubAudio(videoRef.current ? videoToTimelineTime(videoRef.current.currentTime) : time, true)
@@ -7562,6 +7565,7 @@ export default function LivePreviewEditor({
         projectTitle={projectId}
         settings={settings}
         videoCoverUrl={videoUrl}
+        videoPosterUrl={videoPosterUrl}
         durationSec={duration}
       />
       <ProgressPopup

@@ -26,16 +26,28 @@ function useCapturedFrames(isOpen: boolean, videoUrl: string | null | undefined)
 
     const vid = document.createElement('video')
     vid.crossOrigin = 'anonymous'
-    vid.src = videoUrl
     vid.muted = true
-    vid.preload = 'metadata'
+    vid.playsInline = true
+    // Electron/WebKit can report metadata while the frame is still undecoded.
+    vid.preload = 'auto'
 
     const run = async () => {
       try {
         await new Promise<void>((resolve, reject) => {
-          vid.addEventListener('loadedmetadata', () => resolve(), { once: true })
+          const ready = () => {
+            if (vid.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+            vid.removeEventListener('loadedmetadata', ready)
+            vid.removeEventListener('loadeddata', ready)
+            vid.removeEventListener('canplay', ready)
+            resolve()
+          }
+          vid.addEventListener('loadedmetadata', ready)
+          vid.addEventListener('loadeddata', ready)
+          vid.addEventListener('canplay', ready)
           vid.addEventListener('error', () => reject(new Error('video error')), { once: true })
+          vid.src = videoUrl
           vid.load()
+          ready()
         })
         const dur = Math.max(1, vid.duration)
         const times = Array.from({ length: FRAME_COUNT }, (_, i) =>
