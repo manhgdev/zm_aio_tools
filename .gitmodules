@@ -1,0 +1,3 @@
+[submodule "references/whiteboard-stream-animation"]
+	path = references/whiteboard-stream-animation
+	url = https://github.com/geeklee/whiteboard-stream-animation
