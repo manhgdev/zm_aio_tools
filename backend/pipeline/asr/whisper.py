@@ -373,7 +373,10 @@ def _segments_from_whisper(seg: Any) -> list[dict[str, Any]]:
     for group in groups:
         if not group:
             continue
-        g_text = "".join(w[2] for w in group).strip()
+        # `_word_parts` trims Whisper's leading spaces, so joining without a
+        # separator collapsed the app's source transcript and its translation
+        # units (the web/SRT path did not use this code).
+        g_text = " ".join(w[2] for w in group).strip()
         if not g_text:
             continue
         g_start = max(0.0, group[0][0] - _WORD_PAD_START)
