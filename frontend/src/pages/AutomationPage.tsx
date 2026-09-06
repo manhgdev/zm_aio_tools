@@ -329,15 +329,16 @@ export default function AutomationPage() {
       setVideoPreview({ title: label, src: href, type: 'audio' })
       return
     }
-    if (key === 'srt') {
-      void fetch(href).then(r => r.ok ? r.text() : Promise.reject(new Error('preview failed'))).then(text => {
-        setTextPreview(text)
-        setVideoPreview({ title: label, src: href, type: 'srt' })
-      }).catch(() => setError(t('Không đọc được nội dung file.', 'Could not read the file content.')))
+    if (key === 'video' || href.match(/\.(mp4|mov|webm|avi|mkv|mp3|wav|aac|flac|ogg|png|jpg|jpeg|webp|gif)(\?|$)/i)) {
+      setTextPreview(null)
+      setVideoPreview({ title: label, src: href, type: 'video' })
       return
     }
-    setTextPreview(null)
-    setVideoPreview({ title: label, src: href, type: 'video' })
+    // Everything else (srt, txt, json, md, script, prompts…) → text editor
+    void fetch(href).then(r => r.ok ? r.text() : Promise.reject(new Error('preview failed'))).then(text => {
+      setTextPreview(text)
+      setVideoPreview({ title: label, src: href, type: 'srt' })
+    }).catch(() => setError(t('Không đọc được nội dung file.', 'Could not read the file content.')))
   }
 
 
@@ -376,17 +377,32 @@ export default function AutomationPage() {
 
   const submit = async () => {
     setSubmitting(true); setError(''); setEditingJobId('')
-    const body = new FormData()
-    body.set('inputMode', mode); body.set('title', title.trim() || topic.trim().slice(0, 80) || t('Job tự động hoá', 'Automation job')); body.set('topic', topic.trim()); body.set('settings', JSON.stringify(settings)); body.set('startNow', 'true')
-    for (const [key, file] of Object.entries(files)) if (file) body.append(key, file)
+    // Split topics by newline for multi-job creation (only in topic mode)
+    const topicLines = mode === 'topic'
+      ? topic.split('\n').map(s => s.trim()).filter(Boolean)
+      : [topic.trim()]
+    const multiTopic = topicLines.length > 1
     try {
-      const response = await fetch(`${API}/jobs`, { method: 'POST', body })
-      const data = await response.json().catch(() => ({})) as { status?: JobStatus; detail?: { message?: string } }
-      if (!response.ok) throw new Error(data.detail?.message || t('Không tạo được job.', 'Could not create job.'))
+      let created = 0
+      for (const t_ of (topicLines.length ? topicLines : [''])) {
+        const body = new FormData()
+        body.set('inputMode', mode)
+        body.set('title', multiTopic ? t_.slice(0, 80) : (title.trim() || t_.slice(0, 80) || t('Job tự động hoá', 'Automation job')))
+        body.set('topic', t_)
+        body.set('settings', JSON.stringify(settings))
+        body.set('startNow', 'true')
+        for (const [key, file] of Object.entries(files)) if (file) body.append(key, file)
+        const response = await fetch(`${API}/jobs`, { method: 'POST', body })
+        const data = await response.json().catch(() => ({})) as { status?: JobStatus; detail?: { message?: string } }
+        if (!response.ok) throw new Error(data.detail?.message || t('Không tạo được job.', 'Could not create job.'))
+        created++
+      }
       setTitle(''); setTopic(''); setFiles({ script: null, audio: null, srt: null, prompts: null, watermark: null }); await refresh()
-      setNotice(mode === 'ai_topic' || data.status === 'awaiting_topic'
+      setNotice(mode === 'ai_topic'
         ? t('Đã tạo job. AI sẽ đề xuất đúng 5 chủ đề; chọn một chủ đề để chạy tiếp.', 'Job created. AI will suggest exactly 5 topics; choose one to continue.')
-        : t('Đã thêm job vào hàng đợi.', 'Job added to the queue.'))
+        : multiTopic
+          ? t(`Đã tạo ${created} job vào hàng đợi.`, `Added ${created} jobs to the queue.`)
+          : t('Đã thêm job vào hàng đợi.', 'Job added to the queue.'))
       window.setTimeout(() => setNotice(''), 5000)
     } catch (cause) { setError(cause instanceof Error ? cause.message : t('Không tạo được job.', 'Could not create job.')) }
     finally { setSubmitting(false) }
@@ -458,9 +474,9 @@ export default function AutomationPage() {
       <section className="automation-builder" aria-labelledby="automation-title">
       <div className="automation-heading"><div><h1 id="automation-title">{t('Tự động hoá video', 'Video automation')}</h1><p>{t('Chạy nhiều job từ ý tưởng đến MP4, mỗi job có checkpoint và log riêng.', 'Run multiple jobs from idea to MP4, each with its own checkpoint and logs.')}</p></div><button type="button" className="automation-refresh" onClick={() => void refresh()} aria-label={t('Làm mới job', 'Refresh jobs')}>↻</button></div>
       <div className="automation-mode-grid" role="radiogroup" aria-label={t('Loại đầu vào', 'Input type')}>
-        {(['topic', 'ai_topic'] as InputMode[]).map(item => <button key={item} type="button" role="radio" aria-checked={mode === item} className={mode === item ? 'selected' : ''} onClick={() => setMode(item)}><strong>{modeLabel(item, t)}</strong><small>{item === 'topic' ? t('Nhập một chủ đề hoặc URL', 'Enter a topic or URL') : t('AI đưa 5 lựa chọn rồi chờ bạn chọn', 'AI suggests 5 choices, then waits')}</small></button>)}
+        {(['topic', 'ai_topic'] as InputMode[]).map(item => <button key={item} type="button" role="radio" aria-checked={mode === item} className={mode === item ? 'selected' : ''} onClick={() => setMode(item)}><strong>{modeLabel(item, t)}</strong><small>{item === 'topic' ? t('Mỗi dòng = 1 job riêng', 'Each line = a separate job') : t('AI đưa 5 lựa chọn rồi chờ bạn chọn', 'AI suggests 5 choices, then waits')}</small></button>)}
       </div>
-      {(mode === 'topic' || mode === 'ai_topic') && <label className="automation-field"><span>{t('Chủ đề (không bắt buộc)', 'Topic (optional)')}</span><textarea value={topic} onChange={event => setTopic(event.target.value)} placeholder={t('Để trống để AI tự đề xuất chủ đề…', 'Leave empty for AI-generated topic ideas…')} rows={3} /></label>}
+      {(mode === 'topic' || mode === 'ai_topic') && <label className="automation-field"><span>{t('Chủ đề (không bắt buộc)', 'Topic (optional)')}</span><textarea value={topic} onChange={event => setTopic(event.target.value)} placeholder={mode === 'topic' ? t('Mỗi dòng là 1 chủ đề → tạo nhiều job song song. Để trống để AI tự đề xuất…', 'One topic per line → creates multiple jobs. Leave empty for AI-generated topics…') : t('Để trống để AI tự đề xuất chủ đề…', 'Leave empty for AI-generated topic ideas…')} rows={3} /></label>}
       <label className="automation-field"><span>{t('Tên job (tuỳ chọn)', 'Job name (optional)')}</span><input value={title} onChange={event => setTitle(event.target.value)} placeholder={t('Tự đặt theo chủ đề nếu bỏ trống', 'Generated from the topic if empty')} /></label>
       <details className="automation-settings" open={settingsOpen} onToggle={(event) => {
         const next = event.currentTarget.open

@@ -563,10 +563,12 @@ class AutomationService:
         instruction = (
             "Read the attached SRT with timecodes (or script), split visual beats by meaning, then output ONLY the image prompt lines. "
             "Format: 001_[00:00:00.000-00:00:05.000] <English description>. Separate each prompt with a blank line. "
+            "IMPORTANT: every second of the video must be covered — do NOT stop early, do NOT skip any segment. "
             "No preamble, no explanation, no filename mention — start immediately with line 001."
             if language == "English" else
             "Đọc file SRT có timecode (hoặc kịch bản) đính kèm, chia visual beat theo ý nghĩa, rồi chỉ xuất ra các dòng prompt ảnh. "
             "Mỗi prompt theo dạng: 001_[00:00:00.000-00:00:05.000] <mô tả tiếng Anh>. Mỗi prompt cách nhau 1 dòng trống. "
+            "QUAN TRỌNG: phải phủ kín toàn bộ thời lượng video — không được dừng sớm, không được bỏ sót đoạn nào. "
             "Không mở đầu, không giải thích, không nhắc tên file — bắt đầu ngay bằng dòng 001."
         )
         instruction = self._audio_first_engine_prompt(settings) + "\n" + instruction
@@ -643,12 +645,32 @@ class AutomationService:
 
     @staticmethod
     def _extract_prompt_lines(text: str) -> str:
-        """Keep only valid timecode prompt lines (NNN_[HH:MM:SS...] ...), separated by a blank line."""
-        lines = [
-            ln.strip() for ln in text.splitlines()
-            if re.match(r"^\d{3}_\[", ln.strip())
-        ]
-        return "\n\n".join(lines)
+        """Keep valid timecode prompt blocks (NNN_[HH:MM:SS...] ...).
+
+        A prompt block starts with the NNN_[ marker line and includes all
+        subsequent non-blank lines that belong to the same entry (multi-line
+        descriptions). Blocks are separated by a blank line in the output.
+        """
+        blocks: list[str] = []
+        current: list[str] = []
+        for ln in text.splitlines():
+            stripped = ln.strip()
+            if re.match(r"^\d{3}_\[", stripped):
+                # Start of a new prompt block
+                if current:
+                    blocks.append("\n".join(current))
+                current = [stripped]
+            elif current and stripped:
+                # Continuation line of the current block
+                current.append(stripped)
+            else:
+                # Blank line → end of current block
+                if current:
+                    blocks.append("\n".join(current))
+                    current = []
+        if current:
+            blocks.append("\n".join(current))
+        return "\n\n".join(blocks)
 
     @staticmethod
     def _plain_prompt_lines(text: str) -> list[str]:
