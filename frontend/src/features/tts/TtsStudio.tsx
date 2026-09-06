@@ -763,7 +763,20 @@ export default function TtsStudio({
         autoSplit: false,
         title: 'Nghe thử',
       })
-      applyJobUrls(res)
+      const jid = (res as { id?: string; job_id?: string }).id || requestJobId
+      for (let i = 0; i < 200; i++) {
+        await new Promise((r) => window.setTimeout(r, 300))
+        try {
+          const p = await api.ttsStudioJobProgress(jid)
+          if ((p as { done?: boolean }).done) break
+        } catch { /* ignore */ }
+      }
+      applyJobUrls({
+        id: jid,
+        duration: (res as { duration?: number }).duration || 0,
+        audioUrl: (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${jid}/audio.wav`,
+        mp3Url: (res as { mp3Url?: string }).mp3Url,
+      })
       requestAnimationFrame(() => {
         const el = audioRef.current
         if (!el) return
@@ -778,6 +791,7 @@ export default function TtsStudio({
       setPreviewBusy(false)
     }
   }
+
 
   async function onCancelJob() {
     const runningJobId = activeJobIdRef.current
@@ -1013,8 +1027,9 @@ export default function TtsStudio({
     setError('')
     try {
       const sampleLang = v.language || lang
+      const previewJobId = crypto.randomUUID().replaceAll('-', '').slice(0, 12)
       const res = await api.ttsStudioSynth({
-        jobId: crypto.randomUUID().replaceAll('-', '').slice(0, 12),
+        jobId: previewJobId,
         text: previewSampleFor(sampleLang).slice(0, 200),
         voice: v.id,
         lang: sampleLang,
@@ -1029,7 +1044,17 @@ export default function TtsStudio({
           `Preview · ${voiceDisplayName(v.id, voices, v.name)}`,
         ).slice(0, 80),
       })
-      playVoicePreview(v.id, res.audioUrl)
+      const jid = (res as { id?: string; job_id?: string }).id || previewJobId
+      for (let i = 0; i < 200; i++) {
+        await new Promise((r) => window.setTimeout(r, 300))
+        try {
+          const p = await api.ttsStudioJobProgress(jid)
+          if ((p as { done?: boolean }).done) break
+        } catch { /* ignore */ }
+      }
+      const audioUrl = (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${jid}/audio.wav`
+      playVoicePreview(v.id, audioUrl)
+
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không tạo được audio nghe thử')
     } finally {
