@@ -48,8 +48,12 @@ jobs:
       - name: Write version from tag
         run: |
           TAG="${GITHUB_REF_NAME:-}"
+          # Strip prefix: v5.2.0 → 5.2.0 ; action/5.2.0 → 5.2.0
           VERSION="${TAG#v}"
-          if [ -z "$VERSION" ]; then VERSION="$(cat build_app/VERSION 2>/dev/null || echo '0.0.0')"; fi
+          VERSION="${VERSION#action/}"
+          if [ -z "$VERSION" ] || echo "$VERSION" | grep -q '[^0-9.]'; then
+            VERSION="$(cat build_app/VERSION 2>/dev/null || echo '0.0.0')"
+          fi
           echo "$VERSION" > build_app/VERSION
           echo "Building version: $VERSION"
 
@@ -146,7 +150,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/action/')
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
