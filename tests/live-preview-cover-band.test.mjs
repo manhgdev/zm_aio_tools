@@ -67,6 +67,15 @@ test('Live Preview renders inherited bbox while reserving verified bbox for row 
   assert.doesNotMatch(source, /layoutSegment = overCoverMode/)
 })
 
+test('manual blur and caption keep independent drag geometry', async () => {
+  const source = await readFile(new URL('../frontend/src/features/editor/LivePreviewEditor.tsx', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /blurBandForSegment/)
+  assert.match(source, /const captionBand = overCoverMode/)
+  assert.match(source, /bbox:\s*captionBand/)
+  assert.doesNotMatch(source, /const captionBand = .*persistentBlurBandBox/)
+})
+
 test('caption cover expands from the first row through the last rendered row', async () => {
   const { expandCoverForCaptionLines } = await loadCoverBoxHelpers()
   const cover = expandCoverForCaptionLines(

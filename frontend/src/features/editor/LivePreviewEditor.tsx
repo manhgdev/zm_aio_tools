@@ -1555,7 +1555,19 @@ export default function LivePreviewEditor({
     }, sourceWidth, sourceHeight)
   })()
   const autoBlurBandBoxes = useMemo(() => {
-    if (settings.blurBandMode !== 'auto' || sourceWidth <= 0 || sourceHeight <= 0) return []
+    if (sourceWidth <= 0 || sourceHeight <= 0) return []
+    const stored = settings.blurBandAutoRegionVersion === 1 ? settings.blurBandAutoRegion : null
+    if (stored) {
+      const values = [stored.x, stored.y, stored.w, stored.h].map(Number)
+      if (values.every(Number.isFinite) && values[2] > 0 && values[3] > 0) {
+        return [clampCoverBox({
+          x: values[0] * sourceWidth,
+          y: values[1] * sourceHeight,
+          w: values[2] * sourceWidth,
+          h: values[3] * sourceHeight,
+        }, sourceWidth, sourceHeight)]
+      }
+    }
     const verified = layoutSegs
       .filter((segment) => segment.bboxDetected === true && segment.bbox)
       .map((segment) => clampCoverBox(segment.bbox!, sourceWidth, sourceHeight))
@@ -1573,7 +1585,7 @@ export default function LivePreviewEditor({
       const y = Math.max(0, Math.min(sourceHeight - height, top))
       return [{ x: 0, y, w: sourceWidth, h: height }]
     })
-  }, [layoutSegs, settings.blurBandMode, sourceHeight, sourceWidth])
+  }, [layoutSegs, settings.blurBandAutoRegion, settings.blurBandAutoRegionVersion, sourceHeight, sourceWidth])
   const previewMaskBoxes = persistentBlurBandBox
     ? [persistentBlurBandBox]
     : settings.blurBandMode === 'auto' && autoBlurBandBoxes.length
@@ -1590,8 +1602,7 @@ export default function LivePreviewEditor({
   const timelineBlurBandLabel = settings.blurBandMode === 'manual'
     ? t('Vùng làm mờ thủ công', 'Manual blur zone')
     : t('Làm mờ tự động (OCR)', 'Auto blur (OCR)')
-  const blurBandForSegment = (segment: Segment) => {
-    if (persistentBlurBandBox) return persistentBlurBandBox
+  const captionBandForSegment = (segment: Segment) => {
     if (!autoBlurBandBoxes.length) return null
     const center = segment.bbox
       ? segment.bbox.y + segment.bbox.h / 2
@@ -1617,10 +1628,13 @@ export default function LivePreviewEditor({
           ) {
             return null
           }
-          const fixedBand = overCoverMode && !isVertLabel ? blurBandForSegment(s) : null
-          const layout = fixedBand
+          // Center cover captions in the stable OCR lane, not in the manual
+          // blur region. This preserves the original fixed caption alignment
+          // while keeping the two drag geometries independent.
+          const captionBand = overCoverMode && !isVertLabel ? captionBandForSegment(s) : null
+          const layout = captionBand
             ? resolvePreviewOverLayout(
-                { ...s, bbox: fixedBand, bboxInherited: false, captionLayout: null },
+                { ...s, bbox: captionBand, bboxInherited: false, captionLayout: null },
                 settings,
                 sourceWidth,
                 sourceHeight,
