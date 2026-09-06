@@ -373,12 +373,14 @@ def api_render_video(render_id: str, download: bool = False):
 
 
 @router.get("/api/renders/{render_id}/thumbnail")
-def api_render_thumbnail(render_id: str):
+async def api_render_thumbnail(render_id: str):
+    import anyio
     try:
-        path = ensure_thumbnail(render_id)
+        path = await anyio.to_thread.run_sync(lambda: ensure_thumbnail(render_id))
     except (FileNotFoundError, OSError, subprocess.SubprocessError):
         raise HTTPException(404, "Khong tao duoc thumbnail") from None
     return FileResponse(path, media_type="image/jpeg")
+
 
 
 @router.post("/api/renders/{render_id}/reveal")
