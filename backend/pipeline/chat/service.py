@@ -26,17 +26,47 @@ from .store import ChatStore
 from .browser import ChatBrowserManager, SUPPORTED_CHAT_MODES, discover_browser, open_profile_url, profile_debug_port
 
 
+# Live chat probes on 2026-09-06 showed that Groq and NVIDIA expose audio,
+# guard, embedding, retired, and otherwise non-chat models in /models. Keep
+# only ids that produced a streamed response through this app's chat contract.
+# ponytail: this allowlist intentionally trades automatic catalogue expansion
+# for a truthful picker; upgrade to provider capability metadata once those
+# APIs reliably distinguish active text-chat models.
+_VERIFIED_CHAT_MODELS = {
+    "groq": frozenset({
+        "allam-2-7b", "groq/compound", "groq/compound-mini",
+        "openai/gpt-oss-120b", "openai/gpt-oss-20b",
+        "openai/gpt-oss-safeguard-20b", "qwen/qwen3.6-27b", "qwen/qwen3.8-27b",
+    }),
+    "nvidia": frozenset({
+        "google/gemma-4-31b-it", "meta/llama-3.2-11b-vision-instruct",
+        "meta/muse-glimmer-30b", "minimaxai/minimax-m3",
+        "nvidia/ising-calibration-1.5-31b", "nvidia/llama-3.1-nemoguard-8b-content-safety",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3.5-content-safety",
+        "nvidia/nemotron-3.5-lightning-30b-a3b", "nvidia/riva-translate-4b-instruct-v1.1",
+        "nvidia/riva-translate-4b-instruct-v2", "openai/gpt-oss-20b", "poolside/laguna-xs-2.1",
+    }),
+}
+_UNAVAILABLE_CHAT_MODELS = {
+    "openrouter": frozenset({
+        "google/lyria-3-clip-preview", "google/lyria-3-pro-preview",
+        "thinkingmachines/inkling-small:free", "thinkingmachines/inkling:free",
+    }),
+}
+
+
 class ChatService:
     MAX_PROMPT = 100_000
-    DEFAULT_MODEL = "GPT-5.6 Sol"
+    DEFAULT_MODEL = "gpt-5"
     DEFAULT_API_PROVIDER = "openrouter"
     DEFAULT_API_MODEL = "openrouter/free"
     # Stable fallbacks keep a configured provider selectable when its model
     # discovery endpoint is temporarily unavailable. Actual chat requests
     # still validate the key/model at the provider boundary.
     PROVIDER_FALLBACK_MODELS = {
-        "groq": ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"),
-        "nvidia": ("meta/llama-3.1-8b-instruct",),
+        "groq": ("openai/gpt-oss-20b",),
+        "nvidia": ("openai/gpt-oss-20b",),
     }
 
     def __init__(self, store=None):
@@ -64,14 +94,14 @@ class ChatService:
         # Opening the isolated profile only starts sign-in; it is not proof that
         # ChatGPT accepted the session. Health must observe a real composer and
         # promote the account to ``connected`` before chat is enabled.
-        browser_ready = item["status"] == "connected"
+        api_ready = oauth.get("status") == "connected"
         email = oauth.get("email") or item.get("email", "")
         if "@" in email:
             name, domain = email.split("@", 1)
             email = f"{name[:2]}***@{domain}"
         return [{**item, "provider": "chatgpt_web", "experimental": False,
-                 "configured": browser_ready,
-                 "status": item["status"] if item["status"] in {"connected", "browser_only", "reauth_required", "unavailable", "signed_out"} else "signed_out",
+             "configured": api_ready,
+             "status": "connected" if api_ready else "signed_out",
                  "email": email}]
 
     def primary_account(self):
@@ -108,17 +138,20 @@ class ChatService:
         pid = str(provider_id or "").strip().lower()
         if pid == "chatgpt_web":
             account = self.primary_account()
-            if not account or account.get("status") != "connected":
+            if not account or self.auth_for(account["id"]).status().get("status") != "connected":
                 return []
-            raw = self.models(account["id"])
+            try:
+                raw = ChatGPTAccountProvider(self.auth_for(account["id"])).models()
+            except Exception:
+                raw = []
             # GPT-5.6 Sol is the current Web default and does not require the
             # model picker. Keep it selectable when the picker is temporarily
             # unavailable, while still preferring every model the Web session
             # actually reports.
             if not raw:
-                raw = [str(account.get("last_model") or self.DEFAULT_MODEL)]
+                raw = [self.DEFAULT_MODEL]
             return [
-                {"id": item, "label": item, "provider": pid, "free": True, "capabilities": ["text", "search", "research", "image"], "available": True, "reason": "Active ChatGPT Web session"}
+                {"id": item, "label": item, "provider": pid, "free": True, "capabilities": ["text"], "available": True, "reason": "Active ChatGPT API session"}
                 for item in raw
             ]
         now = time.monotonic()
@@ -131,6 +164,12 @@ class ChatService:
             # round trip on slower networks.
             records = self._api_provider(pid).model_records(timeout=8.0)
             free = [self._public_model(item, provider=pid) for item in records if item.get("free")]
+            verified = _VERIFIED_CHAT_MODELS.get(pid)
+            if verified is not None:
+                free = [item for item in free if item["id"] in verified]
+            unavailable = _UNAVAILABLE_CHAT_MODELS.get(pid, ())
+            if unavailable:
+                free = [item for item in free if item["id"] not in unavailable]
             # OpenRouter documents a dynamic free router even when /models is
             # temporarily unavailable or does not list it in the response.
             if pid == "openrouter" and not any(item["id"] == self.DEFAULT_API_MODEL for item in free):
@@ -164,9 +203,9 @@ class ChatService:
         if account:
             connected = account.get("status") == "connected"
             result.append({
-                "id": "chatgpt_web", "label": PROVIDER_LABELS["chatgpt_web"], "kind": "browser",
+                "id": "chatgpt_web", "label": PROVIDER_LABELS["chatgpt_web"], "kind": "api",
                 "configured": connected, "status": "connected" if connected else str(account.get("status") or "signed_out"),
-                "capabilities": ["text", "search", "research", "image"],
+                "capabilities": ["text"],
                 "models": self.provider_models("chatgpt_web"),
                 "reason": "Active ChatGPT Web session" if connected else "ChatGPT Web session is not connected",
             })
@@ -175,9 +214,9 @@ class ChatService:
             # exists.  Previously this provider was omitted entirely, which
             # made the only way to start ChatGPT login disappear from the UI.
             result.append({
-                "id": "chatgpt_web", "label": PROVIDER_LABELS["chatgpt_web"], "kind": "browser",
+                "id": "chatgpt_web", "label": PROVIDER_LABELS["chatgpt_web"], "kind": "api",
                 "configured": False, "status": "signed_out",
-                "capabilities": ["text", "search", "research", "image"],
+                "capabilities": ["text"],
                 "models": [], "loginRequired": True,
                 "reason": "ChatGPT Web profile is not configured",
             })
@@ -208,13 +247,11 @@ class ChatService:
         pid = str(provider_id or "").strip().lower()
         if pid == "chatgpt_web":
             account = self.primary_account()
-            if not account or account.get("status") != "connected":
+            if not account or self.auth_for(account["id"]).status().get("status") != "connected":
                 raise ProviderError("CHATGPT_LOGIN_REQUIRED", "ChatGPT Web session is not connected")
             choices = self.provider_models(pid)
-            selected = str(model or account.get("last_model") or self.DEFAULT_MODEL)
-            if choices and not any(item["id"].casefold() == selected.casefold() for item in choices):
-                raise ProviderError("CHAT_MODEL_UNAVAILABLE", "Selected ChatGPT Web model is unavailable")
-            return pid, selected, account
+            selected = choices[0]["id"] if choices else self.DEFAULT_MODEL
+            return pid, selected, {"capabilities": ["text"]}
         choices = self.provider_models(pid)
         selected = str(model or (choices[0]["id"] if choices else ""))
         found = next((item for item in choices if item["id"].casefold() == selected.casefold()), None)
@@ -263,8 +300,7 @@ class ChatService:
         existing = self.primary_account()
         if existing:
             return {k: v for k, v in existing.items() if k != "profile_path"}
-        family, _ = discover_browser(browser_family)
-        if not family: raise RuntimeError("No supported browser installed")
+        family = browser_family or "api"
         account_id = __import__("uuid").uuid4().hex
         profile = DATA / "chat" / "profiles" / account_id
         # Store supplies the canonical id; rename the empty profile target after creation.
@@ -280,49 +316,25 @@ class ChatService:
         account = self.store.get_account(account_id)
         if not account:
             raise KeyError(account_id)
-        open_profile_url(Path(account["profile_path"]), account["browser_family"], "https://chatgpt.com/", debug_port=profile_debug_port(account_id))
+        result = self.auth_for(account_id).start_login(open_browser=True)
         self.store.update_account(account_id, status="browser_only")
-        return {"accountId": account_id, "status": "browser_only"}
+        return {"accountId": account_id, **result}
 
     def browser_health(self, account_id):
         account = self.store.get_account(account_id)
         if not account:
             raise KeyError(account_id)
-        lock = self._health_locks.setdefault(account_id, threading.Lock())
-        busy = False
-        if not lock.acquire(timeout=20):
-            busy = True
-            result = {"status": "unavailable", "active": False, "errorCode": "CHAT_BROWSER_BUSY", "error": "Browser session check is already running."}
-        else:
-            try:
-                result = asyncio.run(ChatBrowserManager(account["id"], Path(account["profile_path"]), account["browser_family"]).health())
-            except Exception as exc:
-                detail = str(exc).replace(str(account["profile_path"]), "<browser-profile>")
-                if "CHAT_BROWSER_WINDOW_CLOSED" in detail:
-                    result = {"status": "browser_only", "active": False, "errorCode": "CHAT_BROWSER_WINDOW_CLOSED"}
-                    detail = ""
-                else:
-                    locked = "ProcessSingleton" in detail or "profile directory" in detail
-                    result = {"status": "unavailable", "active": False,
-                              "errorCode": "CHAT_BROWSER_PROFILE_LOCKED" if locked else "CHAT_BROWSER_HEALTH_FAILED",
-                              "error": "Browser profile is already open. Close the ChatGPT Web window and check again." if locked else detail[-1000:]}
-            finally:
-                lock.release()
-        # A concurrent probe is informational. Do not overwrite a known
-        # connected/reauth state with ``unavailable`` merely because another
-        # request currently owns the profile check lock.
-        if not busy:
-            self.store.update_account(account_id, status=result["status"])
-        return {**next(item for item in self.list_accounts() if item["id"] == account_id), **result}
+        result = self.auth_for(account_id).status()
+        self.store.update_account(account_id, status=result["status"])
+        return {**next(item for item in self.list_accounts() if item["id"] == account_id), **result, "active": result.get("configured", False)}
 
     def browser_logout(self, account_id):
         account = self.store.get_account(account_id)
         if not account:
             raise KeyError(account_id)
-        result = asyncio.run(ChatBrowserManager(account["id"], Path(account["profile_path"]), account["browser_family"]).logout())
         self.auth_for(account_id).logout()
         self.store.update_account(account_id, status="signed_out", email="")
-        return {"accountId": account_id, **result}
+        return {"accountId": account_id, "status": "signed_out"}
 
     def validate_prompt(self, payload):
         if payload.get("toolCall"):
@@ -353,6 +365,8 @@ class ChatService:
     def models(self, account_id):
         account = self.store.get_account(account_id)
         if account:
+            if account_id == account["id"]:
+                return [item["id"] for item in self.provider_models("chatgpt_web")]
             try:
                 manager = ChatBrowserManager(account["id"], Path(account["profile_path"]), account["browser_family"])
                 models = asyncio.run(manager.models())
@@ -412,11 +426,9 @@ class ChatService:
         if not requested_provider:
             requested_provider = self.DEFAULT_API_PROVIDER
         selected_provider = "chatgpt_web" if requested_provider == "chatgpt_web" else requested_provider
-        selected_model = str(payload.get("model") or conv.get("model") or "")
+        selected_model = self.DEFAULT_MODEL if selected_provider == "chatgpt_web" else str(payload.get("model") or conv.get("model") or "")
         usage: dict | None = None
-        if selected_provider == "chatgpt_web" and not selected_model and account_record:
-            selected_model = str(account_record.get("last_model") or self.DEFAULT_MODEL)
-        elif not selected_model and selected_provider == self.DEFAULT_API_PROVIDER:
+        if not selected_model and selected_provider == self.DEFAULT_API_PROVIDER:
             selected_model = self.DEFAULT_API_MODEL
         # Emit provider/model immediately so the UI can show what is being
         # attempted while discovery or browser work is still in progress.
@@ -425,22 +437,22 @@ class ChatService:
             history = self.store.list_messages(conversation_id)[:-1]
             if requested_provider not in {"chatgpt_web", *API_PROVIDER_IDS, "openai_api", ""}:
                 raise ProviderError("ACCOUNT_NOT_FOUND", "ChatGPT Web session was not found")
-            if requested_provider == "chatgpt_web":
+            if requested_provider == "chatgpt_web" and account_record and account_record.get("status") == "browser_only":
                 if not account_record:
                     raise ProviderError("ACCOUNT_NOT_FOUND", "ChatGPT Web session was not found")
                 use_browser = True
                 if account_record.get("status") != "connected":
                     raise ProviderError("CHAT_BROWSER_NOT_AUTHENTICATED", "ChatGPT Web session is not connected")
-                selected_model = str(payload.get("model") or conv.get("model") or account_record.get("last_model") or self.DEFAULT_MODEL)
-                if selected_model and (not conv.get("model") or conv.get("provider_id") != "chatgpt_web" or conv.get("account_id") != account_record["id"]):
+                selected_model = self.DEFAULT_MODEL
+                if selected_model and (conv.get("model") != selected_model or conv.get("provider_id") != "chatgpt_web" or conv.get("account_id") != account_record["id"]):
                     self.store.update_conversation(conversation_id, provider_id="chatgpt_web", account_id=account_record["id"], model=selected_model)
                     conv["model"] = selected_model
                 yield self.event("tool.started", tool=mode, transport="chatgpt_browser", model=selected_model or None)
                 paths = [str(self.store.attachment_path(item["id"])) for item in attachments]
-                manager = ChatBrowserManager(account_record["id"], Path(account_record["profile_path"]), account_record["browser_family"])
                 lock = self._browser_locks.setdefault(account_record["id"], threading.Lock())
                 if not lock.acquire(blocking=False):
                     raise RuntimeError("CHAT_BROWSER_BUSY")
+                manager = ChatBrowserManager(account_record["id"], Path(account_record["profile_path"]), account_record["browser_family"])
                 updates: queue.Queue[tuple[str, object]] = queue.Queue()
                 result_holder: dict[str, object] = {}
 
@@ -509,7 +521,9 @@ class ChatService:
                         account_id=selected_provider,
                         model=selected_model,
                     )
-                if selected_provider == "openai":
+                if selected_provider == "chatgpt_web":
+                    provider = ChatGPTAccountProvider(self.auth_for(account_record["id"]))
+                elif selected_provider == "openai":
                     cfg = load_app_config()["cloud"]["openai"]
                     provider = OpenAIProvider(cfg["apiKey"], cfg["baseUrl"])
                 else:
@@ -535,6 +549,8 @@ class ChatService:
                         yield self.event("content.delta", messageId=assistant["id"], delta=delta)
                 raw_usage = getattr(provider, "last_usage", None)
                 usage = raw_usage if isinstance(raw_usage, dict) else None
+                if not accumulated and not cancel.is_set():
+                    raise ProviderError("CHAT_PROVIDER_EMPTY_RESPONSE", "Provider completed without returning any text")
                 yield self.event("tool.completed", tool=mode, transport=selected_provider, model=selected_model)
             status = "interrupted" if cancel.is_set() else "completed"
             self.store.update_message(assistant["id"], content=accumulated, status=status)

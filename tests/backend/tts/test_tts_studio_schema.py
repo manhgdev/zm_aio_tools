@@ -18,18 +18,16 @@ def test_tts_studio_schema_covers_text_and_srt(monkeypatch):
         autoSplit=True,
         gapMs=300,
     ))
-    assert text["text"] == "Xin chào"
-    assert text["auto_split"] is True
-    assert text["gap_ms"] == 300
+    assert text["id"] == "frontend01"
     assert text["job_id"] == "frontend01"
+    assert text["running"] is True
 
     srt = api_tts_studio_synth(StudioSynthIn(
         srtText="1\n00:00:00,000 --> 00:00:01,000\nXin chào",
         speaker_id="speaker-1",
         keepTimeline=True,
     ))
-    assert srt["voice"] == "speaker-1"
-    assert srt["keep_timeline"] is True
+    assert srt["running"] is True
 
 
 def test_tts_desktop_reveal_resolves_requested_artifact(monkeypatch, tmp_path):
@@ -39,6 +37,34 @@ def test_tts_desktop_reveal_resolves_requested_artifact(monkeypatch, tmp_path):
     monkeypatch.setattr(studio, "published_job_output_dir", lambda _: tmp_path)
 
     assert _tts_job_artifact("job-1", "wav") == wav
+
+
+def test_tts_progress_keeps_terminal_worker_errors_visible():
+    job_id = "progress-error"
+    studio.set_job_progress(job_id, 1, 100, "Đang khởi tạo TTS…")
+    studio.set_job_error(job_id, RuntimeError("runtime unavailable"))
+
+    progress = studio.get_job_progress(job_id)
+
+    assert progress["done"] is True
+    assert progress["error"] == "runtime unavailable"
+    assert progress["pct"] == 1
+    with studio._jobs_lock:
+        studio._job_progress.pop(job_id, None)
+
+
+def test_tts_progress_completes_the_request_id_after_a_cache_hit():
+    job_id = "progress-cache"
+    studio.set_job_progress(job_id, 1, 100, "Đang khởi tạo TTS…")
+    studio.set_job_complete(job_id, result_job_id="cached-output")
+
+    progress = studio.get_job_progress(job_id)
+
+    assert progress["done"] is True
+    assert progress["pct"] == 99
+    assert progress["resultJobId"] == "cached-output"
+    with studio._jobs_lock:
+        studio._job_progress.pop(job_id, None)
 
 
 def test_publish_tts_keeps_srt_and_bundle_in_selected_output(monkeypatch, tmp_path):

@@ -432,5 +432,18 @@ def test_groq_and_nvidia_keep_selectable_fallback_when_catalog_has_no_free_metad
 
     service = ChatService(store=ChatStore(tmp_path / "chat.sqlite3", tmp_path / "attachments"))
     monkeypatch.setattr(service, "_api_provider", lambda _provider: type("Provider", (), {"model_records": lambda _self, **_kwargs: [{"id": "catalog-model", "free": False}]})())
-    assert service.provider_models("groq")[0]["id"] == "llama-3.3-70b-versatile"
-    assert service.provider_models("nvidia")[0]["id"] == "meta/llama-3.1-8b-instruct"
+    assert service.provider_models("groq")[0]["id"] == "openai/gpt-oss-20b"
+    assert service.provider_models("nvidia")[0]["id"] == "openai/gpt-oss-20b"
+
+
+def test_provider_catalog_hides_models_that_failed_live_chat_contract(tmp_path, monkeypatch):
+    from pipeline.chat.store import ChatStore
+
+    service = ChatService(store=ChatStore(tmp_path / "chat.sqlite3", tmp_path / "attachments"))
+    records = [
+        {"id": "openai/gpt-oss-20b", "free": True},
+        {"id": "01-ai/yi-large", "free": True},
+    ]
+    monkeypatch.setattr(service, "_api_provider", lambda _provider: type("Provider", (), {"model_records": lambda _self, **_kwargs: records})())
+
+    assert [item["id"] for item in service.provider_models("nvidia", refresh=True)] == ["openai/gpt-oss-20b"]

@@ -50,9 +50,14 @@ class AutomationService:
             "tts": {"voice": "system", "speed": 1.0, "volume": 1.0, "pitch": 0.0, "style": "tu_nhien"},
             "flow": {"accountId": "", "model": "Nano Banana 2", "ratio": "16:9", "resolution": "1K", "concurrency": "3", "promptEngine": "vi"},
             "compose": {
-                "resolution": "auto", "fps": 30, "crf": 20, "encoder": "auto",
-                "speed": 100, "volume": 100, "previewSeconds": 0,
+                "resolution": "auto", "targetPlatform": "auto", "fps": 30, "crf": 20, "encoder": "auto",
+                "effect": "none", "transitionDuration": 0.28, "zoom": "off", "speed": 100, "volume": 100, "previewSeconds": 0,
                 "allowMissingMedia": False, "subtitleEnabled": True, "removeMetadata": False,
+                "subtitleFontFamily": "system", "subtitleSize": 8, "subtitleOffset": 0, "subtitleMargin": 34,
+                "subtitleBackground": "solid", "subtitleColor": "#ffffff", "subtitleBgColor": "#000000", "subtitleOpacity": 55,
+                "drawingEnabled": False, "drawingMode": "hand", "drawingTool": "pencil", "drawingDetail": 72, "drawingThickness": 2, "drawingStrokeOrder": "natural",
+                "delogoEnabled": False, "delogoAuto": True, "delogoX": 80, "delogoY": 82, "delogoW": 18, "delogoH": 12,
+                "logoEnabled": False, "logoSource": "text", "logoText": "ZM AIO TOOL", "logoIcon": "★", "logoFontSize": 32, "logoColor": "#ffffff", "logoSize": 8, "logoOpacity": 85, "logoX": 88, "logoY": 88, "logoMotion": "fixed", "logoScope": "full", "logoStart": 0, "logoEnd": 10, "logoVisibleSec": 4, "logoHiddenSec": 2, "logoFadeSec": 0.5, "logoSafeMargin": 4,
             },
             "outputDir": "",
         }
@@ -111,7 +116,7 @@ class AutomationService:
         # Never expose local input/output paths or accidental secrets to the UI.
         public = {**job}
         public_input = dict(job.get("input") or {})
-        for key in ("script", "audio", "srt", "prompts"):
+        for key in ("script", "audio", "srt", "prompts", "watermark"):
             if public_input.get(key):
                 public_input[key] = Path(str(public_input[key])).name
         public["input"] = public_input
@@ -155,7 +160,7 @@ class AutomationService:
             current = self._futures.get(job_id)
             if current and not current.done():
                 return self.public_job(job_id)
-            if job["status"] not in {"queued", "paused", "interrupted", "failed"}:
+            if job["status"] not in {"queued", "paused", "interrupted", "failed", "cancelled"}:
                 return self.public_job(job_id)
             self._cancel[job_id] = threading.Event()
             self.store.update_job(job_id, status="running", error=None)
@@ -193,7 +198,7 @@ class AutomationService:
         return self.public_job(job_id)
 
     def delete_job(self, job_id: str) -> dict[str, Any]:
-        """Cancel any active work, then remove the job record and private workspace."""
+        """Cancel active work and remove every artifact owned by this automation job."""
         job = self.store.get_job(job_id)
         if not job:
             raise KeyError(job_id)
@@ -234,7 +239,7 @@ class AutomationService:
         job = self.store.get_job(job_id)
         if not job:
             raise KeyError(job_id)
-        if job["status"] not in {"paused", "failed", "interrupted"}:
+        if job["status"] not in {"completed", "paused", "failed", "interrupted"}:
             return self.public_job(job_id)
         # An explicit parent retry also requeues terminal Flow children. This
         # lets the user reconnect Flow after a reCAPTCHA/login interruption and
@@ -249,8 +254,13 @@ class AutomationService:
         except Exception:
             # The Flow module is optional for non-Flow automation jobs.
             pass
-        self.store.update_job(job_id, status="queued", error=None)
-        self.store.append_log(job_id, "info", "Đã đưa lại chặng lỗi vào hàng đợi.", stage=str(job.get("stage") or "input"))
+        patch: dict[str, Any] = {"status": "queued", "error": None}
+        if job["status"] == "completed":
+            artifacts = dict(job.get("artifacts") or {})
+            artifacts.pop("video", None)
+            patch["artifacts"] = artifacts
+        self.store.update_job(job_id, **patch)
+        self.store.append_log(job_id, "info", "Đã đưa lại chặng ghép video vào hàng đợi.", stage="compose")
         return self.start_job(job_id)
 
     def update_job_settings(self, job_id: str, *, title: str | None = None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -333,7 +343,7 @@ class AutomationService:
             self._runner(job_id)
             job = self.store.get_job(job_id)
             if job and job["status"] == "running":
-                self.store.update_job(job_id, status="completed", stage="done", progress=100)
+                self.store.update_job(job_id, status="completed", stage="done", progress=100, error=None)
                 self.store.append_log(job_id, "success", "Job hoàn thành.", stage="done")
         except AutomationCancelled:
             job = self.store.get_job(job_id)
@@ -806,10 +816,11 @@ class AutomationService:
                 if status != "done":
                     continue
                 source = Path(str((child.get("outputs") or [""])[0]))
-                if source.is_file():
-                    target = image_dir / f"{int(child.get('inputIndex') or len(outputs) + 1):03d}{source.suffix.lower() or '.png'}"
-                    shutil.copy2(source, target)
-                    outputs.append(target)
+                if not source.is_file():
+                    raise RuntimeError(f"FLOW_IMAGE_OUTPUT_MISSING: ảnh {child.get('inputIndex') or child_id} không có file đầu ra")
+                target = image_dir / f"{int(child.get('inputIndex') or len(outputs) + 1):03d}{source.suffix.lower() or '.png'}"
+                shutil.copy2(source, target)
+                outputs.append(target)
                 pending.remove(child_id)
                 self.set_stage(job_id, "flow_images", 48 + (len(outputs) / max(1, len(child_ids))) * 30, f"Đã tạo {len(outputs)}/{len(child_ids)} ảnh Flow.")
             time.sleep(0.5)
@@ -825,6 +836,10 @@ class AutomationService:
             self.store.append_log(job_id, "info", "Đã dùng lại video từ checkpoint.", stage="compose")
             return
         compose = settings.get("compose") if isinstance(settings.get("compose"), dict) else {}
+        raw_watermark = str((self.store.get_job(job_id).get("input") or {}).get("watermark") or "")
+        watermark = Path(raw_watermark) if raw_watermark else None
+        if watermark is not None and not watermark.is_file():
+            watermark = None
         configured = str(settings.get("outputDir") or "").strip()
         from pipeline.core.output_paths import selected_or_default
         base_dir = selected_or_default("automation", configured)
@@ -833,14 +848,29 @@ class AutomationService:
         subtitle_enabled = bool(compose.get("subtitleEnabled", True))
         options = {
             "resolution": str(compose.get("resolution") or "auto"),
+            "targetPlatform": str(compose.get("targetPlatform") or "auto"),
             "fps": int(compose.get("fps") or 30),
             "crf": int(compose.get("crf") or 20),
             "encoder": str(compose.get("encoder") or "auto"),
+            "effect": str(compose.get("effect") or "none"),
+            "transitionDuration": float(compose.get("transitionDuration") or 0.28),
+            "zoom": str(compose.get("zoom") or "off"),
             "speed": float(compose.get("speed") or 100),
             "volume": float(compose.get("volume") or 100),
             "previewSeconds": float(compose.get("previewSeconds") or 0),
             "removeMetadata": bool(compose.get("removeMetadata", False)),
             "allowMissingMedia": bool(compose.get("allowMissingMedia", False)),
+            "subtitleFontFamily": str(compose.get("subtitleFontFamily") or "system"),
+            "subtitleSize": float(compose.get("subtitleSize") or 8),
+            "subtitleOffset": float(compose.get("subtitleOffset") or 0),
+            "subtitleMargin": float(compose.get("subtitleMargin") or 34),
+            "subtitleBackground": str(compose.get("subtitleBackground") or "solid"),
+            "subtitleColor": str(compose.get("subtitleColor") or "#ffffff"),
+            "subtitleBgColor": str(compose.get("subtitleBgColor") or "#000000"),
+            "subtitleOpacity": float(compose.get("subtitleOpacity") or 55),
+            "delogo": {"enabled": bool(compose.get("delogoEnabled", False)), "auto": bool(compose.get("delogoAuto", True)), "x": float(compose.get("delogoX") or 80), "y": float(compose.get("delogoY") or 82), "w": float(compose.get("delogoW") or 18), "h": float(compose.get("delogoH") or 12)},
+            "drawing": {"enabled": bool(compose.get("drawingEnabled", False)), "mode": str(compose.get("drawingMode") or "hand"), "tool": str(compose.get("drawingTool") or "pencil"), "detail": int(compose.get("drawingDetail") or 72), "thickness": int(compose.get("drawingThickness") or 2), "strokeOrder": str(compose.get("drawingStrokeOrder") or "natural"), "resolution": "1080p"},
+            "logo": {"enabled": bool(compose.get("logoEnabled", False)), "source": str(compose.get("logoSource") or "text"), "text": str(compose.get("logoText") or "ZM AIO TOOL"), "icon": str(compose.get("logoIcon") or "★"), "fontSize": int(compose.get("logoFontSize") or 32), "color": str(compose.get("logoColor") or "#ffffff"), "size": float(compose.get("logoSize") or 8), "opacity": float(compose.get("logoOpacity") or 85), "x": float(compose.get("logoX") or 88), "y": float(compose.get("logoY") or 88), "motion": str(compose.get("logoMotion") or "fixed"), "scope": str(compose.get("logoScope") or "full"), "start": float(compose.get("logoStart") or 0), "end": float(compose.get("logoEnd") or 10), "visibleSec": float(compose.get("logoVisibleSec") or 4), "hiddenSec": float(compose.get("logoHiddenSec") or 2), "fadeSec": float(compose.get("logoFadeSec") or .5), "safeMargin": float(compose.get("logoSafeMargin") or 4)},
         }
         work = workspace / "render-work"
         # The SRT renderer writes its concat manifest into the work directory.
@@ -848,7 +878,7 @@ class AutomationService:
         # so create it before handing the job to the renderer.
         work.mkdir(parents=True, exist_ok=True)
         timeline = prompts if prompts and self._has_timed_prompts(prompts) else None
-        render_job = srt_image.create_job("output.mp4", work, images, audio, timeline, srt if subtitle_enabled else None, options, None, output_dir / "output.mp4")
+        render_job = srt_image.create_job("output.mp4", work, images, audio, timeline, srt if subtitle_enabled else None, options, watermark, output_dir / "output.mp4")
         srt_image.start(render_job["id"])
         while True:
             try:

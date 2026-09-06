@@ -158,8 +158,39 @@ def get_job_progress(job_id: str) -> dict[str, Any]:
         ))
         is_running = job_id in _running
     prog["running"] = is_running
-    prog["done"] = not is_running and prog.get("pct", 0) >= 99
+    prog["done"] = bool(prog.get("error")) or (not is_running and prog.get("pct", 0) >= 99)
     return prog
+
+
+def set_job_error(job_id: str, error: Exception | str) -> None:
+    """Keep a terminal error for the UI instead of silently losing a worker failure."""
+    if not job_id:
+        return
+    with _jobs_lock:
+        current = dict(_job_progress.get(job_id) or {})
+        _job_progress[job_id] = {
+            "current": int(current.get("current") or 0),
+            "total": max(1, int(current.get("total") or 1)),
+            "pct": max(1, min(99, int(current.get("pct") or 1))),
+            "message": "Tạo giọng thất bại.",
+            "error": str(error) or "Tạo giọng thất bại",
+        }
+
+
+def set_job_complete(job_id: str, message: str = "Đã hoàn thành tạo giọng.", *, result_job_id: str = "") -> None:
+    """Publish completion for the request ID, including cache-hit requests."""
+    if not job_id:
+        return
+    with _jobs_lock:
+        current = dict(_job_progress.get(job_id) or {})
+        _job_progress[job_id] = {
+            "current": max(1, int(current.get("total") or current.get("current") or 1)),
+            "total": max(1, int(current.get("total") or 1)),
+            "pct": 99,
+            "message": message,
+            "resultJobId": result_job_id or job_id,
+        }
+        _running.pop(job_id, None)
 
 
 def mark_cancel(job_id: str) -> None:
@@ -430,7 +461,6 @@ def synth_text_job(
         with _jobs_lock:
             _running.pop(job_id, None)
             _cancel_flags.pop(job_id, None)
-            _job_progress.pop(job_id, None)
 
 
 def synth_srt_job(
@@ -665,7 +695,6 @@ def synth_srt_job(
         with _jobs_lock:
             _running.pop(job_id, None)
             _cancel_flags.pop(job_id, None)
-            _job_progress.pop(job_id, None)
 
 
 def _mix_timeline(parts: list[Path], cues: list[dict], out: Path) -> None:

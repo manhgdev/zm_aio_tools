@@ -181,16 +181,30 @@ class _OAuthClient:
         return _Response({"access_token": "header.payload.sig", "refresh_token": "refresh", "expires_in": 3600})
 
 
-def test_device_login_pending_then_saves_tokens_only_in_secret_store():
+def test_oauth_login_builds_pkce_url_without_device_code():
     from pipeline.chat.auth import ChatGPTAuth
     secrets = _MemorySecrets()
     auth = ChatGPTAuth(token_store=secrets, client=_OAuthClient())
     login = auth.start_login(open_browser=False)
-    assert "token" not in json.dumps(login).lower()
-    assert auth.poll(login["loginId"])["status"] == "pending"
-    assert auth.poll(login["loginId"])["status"] == "connected"
-    assert secrets.value["refresh_token"] == "refresh"
-    assert "refresh_token" not in json.dumps(auth.status())
+    assert "userCode" not in login
+    assert "oauth/authorize" in login["authorizationUrl"]
+    assert "code_challenge=" in login["authorizationUrl"]
+    assert "deviceauth" not in login["authorizationUrl"]
+    login_state = auth._pending.pop(login["loginId"])
+    login_state.server.shutdown()
+    login_state.server.server_close()
+
+
+def test_oauth_poll_waits_for_localhost_callback():
+    from pipeline.chat.auth import ChatGPTAuth
+    auth = ChatGPTAuth(token_store=_MemorySecrets(), client=_OAuthClient(), browser_opener=lambda _url: None)
+    login = auth.start_login()
+    try:
+        assert auth.poll(login["loginId"])["status"] == "pending"
+    finally:
+        login_state = auth._pending.pop(login["loginId"])
+        login_state.server.shutdown()
+        login_state.server.server_close()
 
 
 def test_multiple_accounts_keep_distinct_profiles_and_hide_paths(tmp_path):
@@ -247,6 +261,18 @@ def test_browser_login_process_is_detached_from_app(monkeypatch, tmp_path):
         assert calls["start_new_session"] is True
 
 
+def test_browser_login_reuses_an_existing_debug_browser(monkeypatch, tmp_path):
+    import pipeline.chat.browser as browser
+
+    executable = tmp_path / "chrome"
+    executable.write_text("")
+    monkeypatch.setattr(browser, "discover_browser", lambda _preferred=None: ("chrome", executable))
+    monkeypatch.setattr(browser, "_debug_targets", lambda _port: [{"type": "page", "url": "https://chatgpt.com/"}])
+    monkeypatch.setattr(browser.subprocess, "Popen", lambda *_args, **_kwargs: pytest.fail("must not launch a second profile"))
+
+    assert browser.open_profile_url(tmp_path / "profile", "chrome", "https://chatgpt.com/", debug_port=47001) == "chrome"
+
+
 def test_closed_chat_window_is_not_reported_as_profile_locked(tmp_path, monkeypatch):
     import asyncio
     from pipeline.chat.browser import ChatBrowserManager
@@ -285,6 +311,27 @@ def test_debug_target_detection_ignores_chrome_internal_targets():
 
     assert _has_page_target([{"type": "browser_ui", "url": "chrome://newtab"}]) is False
     assert _has_page_target([{"type": "page", "url": "https://chatgpt.com/"}]) is True
+
+
+def test_browser_page_prefers_the_chatgpt_tab(tmp_path):
+    import asyncio
+    from pipeline.chat.browser import ChatBrowserManager
+
+    class Page:
+        def __init__(self, url): self.url = url
+
+    class Context:
+        pages = [Page("about:blank"), Page("https://example.com/"), Page("https://chatgpt.com/")]
+
+    manager = ChatBrowserManager("account", tmp_path / "profile", "chrome")
+    manager._context = Context()
+    assert asyncio.run(manager.page()).url == "https://chatgpt.com/"
+
+
+def test_empty_cdp_target_list_is_not_treated_as_closed_window():
+    from pipeline.chat.browser import _has_page_target
+
+    assert _has_page_target([]) is False
 
 
 def test_attachment_cannot_be_attached_across_conversations(tmp_path):
@@ -424,7 +471,7 @@ def test_unknown_account_is_not_silently_treated_as_openai(tmp_path):
     assert "fallback.required" not in events
 
 
-def test_chatgpt_account_chat_uses_web_session_and_selected_model(tmp_path, monkeypatch):
+def test_chatgpt_account_chat_uses_web_session_and_default_model(tmp_path, monkeypatch):
     from pipeline.chat.service import ChatService
 
     store = ChatStore(tmp_path / "chat.sqlite3", tmp_path / "attachments")
@@ -446,7 +493,11 @@ def test_chatgpt_account_chat_uses_web_session_and_selected_model(tmp_path, monk
     monkeypatch.setattr("pipeline.chat.service.ChatBrowserManager", Browser)
     events = "".join(ChatService(store=store).stream_message(conv["id"], {"content": "hello"}))
     assert "web answer" in events
-    assert calls == {"account_id": account["id"], "profile": __import__("pathlib").Path(account["profile_path"]), "family": "chrome", "model": "gpt-web-model", "thread_url": "https://chatgpt.com/c/existing-thread"}
+    assert calls["account_id"] == account["id"]
+    assert calls["profile"] == __import__("pathlib").Path(account["profile_path"])
+    assert calls["family"] == "chrome"
+    assert calls["model"] == "GPT-5.6 Sol"
+    assert calls["thread_url"] == "https://chatgpt.com/c/existing-thread"
 
 
 def test_browser_chat_forwards_incremental_deltas(tmp_path, monkeypatch):
@@ -475,7 +526,7 @@ def test_browser_chat_forwards_incremental_deltas(tmp_path, monkeypatch):
     assert '"delta": "second"' in deltas[1]
 
 
-def test_browser_chat_uses_saved_model_for_legacy_conversation(tmp_path, monkeypatch):
+def test_browser_chat_uses_web_default_for_legacy_conversation(tmp_path, monkeypatch):
     from pipeline.chat.service import ChatService
 
     store = ChatStore(tmp_path / "chat.sqlite3", tmp_path / "attachments")
@@ -494,8 +545,8 @@ def test_browser_chat_uses_saved_model_for_legacy_conversation(tmp_path, monkeyp
 
     monkeypatch.setattr("pipeline.chat.service.ChatBrowserManager", Browser)
     list(ChatService(store=store).stream_message(conv["id"], {"content": "hello"}))
-    assert seen["model"] == "GPT-5.5"
-    assert store.get_conversation(conv["id"])["model"] == "GPT-5.5"
+    assert seen["model"] == "GPT-5.6 Sol"
+    assert store.get_conversation(conv["id"])["model"] == "GPT-5.6 Sol"
 
 
 def test_browser_chat_defaults_to_gpt_5_6_sol(tmp_path, monkeypatch):
@@ -742,6 +793,25 @@ def test_concurrent_health_probe_does_not_downgrade_saved_session(tmp_path):
     assert store.get_account(account["id"])["status"] == "connected"
 
 
+def test_closed_login_window_keeps_saved_web_session_connected(tmp_path, monkeypatch):
+    from pipeline.chat.service import ChatService
+
+    store = ChatStore(tmp_path / "chat.sqlite3", tmp_path / "attachments")
+    account = store.create_account("Web", "chrome", tmp_path / "profiles" / "web")
+    store.update_account(account["id"], status="connected")
+
+    class Browser:
+        async def health(self):
+            return {"status": "browser_only", "active": False, "errorCode": "CHAT_BROWSER_WINDOW_CLOSED"}
+
+    monkeypatch.setattr("pipeline.chat.service.ChatBrowserManager", lambda *_args: Browser())
+    result = ChatService(store=store).browser_health(account["id"])
+
+    assert result["status"] == "connected"
+    assert result["configured"] is True
+    assert store.get_account(account["id"])["status"] == "connected"
+
+
 def test_cancelled_browser_generation_finishes_as_interrupted_not_failed(tmp_path, monkeypatch):
     from pipeline.chat.service import ChatService
 
@@ -791,3 +861,48 @@ def test_api_provider_stream_does_not_require_chatgpt_browser(tmp_path, monkeypa
     monkeypatch.setattr("pipeline.chat.service.ChatBrowserManager", fail_if_browser_is_used)
     events = list(service.stream_message(conv["id"], {"content": "hello", "provider": "groq", "model": "openai/gpt-oss-20b"}))
     assert any('event: message.completed' in event and '"content": "ok"' in event for event in events)
+
+
+def test_chatgpt_account_uses_api_provider_after_device_login(tmp_path, monkeypatch):
+    from pipeline.chat.service import ChatService
+
+    store = ChatStore(tmp_path / "chat.sqlite3", tmp_path / "attachments")
+    account = store.create_account("Web", "chrome", tmp_path / "profiles" / "web")
+    store.update_account(account["id"], status="connected")
+    conv = store.create_conversation("ChatGPT API", account_id=account["id"], model="gpt-5", provider_id="chatgpt_web")
+
+    class FakeAuth:
+        def status(self): return {"status": "connected", "configured": True}
+
+    class FakeProvider:
+        def __init__(self, _auth): pass
+        def stream(self, _model, _messages, _cancel, attachments=None):
+            assert attachments == []
+            yield "api answer"
+
+    service = ChatService(store=store)
+    monkeypatch.setattr(service, "auth_for", lambda _account_id: FakeAuth())
+    monkeypatch.setattr("pipeline.chat.service.ChatGPTAccountProvider", FakeProvider)
+    monkeypatch.setattr("pipeline.chat.service.ChatBrowserManager", lambda *_args, **_kwargs: pytest.fail("ChatGPT API must not open the browser"))
+    events = list(service.stream_message(conv["id"], {"content": "hello", "provider": "chatgpt_web"}))
+
+    assert any('event: message.completed' in event and '"content": "api answer"' in event for event in events)
+
+
+def test_api_provider_empty_stream_fails_instead_of_leaving_answer_pending(tmp_path, monkeypatch):
+    from pipeline.chat.service import ChatService
+
+    store = ChatStore(tmp_path / "chat.sqlite3", tmp_path / "attachments")
+    conv = store.create_conversation("NVIDIA", account_id="nvidia", model="model", provider_id="nvidia")
+
+    class EmptyProvider:
+        def stream(self, *_args, **_kwargs):
+            return iter(())
+
+    service = ChatService(store=store)
+    monkeypatch.setattr(service, "resolve_provider", lambda provider, model: (provider, model, {"id": model, "capabilities": ["text"]}))
+    monkeypatch.setattr(service, "_api_provider", lambda _provider: EmptyProvider())
+    events = "".join(service.stream_message(conv["id"], {"content": "hello", "provider": "nvidia", "model": "model"}))
+
+    assert "CHAT_PROVIDER_EMPTY_RESPONSE" in events
+    assert store.list_messages(conv["id"])[-1]["status"] == "failed"

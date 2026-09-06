@@ -607,7 +607,9 @@ def _prepare_video_segments(
             variant = (variant + random.randrange(1, 16)) % 16
         last_variant = variant
         motion = _motion_filter(zoom, width, height, fps, variant, duration)
-        use_dl = delogo_prefix and (not dl_params or _has_logo_region(source, *dl_params))
+        # Delogo was explicitly requested: apply it to every valid image/video
+        # instead of silently skipping images whose logo region looks flat.
+        use_dl = bool(delogo_prefix)
         chosen_vf = base_vf_dl if use_dl else base_vf_no_dl
         vf = f"{chosen_vf}{',' + motion if motion else ''},format=yuv420p"
         segment_plans.append((index, source, duration, vf, use_dl))

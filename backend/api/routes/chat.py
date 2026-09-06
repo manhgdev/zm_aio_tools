@@ -65,7 +65,7 @@ def oauth_login(account_id: str):
     except KeyError as exc:
         raise HTTPException(404, _t("Không tìm thấy tài khoản.", "Account not found.")) from exc
     except Exception as exc:
-        raise HTTPException(502, detail={"code": "browser_login_failed", "message": _t("Không mở được trình duyệt đăng nhập ChatGPT.", "Could not open the ChatGPT sign-in browser."), "reason": str(exc)}) from exc
+        raise HTTPException(502, detail={"code": "chatgpt_login_failed", "message": _t("Không bắt đầu được đăng nhập ChatGPT.", "Could not start ChatGPT sign-in."), "reason": str(exc)}) from exc
 
 
 @router.post("/accounts/{account_id}/login/{login_id}/poll")
@@ -87,7 +87,7 @@ def logout(account_id: str):
     except KeyError as exc:
         raise HTTPException(404, _t("Không tìm thấy tài khoản.", "Account not found.")) from exc
     except Exception as exc:
-        raise HTTPException(502, detail={"code": "browser_logout_failed", "message": _t("Không đăng xuất được ChatGPT Web.", "Could not sign out from ChatGPT Web."), "reason": str(exc)}) from exc
+        raise HTTPException(502, detail={"code": "chatgpt_logout_failed", "message": _t("Không đăng xuất được ChatGPT.", "Could not sign out from ChatGPT."), "reason": str(exc)}) from exc
 
 
 @router.post("/accounts/{account_id}/refresh")

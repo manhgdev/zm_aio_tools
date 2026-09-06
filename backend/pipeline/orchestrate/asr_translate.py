@@ -686,7 +686,9 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
             not isinstance(prev_logo, dict)
             or int(prev_logo.get("version") or 0) < 2
         )
-        if logo_stale:
+        # Logo OCR is expensive and only exists to feed the "Che logo" export
+        # path.  Do not run it for ordinary translation jobs.
+        if bool(settings.get("coverLogo", False)) and logo_stale:
             try:
                 from pipeline.ocr.locate_worker import _detect_logo_via_runtime_subprocess
 
@@ -699,7 +701,8 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                 )
                 # Dùng video gốc 1× — logo detection không cần đổi tốc độ và
                 # timestamps sẽ khớp timeline cuối (1×) mà không cần remap.
-                # Không chờ bật «Che Logo»: video có AI生成+ phải hiện trong danh sách.
+                # Chỉ quét khi người dùng bật «Che logo»; export sẽ dùng kết quả
+                # này để che đúng vùng logo trong video.
                 logo_detection = _detect_logo_via_runtime_subprocess(
                     video_1x, project_id=project_id, segments=segments
                 )

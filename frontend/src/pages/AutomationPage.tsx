@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { localize, useLocale } from '@/app/i18n'
 import { FLOW_IMAGE_MODELS } from '@/features/flow/flow.helpers'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
-import { MediaPreviewModal, type MediaPreviewItem } from '@/shared/components/MediaPreviewModal'
+import { MediaPreviewModal, type MediaPreviewAction, type MediaPreviewItem } from '@/shared/components/MediaPreviewModal'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import './AutomationPage.css'
 
@@ -31,7 +31,16 @@ type AutomationSettings = {
   systemPrompt?: string
   tts: { voice: string; speed: number; volume: number; pitch: number; style: string }
   flow: { accountId: string; model: string; ratio: string; resolution: string; concurrency: string; promptEngine: 'vi' | 'en'; count?: string }
-  compose: { resolution: string; fps: number; crf: number; encoder: 'auto' | 'gpu' | 'cpu'; speed: number; volume: number; previewSeconds: number; allowMissingMedia: boolean; subtitleEnabled: boolean; removeMetadata: boolean }
+  compose: {
+    resolution: string; targetPlatform: string; fps: number; crf: number; encoder: 'auto' | 'gpu' | 'cpu'
+    effect: string; transitionDuration: number; zoom: string; speed: number; volume: number; previewSeconds: number
+    allowMissingMedia: boolean; subtitleEnabled: boolean; removeMetadata: boolean
+    subtitleFontFamily: string; subtitleSize: number; subtitleOffset: number; subtitleMargin: number
+    subtitleBackground: string; subtitleColor: string; subtitleBgColor: string; subtitleOpacity: number
+    drawingEnabled: boolean; drawingMode: string; drawingTool: string; drawingDetail: number; drawingThickness: number; drawingStrokeOrder: string
+    delogoEnabled: boolean; delogoAuto: boolean; delogoX: number; delogoY: number; delogoW: number; delogoH: number
+    logoEnabled: boolean; logoSource: 'text' | 'image' | 'icon'; logoText: string; logoIcon: string; logoFontSize: number; logoColor: string; logoSize: number; logoOpacity: number; logoX: number; logoY: number; logoMotion: string; logoScope: string; logoStart: number; logoEnd: number; logoVisibleSec: number; logoHiddenSec: number; logoFadeSec: number; logoSafeMargin: number
+  }
   outputDir: string
 }
 
@@ -65,7 +74,7 @@ const DEFAULT_SETTINGS: AutomationSettings = {
   language: 'vi', textProvider: 'openrouter', textModel: 'openrouter/free', chatModel: 'GPT-5.6 Sol',
   tts: { voice: 'system', speed: 1, volume: 1, pitch: 0, style: 'tu_nhien' },
   flow: { accountId: '', model: 'Nano Banana 2', ratio: '16:9', resolution: '1K', concurrency: '3', promptEngine: 'vi', count: '1' },
-  compose: { resolution: 'auto', fps: 30, crf: 20, encoder: 'auto', speed: 100, volume: 100, previewSeconds: 0, allowMissingMedia: false, subtitleEnabled: true, removeMetadata: false }, outputDir: '',
+  compose: { resolution: 'auto', targetPlatform: 'auto', fps: 30, crf: 20, encoder: 'auto', effect: 'none', transitionDuration: .28, zoom: 'off', speed: 100, volume: 100, previewSeconds: 0, allowMissingMedia: false, subtitleEnabled: true, removeMetadata: false, subtitleFontFamily: 'system', subtitleSize: 8, subtitleOffset: 0, subtitleMargin: 34, subtitleBackground: 'solid', subtitleColor: '#ffffff', subtitleBgColor: '#000000', subtitleOpacity: 55, drawingEnabled: false, drawingMode: 'hand', drawingTool: 'pencil', drawingDetail: 72, drawingThickness: 2, drawingStrokeOrder: 'natural', delogoEnabled: false, delogoAuto: true, delogoX: 80, delogoY: 82, delogoW: 18, delogoH: 12, logoEnabled: false, logoSource: 'text', logoText: 'ZM AIO TOOL', logoIcon: '★', logoFontSize: 32, logoColor: '#ffffff', logoSize: 8, logoOpacity: 85, logoX: 88, logoY: 88, logoMotion: 'fixed', logoScope: 'full', logoStart: 0, logoEnd: 10, logoVisibleSec: 4, logoHiddenSec: 2, logoFadeSec: .5, logoSafeMargin: 4 }, outputDir: '',
 }
 
 const modeLabel = (mode: InputMode, t: (vi: string, en: string) => string) => ({
@@ -185,6 +194,7 @@ export default function AutomationPage() {
   const [deleteTarget, setDeleteTarget] = useState<AutomationJob | null>(null)
   const [videoPreview, setVideoPreview] = useState<MediaPreviewItem | null>(null)
   const [textPreview, setTextPreview] = useState<string | null>(null)
+  const [textPreviewSaving, setTextPreviewSaving] = useState(false)
   const [isDesktopApp, setIsDesktopApp] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => {
     try { return window.localStorage.getItem(AUTOMATION_SETTINGS_OPEN_KEY) !== '0' } catch { return true }
@@ -224,9 +234,9 @@ export default function AutomationPage() {
     return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
   }, [builderWidth])
 
-  const [files, setFiles] = useState<Record<string, File | null>>({ script: null, audio: null, srt: null, prompts: null })
+  const [files, setFiles] = useState<Record<string, File | null>>({ script: null, audio: null, srt: null, prompts: null, watermark: null })
   const providerName = (id: string) => ({
-    chatgpt_web: t('ChatGPT Web', 'ChatGPT Web'), openai: t('OpenAI API', 'OpenAI API'), gemini: 'Gemini',
+    chatgpt_web: t('ChatGPT API', 'ChatGPT API'), openai: t('OpenAI API', 'OpenAI API'), gemini: 'Gemini',
     deepseek: 'DeepSeek', openrouter: 'OpenRouter', grok: 'Grok (xAI)', groq: 'Groq', nvidia: t('NVIDIA NIM', 'NVIDIA NIM'),
   } as Record<string, string>)[id] || id
   const refresh = useCallback(async () => {
@@ -308,87 +318,29 @@ export default function AutomationPage() {
     return () => window.clearInterval(timer)
   }, [jobs, refresh])
 
-  useEffect(() => {
-    const updateArtifactActions = () => {
-      document.querySelectorAll<HTMLAnchorElement>('.automation-job-actions a').forEach(link => {
-        const isVideo = /\/artifacts\/video(?:$|[?])/.test(link.href)
-        const isImages = /\/artifacts\/images(?:$|[?])/.test(link.href)
-        if (isVideo && !isDesktopApp) {
-          link.hidden = false
-          link.removeAttribute('download')
-          link.textContent = t('Xem', 'View')
-          link.dataset.automationVideoAction = '1'
-          link.onclick = event => {
-            event.preventDefault()
-            setVideoPreview({ title: t('Video đã xuất', 'Exported video'), src: link.href, type: 'video' })
-          }
-          return
-        }
-        link.onclick = event => {
-          event.preventDefault()
-          const match = link.href.match(/\/jobs\/([^/]+)\/artifacts\/([^/?]+)/)
-          if (!match) return
-          if (isImages) {
-            window.history.pushState({ appMode: 'flow' }, '', '/flow?p=queue')
-            window.dispatchEvent(new PopStateEvent('popstate'))
-            return
-          }
-          const key = match[2]
-          const type = isVideo ? 'video' : key === 'audio' || key === 'audioMp3' ? 'audio' : 'srt'
-          if (type === 'srt') {
-            void fetch(link.href).then(response => response.ok ? response.text() : Promise.reject(new Error('preview failed'))).then(text => {
-              setTextPreview(text)
-              setVideoPreview({ title: link.textContent?.trim() || key, src: link.href, type })
-            }).catch(() => setError(t('Không đọc được nội dung file.', 'Could not read the file content.')))
-          } else {
-            setTextPreview(null)
-            setVideoPreview({ title: link.textContent?.trim() || key, src: link.href, type })
-          }
-        }
-        if (isImages) {
-          link.textContent = t('Hàng đợi Flow', 'Flow queue')
-          return
-        }
-        if (!isVideo) {
-          link.hidden = false
-          return
-        }
-        link.removeAttribute('download')
-        link.textContent = t('Xem', 'View')
-        link.dataset.automationVideoAction = '1'
-      })
+  const previewArtifact = (key: string, href: string, label: string) => {
+    if (key === 'images') {
+      window.history.pushState({ appMode: 'flow' }, '', '/flow-veo?p=queue')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      return
     }
-    updateArtifactActions()
-    jobs.forEach(job => {
-      if (!job.artifacts?.video?.available) return
-      const article = Array.from(document.querySelectorAll<HTMLElement>('.automation-job')).find(item => item.querySelector('h3')?.textContent === job.title)
-      const actions = article?.querySelector<HTMLElement>('.automation-job-actions')
-      if (!actions) return
-      const viewActions = Array.from(actions.querySelectorAll<HTMLElement>('[data-automation-video-action]'))
-      viewActions.slice(1).forEach(action => action.remove())
-      if (!viewActions.length) {
-        const action = document.createElement(isDesktopApp ? 'button' : 'a')
-        action.dataset.automationVideoAction = '1'
-        action.textContent = t('Xem', 'View')
-        if (isDesktopApp) {
-          action.setAttribute('type', 'button')
-          action.onclick = () => setVideoPreview({ title: job.title, src: `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/video`, type: 'video' })
-        } else {
-          action.setAttribute('href', `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/video`)
-          action.onclick = event => { event.preventDefault(); setVideoPreview({ title: job.title, src: action.getAttribute('href') || '', type: 'video' }) }
-        }
-        actions.appendChild(action)
-      }
-      if (!actions.querySelector('[data-automation-video-download]')) {
-        const download = document.createElement('a')
-        download.dataset.automationVideoDownload = '1'
-        download.textContent = t('Tải', 'Download')
-        download.setAttribute('href', `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/video`)
-        download.setAttribute('download', job.artifacts.video.filename || 'output.mp4')
-        actions.appendChild(download)
-      }
-    })
-  }, [isDesktopApp, jobs, locale])
+    if (key === 'audio' || key === 'audioMp3') {
+      setTextPreview(null)
+      setVideoPreview({ title: label, src: href, type: 'audio' })
+      return
+    }
+    if (key === 'srt') {
+      void fetch(href).then(r => r.ok ? r.text() : Promise.reject(new Error('preview failed'))).then(text => {
+        setTextPreview(text)
+        setVideoPreview({ title: label, src: href, type: 'srt' })
+      }).catch(() => setError(t('Không đọc được nội dung file.', 'Could not read the file content.')))
+      return
+    }
+    setTextPreview(null)
+    setVideoPreview({ title: label, src: href, type: 'video' })
+  }
+
+
 
   const saveSettings = async (next: AutomationSettings) => {
     setSettings(next)
@@ -402,6 +354,26 @@ export default function AutomationPage() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : t('Không lưu được cài đặt.', 'Could not save settings.')) }
   }
 
+  const saveTextPreview = async () => {
+    if (!videoPreview || textPreview === null) return
+    const match = videoPreview.src.match(/\/api\/automation\/jobs\/([^/]+)\/artifacts\/([^/?]+)/)
+    if (!match) return
+    setTextPreviewSaving(true)
+    try {
+      const response = await fetch(`${API}/jobs/${encodeURIComponent(match[1])}/artifacts/${encodeURIComponent(match[2])}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: textPreview }),
+      })
+      if (!response.ok) throw new Error(t('Không lưu được file.', 'Could not save the file.'))
+      setNotice(t('Đã lưu file.', 'File saved.'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('Không lưu được file.', 'Could not save the file.'))
+    } finally {
+      setTextPreviewSaving(false)
+    }
+  }
+
   const submit = async () => {
     setSubmitting(true); setError(''); setEditingJobId('')
     const body = new FormData()
@@ -411,7 +383,7 @@ export default function AutomationPage() {
       const response = await fetch(`${API}/jobs`, { method: 'POST', body })
       const data = await response.json().catch(() => ({})) as { status?: JobStatus; detail?: { message?: string } }
       if (!response.ok) throw new Error(data.detail?.message || t('Không tạo được job.', 'Could not create job.'))
-      setTitle(''); setTopic(''); setFiles({ script: null, audio: null, srt: null, prompts: null }); await refresh()
+      setTitle(''); setTopic(''); setFiles({ script: null, audio: null, srt: null, prompts: null, watermark: null }); await refresh()
       setNotice(mode === 'ai_topic' || data.status === 'awaiting_topic'
         ? t('Đã tạo job. AI sẽ đề xuất đúng 5 chủ đề; chọn một chủ đề để chạy tiếp.', 'Job created. AI will suggest exactly 5 topics; choose one to continue.')
         : t('Đã thêm job vào hàng đợi.', 'Job added to the queue.'))
@@ -479,6 +451,8 @@ export default function AutomationPage() {
     void saveSettings({ ...settings, [group]: next })
   }
   const selectedTextProvider = chatProviders.find(item => item.id === settings.textProvider)
+  const voiceDisplay = (voice: TtsVoiceOption) => [voice.name || voice.label || voice.id, voice.engine, voice.language].filter(Boolean).join(' · ')
+  const selectedVoice = ttsVoices.find(voice => voice.id === settings.tts.voice)
 
   return <main className="automation-page" style={{ ['--automation-builder-width' as string]: `${builderWidth}px` }}>
       <section className="automation-builder" aria-labelledby="automation-title">
@@ -509,8 +483,7 @@ export default function AutomationPage() {
         <label><span>{t('Model AI text', 'Text AI model')}</span><select value={settings.textModel} onChange={event => update('textModel', event.target.value)} disabled={chatModelsLoading || !chatProviders.length} aria-busy={chatModelsLoading}>{!selectedTextProvider?.models.length ? <option value="">{chatModelsLoading ? t('Đang tải model…', 'Loading models…') : t('Chưa có model khả dụng', 'No available model')}</option> : null}{(selectedTextProvider?.models || []).map(item => <option key={item.id} value={item.id}>{item.label || item.id}</option>)}</select></label>
         <label className="automation-field-full"><span>{t('System prompt (tuỳ chỉnh)', 'System prompt (optional)')}</span><textarea rows={3} value={settings.systemPrompt || ''} onChange={event => update('systemPrompt', event.target.value)} placeholder={t('Bỏ trống để dùng mặc định của Audio-First 2D engine.', 'Leave empty to use the default Audio-First 2D engine prompt.')} /></label>
       </div> : settingsTab === 'tts' ? <div id="automation-settings-tts" className="automation-setting-grid" role="tabpanel">
-        <label><span>{t('Tìm giọng TTS', 'Search voice')}</span><input type="search" value={voiceSearch} onChange={event => setVoiceSearch(event.target.value)} placeholder={t('Nhập tên giọng để lọc…', 'Filter voices by name…')} /></label>
-        <label><span>{t('Giọng TTS', 'TTS voice')}</span><select value={settings.tts.voice} onChange={event => updateNested('tts', 'voice', event.target.value)} disabled={optionsLoading && !ttsVoices.length}><option value="">{optionsLoading ? t('Đang tải giọng…', 'Loading voices…') : t('Chưa có giọng', 'No voices available')}</option>{ttsVoices.filter(v => !voiceSearch.trim() || (v.name || v.label || v.id).toLowerCase().includes(voiceSearch.trim().toLowerCase())).map(voice => <option key={voice.id} value={voice.id}>{voice.name || voice.label || voice.id}</option>)}</select></label>
+        <label className="automation-field-full"><span>{t('Giọng TTS', 'TTS voice')}</span><input type="search" list="automation-tts-voices" value={voiceSearch} disabled={optionsLoading && !ttsVoices.length} placeholder={selectedVoice ? voiceDisplay(selectedVoice) : (optionsLoading ? t('Đang tải giọng…', 'Loading voices…') : t('Gõ tên, engine hoặc ngôn ngữ để tìm giọng…', 'Type a name, engine, or language to find a voice…'))} onChange={event => { const query = event.target.value; setVoiceSearch(query); const match = ttsVoices.find(voice => voice.id === query || voiceDisplay(voice) === query); if (match) void updateNested('tts', 'voice', match.id) }} /><datalist id="automation-tts-voices">{ttsVoices.filter(voice => !voiceSearch.trim() || voiceDisplay(voice).toLowerCase().includes(voiceSearch.trim().toLowerCase())).map(voice => <option key={voice.id} value={voiceDisplay(voice)} />)}</datalist><small className="automation-setting-hint">{selectedVoice ? `${t('Đang chọn', 'Selected')}: ${voiceDisplay(selectedVoice)}` : t('Chọn một gợi ý để dùng cho job.', 'Choose a suggestion to use for the job.')}</small></label>
         <label><span>{t('Tốc độ (%)', 'Speed (%)')}</span><input id="auto-tts-speed" type="range" min="50" max="200" step="5" value={Math.round((settings.tts.speed || 1) * 100)} onChange={event => updateNested('tts', 'speed', Number(event.target.value) / 100)} /><output htmlFor="auto-tts-speed">{Math.round((settings.tts.speed || 1) * 100)}%</output></label>
       </div> : settingsTab === 'flow' ? <div id="automation-settings-flow" className="automation-setting-grid" role="tabpanel">
         <label><span>{t('Model Flow ảnh', 'Flow image model')}</span><select value={settings.flow.model} onChange={event => updateNested('flow', 'model', event.target.value)}>{FLOW_IMAGE_MODELS.map(model => <option key={model} value={model}>{model}</option>)}</select></label>
@@ -530,6 +503,32 @@ export default function AutomationPage() {
         <label className="automation-check"><input type="checkbox" checked={settings.compose.subtitleEnabled} onChange={event => updateNested('compose', 'subtitleEnabled', event.target.checked)} /><span>{t('Chèn phụ đề SRT', 'Burn SRT subtitles')}</span></label>
         <label className="automation-check"><input type="checkbox" checked={settings.compose.allowMissingMedia} onChange={event => updateNested('compose', 'allowMissingMedia', event.target.checked)} /><span>{t('Cho phép ghép khi thiếu media', 'Allow composition with missing media')}</span></label>
         <label className="automation-check"><input type="checkbox" checked={settings.compose.removeMetadata} onChange={event => updateNested('compose', 'removeMetadata', event.target.checked)} /><span>{t('Xóa metadata file xuất', 'Remove output metadata')}</span></label>
+        <details className="automation-compose-group automation-field-full" open><summary>{t('Chuyển cảnh & chuyển động', 'Transitions & motion')}</summary><div className="automation-setting-grid">
+          <label><span>{t('Nền tảng khung hình', 'Frame platform')}</span><select value={settings.compose.targetPlatform} onChange={event => updateNested('compose', 'targetPlatform', event.target.value)}><option value="auto">{t('Tự động', 'Automatic')}</option><option value="youtube">YouTube</option><option value="shorts">Shorts / Reels</option><option value="tiktok">TikTok</option></select></label>
+          <label><span>{t('Hiệu ứng chuyển cảnh', 'Transition effect')}</span><select value={settings.compose.effect} onChange={event => updateNested('compose', 'effect', event.target.value)}><option value="none">{t('Tắt', 'Off')}</option><option value="random">{t('Ngẫu nhiên', 'Random')}</option><option value="fade">Fade</option><option value="dissolve">Dissolve</option></select></label>
+          <label><span>{t('Thời lượng chuyển cảnh (giây)', 'Transition duration (seconds)')}</span><input type="number" min="0" max="5" step=".05" value={settings.compose.transitionDuration} onChange={event => updateNested('compose', 'transitionDuration', Number(event.target.value) || 0)} /></label>
+          <label><span>Zoom</span><select value={settings.compose.zoom} onChange={event => updateNested('compose', 'zoom', event.target.value)}><option value="off">{t('Tắt', 'Off')}</option><option value="random">{t('Ngẫu nhiên', 'Random')}</option><option value="zoomIn">Zoom in</option><option value="zoomOut">Zoom out</option><option value="left">{t('Trái → phải', 'Left → right')}</option><option value="right">{t('Phải → trái', 'Right → left')}</option><option value="up">{t('Dưới → trên', 'Bottom → top')}</option><option value="down">{t('Trên → dưới', 'Top → bottom')}</option></select></label>
+        </div></details>
+        <details className="automation-compose-group automation-field-full" open><summary>{t('Phụ đề SRT', 'SRT subtitles')}</summary><div className="automation-setting-grid">
+          <label><span>{t('Phông chữ', 'Font')}</span><select value={settings.compose.subtitleFontFamily} onChange={event => updateNested('compose', 'subtitleFontFamily', event.target.value)}><option value="system">{t('Hệ thống', 'System')}</option><option value="Arial">Arial</option><option value="Roboto">Roboto</option><option value="Montserrat">Montserrat</option></select></label>
+          <label><span>{t('Cỡ chữ', 'Font size')}</span><input type="number" min="6" max="120" value={settings.compose.subtitleSize} onChange={event => updateNested('compose', 'subtitleSize', Number(event.target.value) || 8)} /></label>
+          <label><span>{t('Lệch thời gian (giây)', 'Time offset (seconds)')}</span><input type="number" min="-3600" max="3600" step=".1" value={settings.compose.subtitleOffset} onChange={event => updateNested('compose', 'subtitleOffset', Number(event.target.value) || 0)} /></label>
+          <label><span>{t('Lề dưới', 'Bottom margin')}</span><input type="number" min="0" max="1000" value={settings.compose.subtitleMargin} onChange={event => updateNested('compose', 'subtitleMargin', Number(event.target.value) || 0)} /></label>
+          <label><span>{t('Nền chữ', 'Caption background')}</span><select value={settings.compose.subtitleBackground} onChange={event => updateNested('compose', 'subtitleBackground', event.target.value)}><option value="none">{t('Không nền', 'None')}</option><option value="solid">{t('Đặc', 'Solid')}</option><option value="box">{t('Hộp', 'Box')}</option></select></label>
+          <label><span>{t('Độ mờ nền (%)', 'Background opacity (%)')}</span><input type="number" min="0" max="100" value={settings.compose.subtitleOpacity} onChange={event => updateNested('compose', 'subtitleOpacity', Number(event.target.value) || 0)} /></label>
+          <label><span>{t('Màu chữ', 'Text color')}</span><input type="color" value={settings.compose.subtitleColor} onChange={event => updateNested('compose', 'subtitleColor', event.target.value)} /></label>
+          <label><span>{t('Màu nền', 'Background color')}</span><input type="color" value={settings.compose.subtitleBgColor} onChange={event => updateNested('compose', 'subtitleBgColor', event.target.value)} /></label>
+        </div></details>
+        <details className="automation-compose-group automation-field-full"><summary>{t('Vẽ ảnh & xoá logo gốc', 'Drawing & remove original logo')}</summary><div className="automation-setting-grid">
+          <label className="automation-check automation-field-full"><input type="checkbox" checked={settings.compose.drawingEnabled} onChange={event => updateNested('compose', 'drawingEnabled', event.target.checked)} /><span>{t('Vẽ ảnh tĩnh thành video', 'Turn still images into drawing videos')}</span></label>
+          {settings.compose.drawingEnabled && <><label><span>{t('Kiểu vẽ', 'Drawing style')}</span><select value={settings.compose.drawingMode} onChange={event => updateNested('compose', 'drawingMode', event.target.value)}><option value="hand">{t('Tay + bút', 'Hand + pen')}</option><option value="drawing">{t('Vẽ nét', 'Strokes')}</option></select></label><label><span>{t('Dụng cụ', 'Tool')}</span><select value={settings.compose.drawingTool} onChange={event => updateNested('compose', 'drawingTool', event.target.value)}><option value="pencil">{t('Chì', 'Pencil')}</option><option value="pen">{t('Bút', 'Pen')}</option><option value="marker">Marker</option><option value="brush">{t('Cọ', 'Brush')}</option></select></label><label><span>{t('Độ chi tiết (%)', 'Detail (%)')}</span><input type="number" min="10" max="100" value={settings.compose.drawingDetail} onChange={event => updateNested('compose', 'drawingDetail', Number(event.target.value) || 72)} /></label><label><span>{t('Độ dày nét', 'Stroke thickness')}</span><input type="number" min="1" max="8" value={settings.compose.drawingThickness} onChange={event => updateNested('compose', 'drawingThickness', Number(event.target.value) || 2)} /></label><label className="automation-field-full"><span>{t('Đường đi nét', 'Stroke route')}</span><select value={settings.compose.drawingStrokeOrder} onChange={event => updateNested('compose', 'drawingStrokeOrder', event.target.value)}><option value="natural">{t('Tự nhiên theo đối tượng', 'Natural by object')}</option><option value="outline">{t('Theo viền thật', 'True outlines')}</option><option value="region">{t('Từng vùng hoàn chỉnh', 'Complete one region')}</option><option value="reading">{t('Theo chữ · trái sang phải', 'Text · left to right')}</option><option value="center">{t('Từ tâm lan ra', 'Centre outward')}</option></select></label></>}
+          <label className="automation-check"><input type="checkbox" checked={settings.compose.delogoEnabled} onChange={event => updateNested('compose', 'delogoEnabled', event.target.checked)} /><span>{t('Xóa logo gốc', 'Remove original logo')}</span></label>
+          {settings.compose.delogoEnabled && <><label className="automation-check"><input type="checkbox" checked={settings.compose.delogoAuto} onChange={event => updateNested('compose', 'delogoAuto', event.target.checked)} /><span>{t('Tự định vị logo', 'Auto position logo')}</span></label>{!settings.compose.delogoAuto && <><label><span>X (%)</span><input type="number" min="0" max="100" value={settings.compose.delogoX} onChange={event => updateNested('compose', 'delogoX', Number(event.target.value) || 0)} /></label><label><span>Y (%)</span><input type="number" min="0" max="100" value={settings.compose.delogoY} onChange={event => updateNested('compose', 'delogoY', Number(event.target.value) || 0)} /></label><label><span>{t('Rộng (%)', 'Width (%)')}</span><input type="number" min="1" max="100" value={settings.compose.delogoW} onChange={event => updateNested('compose', 'delogoW', Number(event.target.value) || 1)} /></label><label><span>{t('Cao (%)', 'Height (%)')}</span><input type="number" min="1" max="100" value={settings.compose.delogoH} onChange={event => updateNested('compose', 'delogoH', Number(event.target.value) || 1)} /></label></>}</>}
+        </div></details>
+        <details className="automation-compose-group automation-field-full"><summary>{t('Logo / watermark', 'Logo / watermark')}</summary><div className="automation-setting-grid">
+          <label className="automation-check automation-field-full"><input type="checkbox" checked={settings.compose.logoEnabled} onChange={event => updateNested('compose', 'logoEnabled', event.target.checked)} /><span>{t('Chèn logo vào video', 'Add logo to video')}</span></label>
+          {settings.compose.logoEnabled && <><label><span>{t('Nguồn logo', 'Logo source')}</span><select value={settings.compose.logoSource} onChange={event => updateNested('compose', 'logoSource', event.target.value as 'text' | 'image' | 'icon')}><option value="text">{t('Chữ', 'Text')}</option><option value="image">{t('Ảnh', 'Image')}</option><option value="icon">Icon</option></select></label>{settings.compose.logoSource === 'text' ? <label><span>{t('Nội dung', 'Content')}</span><input value={settings.compose.logoText} onChange={event => updateNested('compose', 'logoText', event.target.value)} /></label> : settings.compose.logoSource === 'image' ? <label><span>{t('Ảnh logo', 'Logo image')}</span><input type="file" accept="image/png,image/jpeg,image/webp,image/bmp" onChange={event => setFiles(current => ({ ...current, watermark: event.target.files?.[0] || null }))} /><small className="automation-setting-hint">{files.watermark?.name || t('Chọn ảnh khi tạo job mới.', 'Choose an image when creating a new job.')}</small></label> : <label><span>Icon</span><select value={settings.compose.logoIcon} onChange={event => updateNested('compose', 'logoIcon', event.target.value)}><option>★</option><option>▶</option><option>●</option><option>◆</option></select></label>}<label><span>{t('Độ mờ (%)', 'Opacity (%)')}</span><input type="number" min="5" max="100" value={settings.compose.logoOpacity} onChange={event => updateNested('compose', 'logoOpacity', Number(event.target.value) || 5)} /></label><label><span>X (%)</span><input type="number" min="0" max="100" value={settings.compose.logoX} onChange={event => updateNested('compose', 'logoX', Number(event.target.value) || 0)} /></label><label><span>Y (%)</span><input type="number" min="0" max="100" value={settings.compose.logoY} onChange={event => updateNested('compose', 'logoY', Number(event.target.value) || 0)} /></label><label><span>{t('Chuyển động', 'Motion')}</span><select value={settings.compose.logoMotion} onChange={event => updateNested('compose', 'logoMotion', event.target.value)}><option value="fixed">{t('Cố định', 'Static')}</option><option value="random">{t('Ngẫu nhiên', 'Random')}</option></select></label><label><span>{t('Phạm vi', 'Scope')}</span><select value={settings.compose.logoScope} onChange={event => updateNested('compose', 'logoScope', event.target.value)}><option value="full">{t('Toàn video', 'Entire video')}</option><option value="range">{t('Theo đoạn', 'Selected range')}</option></select></label>{settings.compose.logoSource === 'text' ? <><label><span>{t('Cỡ chữ', 'Font size')}</span><input type="number" min="6" max="160" value={settings.compose.logoFontSize} onChange={event => updateNested('compose', 'logoFontSize', Number(event.target.value) || 32)} /></label><label><span>{t('Màu chữ', 'Text color')}</span><input type="color" value={settings.compose.logoColor} onChange={event => updateNested('compose', 'logoColor', event.target.value)} /></label></> : <label><span>{t('Kích thước (%)', 'Size (%)')}</span><input type="number" min="2" max="30" value={settings.compose.logoSize} onChange={event => updateNested('compose', 'logoSize', Number(event.target.value) || 8)} /></label>}{settings.compose.logoMotion === 'random' && <><label><span>{t('Hiện (giây)', 'Visible (seconds)')}</span><input type="number" min=".5" step=".1" value={settings.compose.logoVisibleSec} onChange={event => updateNested('compose', 'logoVisibleSec', Number(event.target.value) || .5)} /></label><label><span>{t('Ẩn (giây)', 'Hidden (seconds)')}</span><input type="number" min="0" step=".1" value={settings.compose.logoHiddenSec} onChange={event => updateNested('compose', 'logoHiddenSec', Number(event.target.value) || 0)} /></label><label><span>Fade (s)</span><input type="number" min="0" step=".1" value={settings.compose.logoFadeSec} onChange={event => updateNested('compose', 'logoFadeSec', Number(event.target.value) || 0)} /></label><label><span>{t('Lề an toàn (%)', 'Safe margin (%)')}</span><input type="number" min="0" max="20" value={settings.compose.logoSafeMargin} onChange={event => updateNested('compose', 'logoSafeMargin', Number(event.target.value) || 0)} /></label></>}{settings.compose.logoScope === 'range' && <><label><span>{t('Hiện từ (giây)', 'Show from (seconds)')}</span><input type="number" min="0" value={settings.compose.logoStart} onChange={event => updateNested('compose', 'logoStart', Number(event.target.value) || 0)} /></label><label><span>{t('Đến (giây)', 'Until (seconds)')}</span><input type="number" min="0" value={settings.compose.logoEnd} onChange={event => updateNested('compose', 'logoEnd', Number(event.target.value) || 0)} /></label></>}</>}
+        </div></details>
         <div className="automation-field-full">
           <OutputFolderField
             isDesktopApp={isDesktopApp}
@@ -551,10 +550,29 @@ export default function AutomationPage() {
       <button type="button" className="automation-submit" onClick={() => void submit()} disabled={submitting}>{submitting ? t('Đang thêm job…', 'Adding job…') : mode === 'ai_topic' ? t('✦ Tạo 5 chủ đề', '✦ Generate 5 topics') : t('▶ Chạy job', '▶ Run job')}</button>
     </section>
       <div className="automation-resizer" role="separator" aria-orientation="vertical" aria-label={t('Kéo để đổi độ rộng panel', 'Drag to resize panel')} onPointerDown={(event) => { event.preventDefault(); panelDrag.current = { startX: event.clientX, startWidth: builderWidth }; document.body.classList.add('automation-resizing') }} />
-      <section className="automation-queue" aria-labelledby="automation-queue-title"><div className="automation-queue-heading"><div><p className="automation-eyebrow">QUEUE</p><h2 id="automation-queue-title">{t('Các job đang chạy', 'Job queue')}</h2></div><span>{jobs.length} {t('job', 'jobs')}</span></div>{loading ? <p className="automation-empty">{t('Đang tải…', 'Loading…')}</p> : !jobs.length ? <p className="automation-empty">{t('Chưa có job. Tạo job đầu tiên ở bên trái.', 'No jobs yet. Create the first job on the left.')}</p> : <div className="automation-job-list">{jobs.map(job => { const jobProvider = String(job.settings?.textProvider || ''); const jobModel = String(job.settings?.textModel || job.settings?.chatModel || ''); return <article className={`automation-job automation-job--${job.status}`} key={job.id}><div className="automation-job-head"><div><h3>{job.title}</h3><p>{modeLabel(job.input_mode, t)} · {stageLabel(job.stage, t)}{jobProvider ? ` · ${providerName(jobProvider)}` : ''}{jobModel ? ` · ${jobModel}` : ''}</p></div><span className="automation-status">{statusLabel(job.status, t)}</span></div><div className="automation-progress-row"><div className="automation-progress"><i style={{ width: `${Math.max(0, Math.min(100, job.progress || 0))}%` }} /></div><strong>{Math.round(job.progress || 0)}%</strong></div>{job.error ? <p className="automation-job-error"><strong>{job.error.code || t('Lỗi', 'Error')}</strong> {job.error.message}</p> : null}{job.status === 'awaiting_topic' && <div className="automation-topic-choices">{(job.input?.topicCandidates || []).map(candidate => <button type="button" key={candidate} onClick={() => void chooseTopic(job, candidate)}>{candidate}</button>)}</div>}<div className="automation-job-actions">{job.status === 'running' || job.status === 'queued' ? <button type="button" onClick={() => void mutate(job.id, 'pause')}>{t('Tạm dừng', 'Pause')}</button> : null}{job.status === 'paused' || job.status === 'interrupted' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button><button type="button" onClick={() => void mutate(job.id, 'retry')}>{t('Chạy lại chặng lỗi', 'Retry failed stage')}</button></> : null}{!['completed', 'cancelled'].includes(job.status) ? <button type="button" className="danger" onClick={() => void mutate(job.id, 'cancel')}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => removeJob(job)}>{t('Xoá job', 'Delete job')}</button>{(job.status === 'completed' || Object.keys(job.artifacts || {}).length > 0) ? <button type="button" onClick={() => void openFolder(job)}>{t('Mở thư mục', 'Open folder')}</button> : null}{job.artifacts && Object.entries(job.artifacts).map(([key, artifact]) => artifact?.available ? <a key={key} href={`${API}/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(key)}`} download={artifact.filename}>{key === 'video' ? t('Tải MP4', 'Download MP4') : artifact.filename || key}</a> : null)}</div>{job.logs?.length ? <details className="automation-logs"><summary>{t('Xem log', 'View logs')} ({job.logs.length})</summary><div>{job.logs.slice(-12).map((log, index) => <p key={`${log.id || index}-${log.message}`}><time>{log.stage}</time> {log.message}</p>)}</div></details> : null}</article> })}</div>}</section>
-      <MediaPreviewModal open={Boolean(videoPreview)} item={videoPreview} onClose={() => { setVideoPreview(null); setTextPreview(null) }} downloadLabel={t('Tải file', 'Download file')} onDownload={() => { if (videoPreview) { const link = document.createElement('a'); link.href = videoPreview.src; link.download = videoPreview.downloadFilename || 'automation-output'; link.click() } }}>
-        {videoPreview?.type === 'srt' && textPreview !== null ? <pre style={{ width: '100%', maxHeight: '60vh', overflow: 'auto', margin: 0, padding: 20, whiteSpace: 'pre-wrap', textAlign: 'left', color: 'white' }}>{textPreview}</pre> : undefined}
+      <section className="automation-queue" aria-labelledby="automation-queue-title"><div className="automation-queue-heading"><div><p className="automation-eyebrow">QUEUE</p><h2 id="automation-queue-title">{t('Các job đang chạy', 'Job queue')}</h2></div><span>{jobs.length} {t('job', 'jobs')}</span></div>{loading ? <p className="automation-empty">{t('Đang tải…', 'Loading…')}</p> : !jobs.length ? <p className="automation-empty">{t('Chưa có job. Tạo job đầu tiên ở bên trái.', 'No jobs yet. Create the first job on the left.')}</p> : <div className="automation-job-list">{jobs.map(job => { const jobProvider = String(job.settings?.textProvider || ''); const jobModel = String(job.settings?.textModel || job.settings?.chatModel || ''); return <article className={`automation-job automation-job--${job.status}`} key={job.id}><div className="automation-job-head"><div><h3>{job.title}</h3><p>{modeLabel(job.input_mode, t)} · {stageLabel(job.stage, t)}{jobProvider ? ` · ${providerName(jobProvider)}` : ''}{jobModel ? ` · ${jobModel}` : ''}</p></div><span className="automation-status">{statusLabel(job.status, t)}</span></div><div className="automation-progress-row"><div className="automation-progress"><i style={{ width: `${Math.max(0, Math.min(100, job.progress || 0))}%` }} /></div><strong>{Math.round(job.progress || 0)}%</strong></div>{job.error ? <p className="automation-job-error"><strong>{job.error.code || t('Lỗi', 'Error')}</strong> {job.error.message}</p> : null}{job.status === 'awaiting_topic' && <div className="automation-topic-choices">{(job.input?.topicCandidates || []).map(candidate => <button type="button" key={candidate} onClick={() => void chooseTopic(job, candidate)}>{candidate}</button>)}</div>}<div className="automation-job-actions">{job.status === 'running' || job.status === 'queued' ? <button type="button" onClick={() => void mutate(job.id, 'pause')}>{t('Tạm dừng', 'Pause')}</button> : null}{job.status === 'paused' || job.status === 'interrupted' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button><button type="button" onClick={() => void mutate(job.id, 'retry')}>{t('Chạy lại chặng lỗi', 'Retry failed stage')}</button></> : null}{job.status === 'cancelled' ? <><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button></> : null}{job.status === 'failed' || job.status === 'completed' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => void mutate(job.id, 'retry')}>{t('Ghép lại', 'Recompose')}</button></> : null}{!['completed', 'cancelled', 'failed'].includes(job.status) ? <button type="button" className="danger" onClick={() => void mutate(job.id, 'cancel')}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => removeJob(job)}>{t('Xoá job', 'Delete job')}</button>{(job.status === 'completed' || Object.keys(job.artifacts || {}).length > 0) ? <button type="button" onClick={() => void openFolder(job)}>{t('Mở thư mục', 'Open folder')}</button> : null}{job.artifacts && Object.entries(job.artifacts).map(([key, artifact]) => {
+                        if (!artifact?.available) return null
+                        const href = `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(key)}`
+                        const label = artifact.filename || key
+                        if (key === 'video') return (
+                          <Fragment key={key}>
+                            <button type="button" onClick={() => previewArtifact(key, href, job.title)}>{t('Xem', 'View')}</button>
+                            <a href={href} download={artifact.filename || 'output.mp4'}>{t('Tải xuống', 'Download')}</a>
+                          </Fragment>
+                        )
+                        if (key === 'images') return <button key={key} type="button" onClick={() => previewArtifact(key, href, label)}>{t('Hàng đợi Flow', 'Flow queue')}</button>
+                        return <a key={key} href={href} onClick={event => { event.preventDefault(); previewArtifact(key, href, label) }}>{label}</a>
+                      })}</div>{job.logs?.length ? <details className="automation-logs"><summary>{t('Xem log', 'View logs')} ({job.logs.length})</summary><div>{job.logs.slice(-12).map((log, index) => <p key={`${log.id || index}-${log.message}`}><time>{log.stage}</time> {log.message}</p>)}</div></details> : null}</article> })}</div>}</section>
+      <MediaPreviewModal
+        open={Boolean(videoPreview)}
+        item={videoPreview}
+        onClose={() => { setVideoPreview(null); setTextPreview(null) }}
+        downloadLabel={t('Tải file', 'Download file')}
+        onDownload={() => { if (videoPreview) { const link = document.createElement('a'); link.href = videoPreview.src; link.download = videoPreview.downloadFilename || 'automation-output'; link.click() } }}
+        actions={videoPreview?.type === 'srt' && textPreview !== null ? [{ label: textPreviewSaving ? t('Đang lưu…', 'Saving…') : t('Lưu', 'Save'), onClick: saveTextPreview, disabled: textPreviewSaving, primary: true } satisfies MediaPreviewAction] : []}
+      >
+        {videoPreview?.type === 'srt' && textPreview !== null ? <textarea value={textPreview} onChange={event => setTextPreview(event.target.value)} spellCheck={false} style={{ width: '100%', minHeight: '60vh', resize: 'vertical', margin: 0, padding: 20, whiteSpace: 'pre-wrap', textAlign: 'left', color: 'white', background: 'rgba(0,0,0,.25)', border: 0, outline: 'none', font: 'inherit' }} /> : undefined}
       </MediaPreviewModal>
-      <ConfirmDialog open={Boolean(deleteTarget)} title={t('Xác nhận xoá job', 'Confirm job deletion')} message={deleteTarget ? t(`Xoá job “${deleteTarget.title}” và dữ liệu tạm của job?`, `Delete job “${deleteTarget.title}” and its temporary data?`) : ''} cancelLabel={t('Quay lại', 'Go back')} confirmLabel={t('Xoá job', 'Delete job')} onCancel={() => setDeleteTarget(null)} onConfirm={() => void confirmRemoveJob()} danger />
+      <ConfirmDialog open={Boolean(deleteTarget)} title={t('Xác nhận xoá job', 'Confirm job deletion')} message={deleteTarget ? t(`Xoá job “${deleteTarget.title}”, log, file đầu vào, MP4 đã xuất và ảnh Flow liên quan?`, `Delete job “${deleteTarget.title}”, its logs, input files, exported MP4, and related Flow images?`) : ''} cancelLabel={t('Quay lại', 'Go back')} confirmLabel={t('Xoá toàn bộ', 'Delete everything')} onCancel={() => setDeleteTarget(null)} onConfirm={() => void confirmRemoveJob()} danger />
   </main>
 }

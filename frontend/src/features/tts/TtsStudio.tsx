@@ -686,21 +686,26 @@ export default function TtsStudio({
       })
       if (cancelledJobIdsRef.current.has(requestJobId)) return
       const jobIdFromRes = (res as { id?: string; job_id?: string }).id || (res as { id?: string; job_id?: string }).job_id || requestJobId
+      let resolvedJobId = jobIdFromRes
 
       // Poll /progress đến khi done=true
       for (let i = 0; i < 1200; i++) {
         if (cancelledJobIdsRef.current.has(requestJobId)) return
         await new Promise((r) => window.setTimeout(r, 300))
+        let p
         try {
-          const p = await api.ttsStudioJobProgress(jobIdFromRes)
-          if (p && p.pct > 0) {
-            setBusyProgress(p.pct)
-            if (p.message) setBusyCustomMessage(p.message)
-          }
-          if ((p as { done?: boolean }).done) break
+          p = await api.ttsStudioJobProgress(jobIdFromRes)
         } catch {
           /* ignore transient errors */
+          continue
         }
+        if (p.error) throw new Error(p.error)
+        if (p.resultJobId) resolvedJobId = p.resultJobId
+        if (p.pct > 0) {
+          setBusyProgress(p.pct)
+          if (p.message) setBusyCustomMessage(p.message)
+        }
+        if (p.done) break
       }
       if (cancelledJobIdsRef.current.has(requestJobId)) return
 
@@ -708,9 +713,9 @@ export default function TtsStudio({
       setBusyCustomMessage('Đã hoàn thành!')
       // applyJobUrls với fallback URL-based (file đã có sau khi done=true)
       applyJobUrls({
-        id: jobIdFromRes,
+        id: resolvedJobId,
         duration: (res as { duration?: number }).duration || 0,
-        audioUrl: (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${jobIdFromRes}/audio.wav`,
+        audioUrl: (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${resolvedJobId}/audio.wav`,
         mp3Url: (res as { mp3Url?: string }).mp3Url,
       })
       const resAny = res as { publishError?: string; publishedDir?: string }
@@ -764,17 +769,22 @@ export default function TtsStudio({
         title: 'Nghe thử',
       })
       const jid = (res as { id?: string; job_id?: string }).id || requestJobId
+      let resolvedJobId = jid
       for (let i = 0; i < 200; i++) {
         await new Promise((r) => window.setTimeout(r, 300))
+        let p
         try {
-          const p = await api.ttsStudioJobProgress(jid)
-          if ((p as { done?: boolean }).done) break
+          p = await api.ttsStudioJobProgress(jid)
         } catch { /* ignore */ }
+        if (!p) continue
+        if (p.error) throw new Error(p.error)
+        if (p.resultJobId) resolvedJobId = p.resultJobId
+        if (p.done) break
       }
       applyJobUrls({
-        id: jid,
+        id: resolvedJobId,
         duration: (res as { duration?: number }).duration || 0,
-        audioUrl: (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${jid}/audio.wav`,
+        audioUrl: (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${resolvedJobId}/audio.wav`,
         mp3Url: (res as { mp3Url?: string }).mp3Url,
       })
       requestAnimationFrame(() => {
@@ -1045,14 +1055,19 @@ export default function TtsStudio({
         ).slice(0, 80),
       })
       const jid = (res as { id?: string; job_id?: string }).id || previewJobId
+      let resolvedJobId = jid
       for (let i = 0; i < 200; i++) {
         await new Promise((r) => window.setTimeout(r, 300))
+        let p
         try {
-          const p = await api.ttsStudioJobProgress(jid)
-          if ((p as { done?: boolean }).done) break
+          p = await api.ttsStudioJobProgress(jid)
         } catch { /* ignore */ }
+        if (!p) continue
+        if (p.error) throw new Error(p.error)
+        if (p.resultJobId) resolvedJobId = p.resultJobId
+        if (p.done) break
       }
-      const audioUrl = (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${jid}/audio.wav`
+      const audioUrl = (res as { audioUrl?: string }).audioUrl || `/api/tts/studio/jobs/${resolvedJobId}/audio.wav`
       playVoicePreview(v.id, audioUrl)
 
     } catch (e) {

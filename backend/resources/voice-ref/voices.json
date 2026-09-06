@@ -279,5 +279,19 @@
     "ref_text": "",
     "hidden": false,
     "favorite": true
+  },
+  {
+    "id": "zmt:tieng-anh--am-adam",
+    "name": "am_adam",
+    "label": "am_adam",
+    "type": "zmAI",
+    "engine": "vieneu",
+    "mode": "reference",
+    "language": "en",
+    "ref_file": "zmt-65865b30845eaff1.wav",
+    "hidden": false,
+    "favorite": false,
+    "tags": [],
+    "source": "ZMTTS"
   }
 ]

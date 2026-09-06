@@ -4258,8 +4258,6 @@ export default function LivePreviewEditor({
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
   const [rangeAsrBusy, setRangeAsrBusy] = useState(false)
-  const [fastPreviewBusy, setFastPreviewBusy] = useState(false)
-  const [fastPreviewSec, setFastPreviewSec] = useState(5)
 
   async function retranscribeSelectedRange() {
     if (!selected || busy || rangeAsrBusy) return
@@ -4283,35 +4281,6 @@ export default function LivePreviewEditor({
       window.alert(error instanceof Error ? error.message : 'Không thể nhận dạng lại vùng đã chọn')
     } finally {
       setRangeAsrBusy(false)
-    }
-  }
-
-  async function renderFastPreview() {
-    if (busy || rangeAsrBusy || fastPreviewBusy) return
-    setFastPreviewBusy(true)
-    try {
-      await Promise.all([...new Set([
-        settings.subtitleFontFamily || 'system',
-        ...segments.map((seg) => seg.fontFamily || settings.subtitleFontFamily || 'system'),
-      ])].map((family) => loadCaptionFont(family)))
-      layoutCacheRef.current = {}
-      // Fast preview: tôn trọng trạng thái ẩn caption track (icon mắt)
-      const fastSettings = trackHidden.caption ? { ...settings, burnSubs: false } : settings
-      const payload = buildExportSegments(segments, fastSettings, sourceWidth, sourceHeight)
-      const start = Math.max(0, Math.min(time, Math.max(0, timelineDuration - 0.15)))
-      const end = Math.min(timelineDuration, start + Math.max(1, Math.min(120, fastPreviewSec || 5)))
-      await Promise.resolve(onExport(payload, end, start, `fast-preview-${start.toFixed(1)}s`, {
-        exportVideo: true,
-        exportVideoFormat: 'mp4',
-        exportAudio: false,
-        exportSrt: false,
-        exportGif: false,
-        // Fast Preview must exercise exactly the same render settings as export;
-        // only its source range differs.
-        exportResolution: settings.exportResolution,
-      }))
-    } finally {
-      setFastPreviewBusy(false)
     }
   }
 
@@ -4426,18 +4395,6 @@ export default function LivePreviewEditor({
           >
             {rangeAsrBusy ? t('Đang nhận dạng…', 'Recognizing…') : t('Nhận dạng vùng', 'Retranscribe range')}
           </button>
-          <button
-            type="button"
-            className="h-8 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-accent disabled:opacity-50"
-            onClick={() => void renderFastPreview()}
-            disabled={busy || fastPreviewBusy || timelineDuration <= 0}
-            title={t('Render từ playhead bằng đúng pipeline xuất', 'Render from the playhead with the same export pipeline')}
-          >
-            {fastPreviewBusy ? t('Đang render…', 'Rendering…') : t('Preview', 'Preview')}
-          </button>
-          <label className="flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] text-muted-foreground" title={t('Render bắt đầu từ playhead hiện tại', 'Render starts at the current playhead')}>
-            <input type="number" min="1" max="120" value={fastPreviewSec} onChange={(event) => setFastPreviewSec(Math.max(1, Math.min(120, Number(event.target.value) || 5)))} className="w-10 border-0 bg-transparent p-0 text-right text-xs text-foreground outline-none" aria-label={t('Số giây preview', 'Preview seconds')} /> {t('giây', 'sec')}
-          </label>
           <span
             className="text-xs text-muted-foreground max-w-[300px] truncate"
             title={[

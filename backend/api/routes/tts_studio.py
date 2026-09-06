@@ -93,7 +93,7 @@ def api_tts_studio_synth(body: StudioSynthIn):
     """
     import threading as _threading
     import uuid as _uuid
-    from pipeline.tts.studio import synth_srt_job, synth_text_job
+    from pipeline.tts.studio import set_job_complete, set_job_error, set_job_progress, synth_srt_job, synth_text_job
 
     srt_text = (body.srtText or "").strip()
     text = (body.text or "").strip()
@@ -102,6 +102,7 @@ def api_tts_studio_synth(body: StudioSynthIn):
     selected_voice = body.speaker_id or body.voice or "system"
     # Pre-generate job_id để FE có thể poll progress ngay
     job_id = body.jobId or _uuid.uuid4().hex[:12]
+    set_job_progress(job_id, 1, 100, "Đang khởi tạo TTS…")
 
     def _run() -> None:
         try:
@@ -143,7 +144,11 @@ def api_tts_studio_synth(body: StudioSynthIn):
                 except Exception as pub_err:
                     import logging
                     logging.getLogger(__name__).warning("publish_job_outputs failed: %s", pub_err)
+            # Cache hits return an older completed job id. The browser still
+            # polls the new request id, so publish its terminal state too.
+            set_job_complete(job_id, result_job_id=str(jid or job_id))
         except Exception as e:
+            set_job_error(job_id, e)
             import logging
             logging.getLogger(__name__).error("tts_studio_synth background error: %s", e)
 

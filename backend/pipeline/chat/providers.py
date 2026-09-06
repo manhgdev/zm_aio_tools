@@ -30,6 +30,7 @@ PROVIDER_LABELS = {
     "nvidia": "NVIDIA NIM",
     "chatgpt_web": "ChatGPT Web",
 }
+_STREAM_TIMEOUT_SECONDS = 45.0
 
 # Groq exposes a Free Plan with rate limits rather than per-model pricing
 # metadata. Keep this allowlist conservative so paid/unknown model ids never
@@ -263,7 +264,7 @@ class OpenAICompatibleProvider:
                 try:
                     with httpx.stream(
                         "POST", f"{self.base_url}/chat/completions", headers=self._headers(key),
-                        json=payload, timeout=180, trust_env=False,
+                        json=payload, timeout=httpx.Timeout(_STREAM_TIMEOUT_SECONDS, connect=10.0), trust_env=False,
                     ) as response:
                         if response.status_code >= 400:
                             error = ProviderError(f"CHAT_PROVIDER_HTTP_{response.status_code}")
@@ -484,7 +485,7 @@ class ChatGPTAccountProvider:
         response.raise_for_status()
         return self._models(response.json())
 
-    def stream(self, model: str, messages: list[dict], cancel) -> Iterator[str]:
+    def stream(self, model: str, messages: list[dict], cancel, attachments=None) -> Iterator[str]:
         import httpx
         inputs = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("status") == "completed"]
         payload = {"model": model, "instructions": "You are a helpful assistant. Answer directly and helpfully.", "input": inputs, "stream": True, "store": False, "reasoning": {"effort": "medium", "summary": "auto"}, "text": {"verbosity": "medium"}, "include": ["reasoning.encrypted_content"]}

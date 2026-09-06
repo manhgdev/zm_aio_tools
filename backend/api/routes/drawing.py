@@ -156,7 +156,7 @@ def drawing_reveal(job_id: str):
 
 _BUILTIN_LABELS: dict[str, tuple[str, str]] = {
     "default": ("Tay phải + bút chì", "Right hand + pencil"),
-    "left":    ("Tay trái + bút chì", "Left hand + pencil"),
+    "left":    ("Tay + bút máy", "Hand + fountain pen"),
     "marker":  ("Tay + marker", "Hand + marker"),
     "pen":     ("Tay + bút bi", "Hand + ballpoint pen"),
     "bare":    ("Chỉ bút (không tay)", "Tip only (no hand)"),

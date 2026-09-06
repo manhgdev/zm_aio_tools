@@ -40,6 +40,27 @@ def test_automation_store_recovers_running_jobs_as_interrupted(tmp_path):
     assert recovered["error"]["code"] == "AUTOMATION_INTERRUPTED"
 
 
+def test_automation_store_keeps_final_checkpoint_completed_after_restart(tmp_path):
+    db = tmp_path / "automation.sqlite3"
+    store = AutomationStore(db, tmp_path / "jobs")
+    job = store.create_job("topic", "Finished", {})
+    store.update_job(
+        job["id"],
+        status="running",
+        stage="done",
+        progress=100,
+        error={"code": "AUTOMATION_INTERRUPTED", "message": "old restart error"},
+    )
+    store.close()
+
+    reopened = AutomationStore(db, tmp_path / "jobs")
+    recovered = reopened.get_job(job["id"])
+    assert recovered["status"] == "completed"
+    assert recovered["stage"] == "done"
+    assert recovered["progress"] == 100
+    assert recovered["error"] is None
+
+
 def test_automation_store_keeps_queued_jobs_runnable_after_restart(tmp_path):
     db = tmp_path / "automation.sqlite3"
     store = AutomationStore(db, tmp_path / "jobs")
@@ -189,9 +210,13 @@ def test_flow_image_invalid_argument_is_retryable_but_login_is_not():
 def test_automation_service_delete_job_removes_logs_and_workspace(tmp_path):
     store = AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs")
     service = AutomationService(store=store, runner=lambda _job_id: None, max_workers=1)
-    job = service.create_job("bundle", "Delete me", {})
+    output_root = tmp_path / "output"
+    job = service.create_job("bundle", "Delete me", {"outputDir": str(output_root)})
     marker = store.workspace(job["id"]) / "generated.txt"
     marker.write_text("temporary", encoding="utf-8")
+    output = output_root / "Delete-me" / job["id"] / "output.mp4"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"video")
 
     result = service.delete_job(job["id"])
 
@@ -200,6 +225,8 @@ def test_automation_service_delete_job_removes_logs_and_workspace(tmp_path):
     assert store.list_logs(job["id"]) == []
     assert not marker.exists()
     assert not marker.parent.exists()
+    assert not output.exists()
+    assert not output.parent.exists()
 
 
 def test_ai_topic_job_waits_with_exactly_five_choices(tmp_path, monkeypatch):
@@ -513,6 +540,12 @@ def test_compose_forwards_video_settings_and_can_disable_subtitles(tmp_path, mon
                 "encoder": "cpu", "speed": 125, "volume": 80,
                 "previewSeconds": 12, "removeMetadata": True,
                 "allowMissingMedia": True, "subtitleEnabled": False,
+                "targetPlatform": "shorts", "effect": "fade", "transitionDuration": 0.5, "zoom": "zoomIn",
+                "subtitleFontFamily": "Roboto", "subtitleSize": 12, "subtitleOffset": 0.2, "subtitleMargin": 44,
+                "subtitleBackground": "box", "subtitleColor": "#fefefe", "subtitleBgColor": "#010203", "subtitleOpacity": 70,
+                "drawingEnabled": True, "drawingMode": "drawing", "drawingTool": "brush", "drawingDetail": 90, "drawingThickness": 4, "drawingStrokeOrder": "outline",
+                "delogoEnabled": True, "delogoAuto": False, "delogoX": 10, "delogoY": 20, "delogoW": 30, "delogoH": 40,
+                "logoEnabled": True, "logoSource": "icon", "logoIcon": "●", "logoOpacity": 65, "logoX": 12, "logoY": 18, "logoMotion": "random", "logoScope": "range", "logoStart": 2, "logoEnd": 8, "logoVisibleSec": 3, "logoHiddenSec": 1, "logoFadeSec": 0.2, "logoSafeMargin": 5,
             },
         }, workspace,
     )
@@ -523,6 +556,12 @@ def test_compose_forwards_video_settings_and_can_disable_subtitles(tmp_path, mon
         "encoder": "cpu", "speed": 125, "volume": 80,
         "previewSeconds": 12, "removeMetadata": True,
         "allowMissingMedia": True,
+        "targetPlatform": "shorts", "effect": "fade", "transitionDuration": 0.5, "zoom": "zoomIn",
+        "subtitleFontFamily": "Roboto", "subtitleSize": 12, "subtitleOffset": 0.2, "subtitleMargin": 44,
+        "subtitleBackground": "box", "subtitleColor": "#fefefe", "subtitleBgColor": "#010203", "subtitleOpacity": 70,
+        "delogo": {"enabled": True, "auto": False, "x": 10.0, "y": 20.0, "w": 30.0, "h": 40.0},
+        "drawing": {"enabled": True, "mode": "drawing", "tool": "brush", "detail": 90, "thickness": 4, "strokeOrder": "outline", "resolution": "1080p"},
+        "logo": {"enabled": True, "source": "icon", "text": "ZM AIO TOOL", "icon": "●", "fontSize": 32, "color": "#ffffff", "size": 8.0, "opacity": 65.0, "x": 12.0, "y": 18.0, "motion": "random", "scope": "range", "start": 2.0, "end": 8.0, "visibleSec": 3.0, "hiddenSec": 1.0, "fadeSec": 0.2, "safeMargin": 5.0},
     }
 
 

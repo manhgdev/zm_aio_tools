@@ -281,6 +281,8 @@ test('Drawing tab uses bilingual localized UI', async () => {
   assert.match(source, /appFolder="drawing"/)
   assert.match(source, /Kịch bản hoặc SRT/)
   assert.match(source, /Script or SRT/)
+  assert.match(source, /Thời lượng mỗi cảnh/)
+  assert.match(source, /Duration per scene/)
   assert.match(source, /\/api\/srt-image\/jobs/)
   assert.match(source, /drawing: \{ enabled: true/)
   assert.match(source, /resolve-output-folder\?tab=drawing/)

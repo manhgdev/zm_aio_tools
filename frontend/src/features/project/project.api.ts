@@ -321,6 +321,10 @@ export const api = {
       total: number
       pct: number
       message: string
+      running: boolean
+      done: boolean
+      error?: string
+      resultJobId?: string
     }>(`${base}/tts/studio/jobs/${encodeURIComponent(jobId)}/progress`, undefined, 3000),
 
   ttsStudioDelete: (jobId: string) =>

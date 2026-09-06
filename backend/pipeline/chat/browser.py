@@ -9,8 +9,10 @@ import tempfile
 import re
 import asyncio
 import json
+import signal
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 CHAT_MODE_PATTERNS = {
     "search": r"(?:search(?: the web)?|tìm kiếm(?: web)?)",
@@ -56,6 +58,10 @@ def open_profile_url(profile_path: Path, browser_family: str, url: str, debug_po
         raise ValueError("Browser URL is not allowed")
     family, executable = discover_browser(browser_family)
     if not executable: raise RuntimeError("No supported browser installed")
+    if debug_port and _has_page_target(_debug_targets(debug_port)):
+        # Reuse the already-running isolated browser; launching the same
+        # profile again would only produce a misleading profile-lock error.
+        return family
     Path(profile_path).mkdir(parents=True, exist_ok=True)
     args = [str(executable), f"--user-data-dir={profile_path}", "--no-first-run", "--no-default-browser-check"]
     if debug_port:
@@ -91,6 +97,28 @@ def _has_page_target(targets: list[dict] | None) -> bool:
     return any(isinstance(item, dict) and item.get("type") == "page" for item in (targets or []))
 
 
+def _stop_debug_browser(debug_port: int) -> None:
+    """Stop only the browser process listening on this account's CDP port."""
+    try:
+        if os.name == "nt":
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, check=False,
+            )
+            pids = {line.split()[-1] for line in result.stdout.splitlines() if f":{debug_port}" in line and line.split()[-1].isdigit()}
+            for pid in pids:
+                subprocess.run(["taskkill", "/PID", pid, "/T"], capture_output=True, check=False)
+            return
+        result = subprocess.run(
+            ["lsof", "-ti", f"TCP:{int(debug_port)}", "-sTCP:LISTEN"],
+            capture_output=True, text=True, check=False,
+        )
+        for value in result.stdout.split():
+            if value.isdigit():
+                os.kill(int(value), signal.SIGTERM)
+    except (OSError, ValueError):
+        return
+
+
 class ChatBrowserManager:
     """One persistent, isolated browser profile and one operation at a time per account."""
     ALLOWED_HOSTS = {"chatgpt.com", "auth.openai.com", "openai.com"}
@@ -106,7 +134,7 @@ class ChatBrowserManager:
 
     def __init__(self, account_id: str, profile_path: Path, browser_family: str, debug_port: int | None = None):
         self.account_id, self.profile_path, self.browser_family = account_id, Path(profile_path), browser_family
-        self.debug_port = debug_port or profile_debug_port(account_id)
+        self.debug_port = profile_debug_port(account_id) if debug_port is None else debug_port
         self.lock = threading.Lock()
         self._pw = self._browser = self._context = None
         self._connected = False
@@ -138,20 +166,15 @@ class ChatBrowserManager:
                     if not allow_launch:
                         raise RuntimeError("CHAT_BROWSER_WINDOW_CLOSED")
                 elif not _has_page_target(targets):
-                    if not allow_launch or headless:
-                        # The browser process is alive but its ChatGPT window
-                        # was closed. Do not launch a second context into the
-                        # locked profile or report a stale lock as an open
-                        # window.
-                        raise RuntimeError("CHAT_BROWSER_WINDOW_CLOSED")
-                    # A generation may recreate a page in the existing
-                    # isolated process. This is still an intentional action,
-                    # unlike model/health discovery.
+                    # Chromium can leave a stale CDP listener after its last
+                    # tab closes. Playwright cannot attach that process, so
+                    # restart only the process owned by this account's port.
+                    _stop_debug_browser(self.debug_port)
                     open_profile_url(self.profile_path, self.browser_family, "https://chatgpt.com/", debug_port=self.debug_port)
-                    for _ in range(20):
+                    for _ in range(40):
                         await asyncio.sleep(0.15)
                         targets = _debug_targets(self.debug_port)
-                        if targets is None or _has_page_target(targets):
+                        if targets is not None and _has_page_target(targets):
                             break
                 if targets is not None:
                     try:
@@ -188,7 +211,26 @@ class ChatBrowserManager:
 
     async def page(self):
         pages = self._context.pages
+        for page in pages:
+            if urlparse(page.url).hostname in self.ALLOWED_HOSTS:
+                return page
+        for page in pages:
+            if page.url and page.url != "about:blank":
+                return page
         return pages[0] if pages else await self._context.new_page()
+
+    async def minimize(self, page) -> None:
+        if not self._connected or not self._context:
+            return
+        try:
+            session = await self._context.new_cdp_session(page)
+            window = await session.send("Browser.getWindowForTarget")
+            await session.send("Browser.setWindowBounds", {
+                "windowId": window["windowId"],
+                "bounds": {"windowState": "minimized"},
+            })
+        except Exception:
+            pass
 
     @staticmethod
     def _model_names(texts):
@@ -262,7 +304,8 @@ class ChatBrowserManager:
             else:
                 await composer.press("Enter")
         else:
-            await composer.press("Enter")
+            if not await self._click_send_button(page):
+                await composer.press("Enter")
 
         await page.wait_for_timeout(350)
         # Older layouts may not expose a semantic send label. If Enter left
@@ -476,6 +519,10 @@ class ChatBrowserManager:
         """Keep streamed deltas when the Web replaces the final DOM node."""
         return (snapshot or "").strip() or (streamed or "").strip()
 
+    @staticmethod
+    def _is_transient_assistant_text(text: str) -> bool:
+        return text.strip().casefold() in {"đã ngừng suy nghĩ", "stopped thinking"}
+
     async def models(self):
         """Read the account's visible model picker; never call the Codex API."""
         try:
@@ -538,6 +585,11 @@ class ChatBrowserManager:
             composer = page.locator("#prompt-textarea:visible, textarea[placeholder]:visible, [contenteditable='true']:visible").first
             logged_in = await composer.count() > 0 and await composer.is_visible()
             if logged_in or self.is_active_conversation_url(current):
+                # ChatGPT's Cloudflare challenge rejects Chromium headless.
+                # Keep the one authenticated CDP browser alive and minimize
+                # its isolated window; later requests attach without opening
+                # another login window or copying stale cookies.
+                await self.minimize(page)
                 return {"status": "connected", "active": True}
             return {"status": "reauth_required", "active": False, "loginRequired": True, "url": current.split("?", 1)[0]}
         except Exception as exc:
@@ -574,15 +626,12 @@ class ChatBrowserManager:
         self._connected = False
 
     async def run(self, prompt: str, mode: str, files: list[str] | None = None, cancel=None, model: str = "", thread_url: str = "", on_delta=None):
-        """Automate visible ChatGPT UI with semantic locators only."""
-        await self.start(headless=False, allow_launch=True)
+        """Attach to the one authenticated browser without reopening sign-in."""
+        await self.start(headless=False, allow_launch=False)
         page = None
         try:
-            # Always use a clean tab for a generation. Reusing the profile's
-            # first tab can preserve ChatGPT's temporary ``WEB:`` route after
-            # a failed generation; that route accepts the user turn locally
-            # but never starts a server-backed assistant response.
-            page = await self._context.new_page()
+            page = await self.page()
+            await self.minimize(page)
             target = "https://chatgpt.com/"
             if thread_url:
                 from urllib.parse import urlparse
@@ -661,7 +710,7 @@ class ChatBrowserManager:
             last_text = baseline_text
             saw_new_assistant = False
             stable_rounds = 0
-            for _ in range(1_200):
+            for attempt in range(1_200):
                 if cancel and cancel.is_set():
                     if await stop.count() and await stop.is_visible():
                         try:
@@ -675,6 +724,8 @@ class ChatBrowserManager:
                             except Exception: pass
                     raise RuntimeError("CHAT_BROWSER_CANCELLED")
                 count, current_text = await self._latest_assistant_text(assistant_locator)
+                if self._is_transient_assistant_text(current_text):
+                    current_text = ""
                 latest_id = ""
                 if count:
                     try:
@@ -703,12 +754,18 @@ class ChatBrowserManager:
                     # Some ChatGPT variants do not expose a Stop button. A
                     # short stable tail is the completion signal in that case.
                     break
+                if attempt >= 179 and not saw_new_assistant and not stop_visible:
+                    raise RuntimeError("CHAT_BROWSER_RESPONSE_TIMEOUT")
                 await page.wait_for_timeout(250)
             if not saw_new_assistant:
                 assistant = assistant_locator.last
             _, snapshot_text = await self._latest_assistant_text(assistant_locator)
+            if self._is_transient_assistant_text(snapshot_text):
+                snapshot_text = ""
             if not snapshot_text and await assistant_locator.count():
                 snapshot_text = (await assistant_locator.last.inner_text()).strip()
+                if self._is_transient_assistant_text(snapshot_text):
+                    snapshot_text = ""
             text = self._final_text(snapshot_text, last_text)
             artifact_scope = assistant if await assistant.count() else page.locator("main")
             artifacts = await self._generated_file_artifacts(page, artifact_scope)
@@ -729,9 +786,4 @@ class ChatBrowserManager:
                         artifacts.append({"name": f"chatgpt-image-{index + 1}.{extension}", "content": body, "content_type": content_type})
             return {"content": text, "thread_url": page.url, "artifacts": artifacts}
         finally:
-            if page:
-                try:
-                    await page.close()
-                except Exception:
-                    pass
             await self.stop()

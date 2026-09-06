@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from pipeline.core.output_paths import downloads_folder
@@ -24,6 +24,7 @@ _ALLOWED_EXTENSIONS = {
     "audio": {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"},
     "srt": {".srt", ".vtt", ".ass", ".ssa", ".csv", ".tsv", ".json", ".lrc"},
     "prompts": {".txt", ".md", ".markdown", ".csv", ".tsv", ".json"},
+    "watermark": {".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp"},
 }
 _MAX_FILE_BYTES = 100 * 1024 * 1024
 
@@ -86,6 +87,7 @@ async def create_job(
     audio: UploadFile | None = File(None),
     srt: UploadFile | None = File(None),
     prompts: UploadFile | None = File(None),
+    watermark: UploadFile | None = File(None),
     startNow: bool = Form(True),
 ):
     mode = inputMode.strip().lower()
@@ -103,7 +105,7 @@ async def create_job(
         raise HTTPException(422, detail={"code": "AUTOMATION_FILES_REQUIRED", "message": _t("Cần ít nhất một file đầu vào", "At least one input file is required")})
     chosen = _settings(settings)
     job = service.create_job(mode, title.strip()[:160] or topic[:80] or "Automation", chosen, {"topic": topic.strip()})
-    for upload, kind in ((script, "script"), (audio, "audio"), (srt, "srt"), (prompts, "prompts")):
+    for upload, kind in ((script, "script"), (audio, "audio"), (srt, "srt"), (prompts, "prompts"), (watermark, "watermark")):
         path = await _save_upload(job["id"], upload, kind)
         if path:
             current = service.store.get_job(job["id"]) or {}
@@ -207,6 +209,22 @@ def artifact(job_id: str, artifact_name: str):
         filename=None,
         headers={"Content-Disposition": f'inline; filename="{safe_name}"'},
     )
+
+
+@router.put("/jobs/{job_id}/artifacts/{artifact_name}")
+def update_text_artifact(job_id: str, artifact_name: str, body: dict[str, Any] = Body(...)):
+    _job, target = _artifact_path(job_id, artifact_name)
+    if target.suffix.lower() not in {".txt", ".md", ".markdown", ".srt", ".vtt", ".ass", ".ssa", ".json", ".csv", ".tsv", ".lrc"}:
+        raise HTTPException(415, detail={"code": "AUTOMATION_ARTIFACT_NOT_TEXT", "message": _t("Chỉ file văn bản có thể chỉnh sửa", "Only text files can be edited")})
+    content = body.get("content")
+    if not isinstance(content, str):
+        raise HTTPException(422, detail={"code": "AUTOMATION_ARTIFACT_CONTENT_INVALID", "message": _t("Nội dung file không hợp lệ", "File content is invalid")})
+    if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
+        raise HTTPException(413, detail={"code": "AUTOMATION_ARTIFACT_TOO_LARGE", "message": _t("File quá lớn", "File is too large")})
+    temp = target.with_suffix(target.suffix + ".tmp")
+    temp.write_text(content, encoding="utf-8")
+    temp.replace(target)
+    return {"ok": True, "filename": target.name}
 
 
 @router.post("/jobs/{job_id}/artifacts/{artifact_name}/open")

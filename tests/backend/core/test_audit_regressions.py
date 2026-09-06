@@ -117,6 +117,14 @@ def test_translate_parent_does_not_probe_cv2_or_ort():
     assert "generate_inpaint_preview" not in src
 
 
+def test_translate_only_detects_logo_when_logo_cover_is_enabled():
+    """Logo OCR must not add a costly detection step to ordinary jobs."""
+    import pipeline.orchestrate.asr_translate as asr_translate
+
+    src = Path(asr_translate.__file__).read_text(encoding="utf-8")
+    assert 'if bool(settings.get("coverLogo", False)) and logo_stale:' in src
+
+
 def test_job_python_frozen_is_not_the_exe(monkeypatch, tmp_path) -> None:
     import importlib.util
 

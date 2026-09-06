@@ -6,6 +6,10 @@ import threading
 import time
 import uuid
 import webbrowser
+import hashlib
+import secrets
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from dataclasses import dataclass
 
 import httpx
@@ -14,8 +18,8 @@ from pipeline.core.config import sanitize_httpx_no_proxy
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 ISSUER = "https://auth.openai.com"
 SCOPE = "openid profile email offline_access"
-VERIFY_URL = f"{ISSUER}/codex/device"
-REDIRECT_URI = f"{ISSUER}/deviceauth/callback"
+AUTHORIZE_URL = f"{ISSUER}/oauth/authorize"
+REDIRECT_URI = "http://localhost:1455/auth/callback"
 KEYRING_SERVICE = "ZM AIO TOOL ChatGPT"
 KEYRING_USER = "chatgpt-account"
 
@@ -66,12 +70,14 @@ class SystemTokenStore:
 
 
 @dataclass
-class DeviceLogin:
+class OAuthLogin:
     id: str
-    device_auth_id: str
-    user_code: str
-    interval: int
+    state: str
+    code_verifier: str
     expires_at: float
+    code: str = ""
+    error: str = ""
+    server: HTTPServer | None = None
 
 
 class ChatGPTAuth:
@@ -81,7 +87,7 @@ class ChatGPTAuth:
         self.browser_opener = browser_opener
         sanitize_httpx_no_proxy()
         self.client = client or httpx.Client(timeout=30, follow_redirects=True)
-        self._pending: dict[str, DeviceLogin] = {}
+        self._pending: dict[str, OAuthLogin] = {}
         self._refresh_lock = threading.Lock()
 
     def status(self) -> dict:
@@ -92,16 +98,56 @@ class ChatGPTAuth:
         return {"status": "connected", "configured": True, "email": claims.get("email", ""), "expiresAt": tokens.get("expires_at")}
 
     def start_login(self, open_browser: bool = True) -> dict:
-        response = self.client.post(f"{ISSUER}/api/accounts/deviceauth/usercode", json={"client_id": CLIENT_ID}, headers={"Accept": "application/json"})
-        response.raise_for_status()
-        raw = response.json()
-        if not raw.get("device_auth_id") or not (raw.get("user_code") or raw.get("usercode")):
-            raise RuntimeError("Device login response is incomplete")
-        login = DeviceLogin(uuid.uuid4().hex, str(raw["device_auth_id"]), str(raw.get("user_code") or raw["usercode"]), max(2, int(raw.get("interval") or 5)), time.time() + 900)
+        state = secrets.token_urlsafe(32)
+        verifier = secrets.token_urlsafe(64)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        login = OAuthLogin(uuid.uuid4().hex, state, verifier, time.time() + 900)
+        login.server = self._callback_server(login)
         self._pending[login.id] = login
+        params = {
+            "client_id": CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE,
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
+        }
+        authorize_url = f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
         if open_browser:
-            (self.browser_opener or webbrowser.open)(VERIFY_URL)
-        return {"loginId": login.id, "userCode": login.user_code, "verificationUrl": VERIFY_URL, "interval": login.interval, "expiresAt": login.expires_at}
+            (self.browser_opener or webbrowser.open)(authorize_url)
+        return {"loginId": login.id, "authorizationUrl": authorize_url, "expiresAt": login.expires_at}
+
+    @staticmethod
+    def _callback_server(login: OAuthLogin) -> HTTPServer:
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                if query.get("state", [""])[0] != login.state:
+                    login.error = "OAuth state mismatch"
+                elif query.get("error"):
+                    login.error = query["error"][0]
+                else:
+                    login.code = query.get("code", [""])[0]
+                    if not login.code:
+                        login.error = "OAuth callback did not include an authorization code"
+                body = b"<html><body>Sign-in complete. You can close this window.</body></html>"
+                self.send_response(200 if login.code else 400)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+            def log_message(self, *_args):
+                return
+        try:
+            server = HTTPServer(("127.0.0.1", 1455), Handler)
+        except OSError as exc:
+            raise RuntimeError("OAuth callback port 1455 is already in use") from exc
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server
 
     def poll(self, login_id: str) -> dict:
         login = self._pending.get(login_id)
@@ -110,18 +156,18 @@ class ChatGPTAuth:
         if time.time() >= login.expires_at:
             self._pending.pop(login_id, None)
             return {"status": "expired"}
-        response = self.client.post(f"{ISSUER}/api/accounts/deviceauth/token", json={"device_auth_id": login.device_auth_id, "user_code": login.user_code}, headers={"Accept": "application/json"})
-        if response.status_code in {403, 404, 429}:
+        if login.error:
+            self._pending.pop(login_id, None)
+            return {"status": "failed", "error": login.error}
+        if not login.code:
             return {"status": "pending"}
-        response.raise_for_status()
-        raw = response.json()
-        if not all(raw.get(key) for key in ("authorization_code", "code_verifier")):
-            return {"status": "pending"}
-        token_response = self.client.post(f"{ISSUER}/oauth/token", data={"grant_type": "authorization_code", "client_id": CLIENT_ID, "code": raw["authorization_code"], "code_verifier": raw["code_verifier"], "redirect_uri": REDIRECT_URI}, headers={"Accept": "application/json"})
+        token_response = self.client.post(f"{ISSUER}/oauth/token", data={"grant_type": "authorization_code", "client_id": CLIENT_ID, "code": login.code, "code_verifier": login.code_verifier, "redirect_uri": REDIRECT_URI}, headers={"Accept": "application/json"})
         token_response.raise_for_status()
         tokens = self._normalize_tokens(token_response.json())
         self.store.save(tokens)
         self._pending.pop(login_id, None)
+        if login.server:
+            login.server.server_close()
         status = self.status()
         return {"status": "connected", "email": status.get("email", "")}
 
