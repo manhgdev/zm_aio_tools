@@ -635,13 +635,22 @@ class AutomationService:
         return "\n\n".join(lines)
 
     @staticmethod
+    def _plain_prompt_lines(text: str) -> list[str]:
+        return [line.strip() for line in str(text or "").splitlines() if line.strip()]
+
+    @classmethod
+    def _has_timed_prompts(cls, path: Path) -> bool:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        return bool(cls._extract_prompt_lines(text))
+
+    @staticmethod
     def _validate_prompt_file(path: Path) -> None:
         from pipeline.srt_image import parse_timing_cues_detailed
         try:
             cues = parse_timing_cues_detailed(path)
-        except Exception as exc:
-            raise RuntimeError("AUTOMATION_PROMPTS_INVALID: file không có timecode hợp lệ") from exc
-        if not cues:
+        except Exception:
+            cues = []
+        if not cues and not AutomationService._plain_prompt_lines(path.read_text(encoding="utf-8-sig", errors="replace")):
             raise RuntimeError("AUTOMATION_PROMPTS_EMPTY")
 
     def _request_chat(self, job_id: str, prompt: str, files: list[Path]) -> tuple[str, Path | None]:
@@ -736,7 +745,9 @@ class AutomationService:
         if not account or account.get("status") != "online":
             raise RuntimeError("FLOW_LOGIN_REQUIRED")
         text = prompts.read_text(encoding="utf-8-sig", errors="replace")
-        prompt_lines = [line.strip() for line in text.splitlines() if line.strip() and "[" in line and "]" in line]
+        prompt_lines = [line.strip() for line in text.splitlines() if re.match(r"^\d{3}_\[", line.strip())]
+        if not prompt_lines:
+            prompt_lines = self._plain_prompt_lines(text)
         image_dir = workspace / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
         cached = sorted(path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".avif"})
@@ -830,7 +841,8 @@ class AutomationService:
         # Automation owns this directory (unlike the direct SRT upload route),
         # so create it before handing the job to the renderer.
         work.mkdir(parents=True, exist_ok=True)
-        render_job = srt_image.create_job("output.mp4", work, images, audio, prompts, srt if subtitle_enabled else None, options, None, output_dir / "output.mp4")
+        timeline = prompts if prompts and self._has_timed_prompts(prompts) else None
+        render_job = srt_image.create_job("output.mp4", work, images, audio, timeline, srt if subtitle_enabled else None, options, None, output_dir / "output.mp4")
         srt_image.start(render_job["id"])
         while True:
             try:

@@ -260,6 +260,19 @@ def test_automation_language_changes_chat_instructions(tmp_path):
     assert "Format: 001_[" in service._image_prompt_request(settings)
 
 
+def test_automation_accepts_one_plain_image_prompt_per_line(tmp_path):
+    service = AutomationService(store=AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs"), runner=lambda _job_id: None)
+    prompt_file = tmp_path / "image_prompt.txt"
+    prompt_file.write_text("A red fox in a snowy forest\nA warm cabin at dusk\n", encoding="utf-8")
+
+    assert service._plain_prompt_lines(prompt_file.read_text(encoding="utf-8")) == [
+        "A red fox in a snowy forest",
+        "A warm cabin at dusk",
+    ]
+    service._validate_prompt_file(prompt_file)
+    assert not service._has_timed_prompts(prompt_file)
+
+
 def test_audio_first_topic_prompt_uses_the_full_engine_contract(tmp_path):
     service = AutomationService(store=AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs"), runner=lambda _job_id: None)
 

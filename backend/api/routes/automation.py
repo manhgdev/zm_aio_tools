@@ -166,7 +166,17 @@ def _artifact_path(job_id: str, artifact_name: str) -> tuple[dict[str, Any], Pat
         raise HTTPException(404, detail={"code": "AUTOMATION_ARTIFACT_NOT_FOUND", "message": _t("Chưa có file đầu ra", "Artifact is not available")})
     target = Path(str(raw)).expanduser().resolve()
     workspace = service.store.workspace(job_id).resolve()
-    output_root = (downloads_folder("subtitle-image") / "automation").resolve()
+    if not target.exists():
+        candidates = [workspace / target.name, workspace / "input" / target.name]
+        if key == "prompts":
+            candidates.extend(workspace / name for name in ("image_prompt.txt", "image_prompts.txt"))
+        repaired = next((candidate for candidate in candidates if candidate.is_file()), None)
+        if repaired is not None:
+            target = repaired.resolve()
+            artifacts = dict(job.get("artifacts") or {})
+            artifacts[key] = str(target)
+            service.store.update_job(job_id, artifacts=artifacts)
+    output_root = downloads_folder("automation").resolve()
     configured_value = str((job.get("settings") or {}).get("outputDir") or "").strip()
     configured_root = Path(configured_value).expanduser().resolve() if configured_value else None
     try:
@@ -190,7 +200,28 @@ def _artifact_path(job_id: str, artifact_name: str) -> tuple[dict[str, Any], Pat
 def artifact(job_id: str, artifact_name: str):
     _job, target = _artifact_path(job_id, artifact_name)
     media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-    return FileResponse(target, media_type=media_type, filename=target.name)
+    safe_name = target.name.replace('"', '')
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=None,
+        headers={"Content-Disposition": f'inline; filename="{safe_name}"'},
+    )
+
+
+@router.post("/jobs/{job_id}/artifacts/{artifact_name}/open")
+def open_artifact(job_id: str, artifact_name: str):
+    _job, target = _artifact_path(job_id, artifact_name)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif os.name == "nt":
+            os.startfile(str(target))  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise HTTPException(500, detail={"code": "AUTOMATION_OPEN_ARTIFACT_FAILED", "message": _t("Không mở được file bằng ứng dụng hệ thống", "Could not open the file with the system app")}) from exc
+    return {"ok": True, "path": str(target)}
 
 
 @router.post("/jobs/{job_id}/open-folder")
@@ -198,14 +229,12 @@ def open_folder(job_id: str):
     job = service.store.get_job(job_id)
     if not job:
         raise HTTPException(404, detail={"code": "AUTOMATION_JOB_NOT_FOUND", "message": _t("Không tìm thấy job", "Automation job not found")})
+    workspace = service.store.workspace(job_id).resolve()
     raw = (job.get("artifacts") or {}).get("video") or (job.get("artifacts") or {}).get("images")
-    if not raw:
-        raise HTTPException(404, detail={"code": "AUTOMATION_OUTPUT_NOT_READY", "message": _t("Chưa có thư mục đầu ra", "Output folder is not ready")})
-    folder = Path(str(raw)).expanduser().resolve()
+    folder = Path(str(raw)).expanduser().resolve() if raw else workspace
     if folder.is_file():
         folder = folder.parent
-    workspace = service.store.workspace(job_id).resolve()
-    output_root = (downloads_folder("subtitle-image") / "automation").resolve()
+    output_root = downloads_folder("automation").resolve()
     configured_value = str((job.get("settings") or {}).get("outputDir") or "").strip()
     configured_root = Path(configured_value).expanduser().resolve() if configured_value else None
     try:

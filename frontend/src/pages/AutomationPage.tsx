@@ -55,6 +55,8 @@ type ChatModelOption = { id: string; label: string; provider: string; free: bool
 type ChatProviderOption = { id: string; label: string; kind: 'api' | 'browser'; configured: boolean; status: string; models: ChatModelOption[] }
 
 const API = '/api/automation'
+const fetchWithTimeout = (input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 8000) =>
+  fetch(input, { ...init, signal: init.signal || AbortSignal.timeout(timeoutMs) })
 const AUTOMATION_SETTINGS_OPEN_KEY = 'videoclone.automation-settings-open.v1'
 const AUTOMATION_PANEL_WIDTH_KEY = 'videoclone.automation-panel-width.v1'
 const AUTOMATION_SETTINGS_TAB_KEY = 'videoclone.automation-settings-tab.v1'
@@ -226,7 +228,7 @@ export default function AutomationPage() {
   } as Record<string, string>)[id] || id
   const refresh = useCallback(async () => {
     try {
-      const response = await fetch(`${API}/jobs`)
+      const response = await fetchWithTimeout(`${API}/jobs`)
       if (!response.ok) throw new Error(await response.text())
       const data = await response.json() as { jobs?: AutomationJob[] }
       setJobs(Array.isArray(data.jobs) ? data.jobs : [])
@@ -238,8 +240,8 @@ export default function AutomationPage() {
 
   useEffect(() => {
     void Promise.all([
-      fetch(`${API}/settings`).then(response => response.ok ? response.json() as Promise<Partial<AutomationSettings>> : null).then(value => { if (value) setSettings(mergeSettings(value)) }).catch(() => undefined),
-      fetch('/api/config').then(async (r) => r.ok && setIsDesktopApp(Boolean((await r.json() as { desktop?: boolean }).desktop))).catch(() => undefined),
+      fetchWithTimeout(`${API}/settings`).then(response => response.ok ? response.json() as Promise<Partial<AutomationSettings>> : null).then(value => { if (value) setSettings(mergeSettings(value)) }).catch(() => undefined),
+      fetchWithTimeout('/api/config').then(async (r) => r.ok && setIsDesktopApp(Boolean((await r.json() as { desktop?: boolean }).desktop))).catch(() => undefined),
       refresh(),
     ])
   }, [refresh])
@@ -247,7 +249,7 @@ export default function AutomationPage() {
   useEffect(() => {
     let active = true
     setChatModelsLoading(true)
-    void fetch('/api/chat/providers').then(response => response.ok ? response.json() as Promise<unknown> : null).then(raw => {
+    void fetchWithTimeout('/api/chat/providers').then(response => response.ok ? response.json() as Promise<unknown> : null).then(raw => {
       if (!active) return
       const available = normalizeChatProviders(raw)
       setChatProviders(available)
@@ -270,8 +272,8 @@ export default function AutomationPage() {
     let active = true
     setOptionsLoading(true)
     void Promise.all([
-      fetch('/api/flow/accounts').then(response => response.ok ? response.json() as Promise<unknown> : null),
-      fetch('/api/voices?lang=all').then(response => response.ok ? response.json() as Promise<unknown> : null),
+      fetchWithTimeout('/api/flow/accounts').then(response => response.ok ? response.json() as Promise<unknown> : null),
+      fetchWithTimeout('/api/voices?lang=all').then(response => response.ok ? response.json() as Promise<unknown> : null),
     ]).then(([accounts, voices]) => {
       if (!active) return
       setFlowAccounts(normalizeFlowAccounts(accounts))
@@ -302,6 +304,44 @@ export default function AutomationPage() {
     const timer = window.setInterval(() => void refresh(), 1000)
     return () => window.clearInterval(timer)
   }, [jobs, refresh])
+
+  useEffect(() => {
+    const updateArtifactActions = () => {
+      document.querySelectorAll<HTMLAnchorElement>('.automation-job-actions a').forEach(link => {
+        const isVideo = /\/artifacts\/video(?:$|[?])/.test(link.href)
+        const isImages = /\/artifacts\/images(?:$|[?])/.test(link.href)
+        if (isVideo && !isDesktopApp) {
+          link.hidden = false
+          link.textContent = t('Tải MP4', 'Download MP4')
+          return
+        }
+        link.onclick = event => {
+          event.preventDefault()
+          const match = link.href.match(/\/jobs\/([^/]+)\/artifacts\/([^/?]+)/)
+          if (!match) return
+          if (isImages) {
+            window.history.pushState({ appMode: 'flow' }, '', '/flow?p=queue')
+            window.dispatchEvent(new PopStateEvent('popstate'))
+            return
+          }
+          void fetch(`${API}/jobs/${encodeURIComponent(match[1])}/artifacts/${encodeURIComponent(match[2])}/open`, { method: 'POST' })
+            .then(response => { if (!response.ok) throw new Error(t('Không mở được file bằng ứng dụng ZM.', 'Could not open the file with the ZM app.')) })
+            .catch(cause => setError(cause instanceof Error ? cause.message : t('Không mở được file.', 'Could not open the file.')))
+        }
+        if (isImages) {
+          link.textContent = t('Hàng đợi Flow', 'Flow queue')
+          return
+        }
+        if (!isVideo) {
+          link.hidden = false
+          return
+        }
+        link.removeAttribute('download')
+        link.textContent = t('Xem', 'View')
+      })
+    }
+    updateArtifactActions()
+  }, [isDesktopApp, jobs, locale])
 
   const saveSettings = async (next: AutomationSettings) => {
     setSettings(next)
