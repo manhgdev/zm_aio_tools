@@ -22,7 +22,10 @@ export function dubPlaybackSpeed(seg: Segment, bakedSpeed = 1): number {
     typeof seg.ttsBake === 'number' && seg.ttsBake > 0.2 && seg.ttsBake <= 2.5
       ? seg.ttsBake
       : 1
-  return Math.max(0.5, Math.min(2, dubManualSpeed(seg) * (bake / fit)))
+  // Keep the browser clock identical to mux_audio._tts_clip_plan: after a
+  // later file bake, the backend permits up to 4× so it never silently cuts
+  // the tail of a generated sentence.
+  return Math.max(0.5, Math.min(4, dubManualSpeed(seg) * (bake / fit)))
 }
 
 /**
@@ -251,25 +254,24 @@ export function buildCascadePlan(
     .filter((s) => segmentHasDub(s) && s.audioUrl)
     .sort((a, b) => a.start - b.start)
 
-  for (const seg of sorted) {
+  for (let i = 0; i < sorted.length; i += 1) {
+    const seg = sorted[i]
     const start = Math.max(seg.start, cursor)
-
     const ttsSpeed = dubPlaybackSpeed(seg, bakedSpeed)
     const ad = seg.audioDuration ?? 0
-
-    const rate = Math.max(0.2, previewVideoRate(undefined, undefined, seg.videoSpeed))
-
-    let durationInVideoTime = 0
-    if (ad > 0.05) {
-      durationInVideoTime = (ad / Math.max(0.5, ttsSpeed)) * rate + 0.04
-    } else {
-      durationInVideoTime = Math.max(0, seg.end - seg.start) + 0.05
-    }
-
-    const end = start + durationInVideoTime
+    // Match the export mixer byte-for-byte in time math.  In particular,
+    // `trim` includes the 40 ms mixer tail, and the following sentence starts
+    // after the same 20 ms gap.  Do not use a videoSpeed here: export retimes
+    // the video first, then places this audio plan on that final clock.
+    const next = sorted.slice(i + 1).find((candidate) => candidate.start > seg.start + 0.02)
+    const slot = next
+      ? Math.max(0.12, next.start - seg.start - 0.03)
+      : Math.max(0.15, ad > 0.05 ? ad + 0.15 : Math.max(0, seg.end - seg.start) + 0.12)
+    const played = ad > 0.05 ? ad / Math.max(0.05, ttsSpeed) : slot
+    const trim = Math.max(0.08, played + 0.04)
+    const end = start + trim
     plan.set(seg.id, { effectiveStart: start, effectiveEnd: end })
-
-    cursor = end + 0.02 * rate
+    cursor = end + 0.02
   }
 
   return plan

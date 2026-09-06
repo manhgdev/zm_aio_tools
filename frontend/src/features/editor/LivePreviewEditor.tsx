@@ -1952,9 +1952,18 @@ export default function LivePreviewEditor({
     const video = videoRef.current
     focusCaption(segment)
     if (!video) return
-    video.currentTime = timelineToVideoTime(segment.start)
-    setTime(segment.start)
-    void video.play().catch(() => { /* requires explicit user gesture */ })
+    // The caption rail is authored on the source clock, but a complete TTS
+    // sentence may be cascaded later in the spoken clock.  Selecting it must
+    // land *inside* that rendered cue; starting playback here let short cues
+    // disappear before the editor had painted them.
+    const spoken = captionPlaybackSegments.find((candidate) => candidate.id === segment.id) ?? segment
+    const span = Math.max(0, spoken.end - spoken.start)
+    const target = span > 0.04
+      ? spoken.start + Math.min(span * 0.5, span - 0.02)
+      : spoken.start
+    video.pause()
+    video.currentTime = timelineToVideoTime(target)
+    setTime(target)
   }
 
   const {
