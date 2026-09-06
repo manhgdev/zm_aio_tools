@@ -347,6 +347,8 @@ export default function LivePreviewEditor({
   const [cropEditing, setCropEditing] = useState(false)
   const [cropDraft, setCropDraft] = useState(() => settings.previewCrop ?? { x: 0.1, y: 0.1, w: 0.8, h: 0.8 })
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  /** CapCut-style “All”: formatting and bbox transforms propagate to captions. */
+  const [applyCaptionToAll, setApplyCaptionToAll] = useState(false)
   /** Multi-select caption (Ctrl/Shift / marquee) */
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   /** Multi-select media clips (video/bg) + TTS clips từ marquee */
@@ -1858,9 +1860,13 @@ export default function LivePreviewEditor({
         try {
           const res = await api.prepareNoVocals(projectId)
           if (!alive()) return
-          if (poll != null) window.clearInterval(poll)
-          poll = null
-          applyReady(res.audioUrl)
+          if (res.audioUrl) {
+            // Trường hợp cache hit đã trả kết quả ngay
+            if (poll != null) window.clearInterval(poll)
+            poll = null
+            applyReady(res.audioUrl)
+          }
+          // Trường hợp running:true — poll loop đang chạy song song, không làm gì thêm
         } catch (e: unknown) {
           if (poll != null) window.clearInterval(poll)
           poll = null
@@ -1879,6 +1885,7 @@ export default function LivePreviewEditor({
           setStemStatus('error')
           setStemError(e instanceof Error ? e.message : 'Không tách được stem xóa lời')
         }
+
       } catch (e: unknown) {
         if (!alive()) return
         setStemStatus('error')
@@ -2022,6 +2029,7 @@ export default function LivePreviewEditor({
     selectedBox,
     fallbackBox,
     bboxDraft,
+    applyCaptionToAll,
     videoClips,
     bgClips,
     tracksScrollRef,
@@ -2703,7 +2711,7 @@ export default function LivePreviewEditor({
     }
     // «Tất cả» = cùng lane (Caption / CAP-MID / Dọc / Nhãn) — không đụng lane khác
     const src = selected ?? bboxSeg
-    const lane = src ? captionLaneOf(src, sourceHeight, sourceWidth) : null
+    const lane = applyCaptionToAll ? null : (src ? captionLaneOf(src, sourceHeight, sourceWidth) : null)
     pushHistory()
     void onSegmentsReplace(segments.map((seg) => {
       if (lane && captionLaneOf(seg, sourceHeight, sourceWidth) !== lane) return seg
@@ -5877,6 +5885,8 @@ export default function LivePreviewEditor({
                         segments={segments}
                         settings={settings}
                         onSettings={onSettings}
+                        applyCaptionToAll={applyCaptionToAll}
+                        setApplyCaptionToAll={setApplyCaptionToAll}
                         onEditManualBlurBand={editManualBlurBand}
                         onPreviewCoverMaskOpacity={previewCoverMaskOpacity}
                         onPreviewEffectOpacity={previewEffectOpacity}
