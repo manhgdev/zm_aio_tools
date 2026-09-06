@@ -18,4 +18,5 @@
 .automation-settings-panel{min-width:0}
 .automation-setting-grid[role=tabpanel]{padding-top:12px}
 .automation-settings-panel-title{grid-column:1/-1;margin:0 0 2px;color:var(--foreground);font-size:.8rem;line-height:1.3}
+.automation-field-full{grid-column:1/-1}
 @media(max-width:560px){.automation-settings-tabs button{min-width:74px;padding-inline:5px}.automation-settings-panel-title{grid-column:1}}

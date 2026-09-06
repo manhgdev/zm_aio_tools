@@ -459,10 +459,16 @@ class AutomationService:
         prompts = canonical.get("prompts")
         if not prompts and (srt or audio):
             self.set_stage(job_id, "image_prompt", 39, "Đang phân tích audio/SRT và tạo prompt ảnh.")
-            files = [path for path in (audio, srt) if path]
+            # Prefer SRT (text) for timing and dialogue; chat LLMs do not accept audio attachments.
+            files = [path for path in (srt,) if path] or ([script] if script else [])
             content, artifact = self._request_chat(job_id, self._image_prompt_request(settings), files)
             prompts = workspace / "image_prompts.txt"
             self._write_text_result(prompts, artifact, content)
+            # If AI pasted content inline (no artifact), further filter to timecode lines only
+            if not artifact:
+                clean = self._extract_prompt_lines(prompts.read_text(encoding="utf-8"))
+                if clean:
+                    prompts.write_text(clean + "\n", encoding="utf-8")
             self._validate_prompt_file(prompts)
             self.save_artifact(job_id, "prompts", prompts, stage="image_prompt")
             inputs["prompts"] = str(prompts); inputs["generatedPrompts"] = True
@@ -525,24 +531,30 @@ class AutomationService:
         prefix = str(settings.get("systemPrompt") or "").strip()
         language = "English" if str(settings.get("language") or "vi").lower() == "en" else "Vietnamese"
         instruction = (
-            f"Final topic: {topic}\nCreate and attach a downloadable TXT file containing only clean narration in English. Do not merely paste the text or describe a filename; the response must include the generated .txt file. No title, notes or markdown in the file."
+            f"Final topic: {topic}\n"
+            "Reply with ONLY the raw narration text — no preamble, no filename mention, no explanation, no markdown. "
+            "Start immediately with the first word of the narration."
             if language == "English" else
-            f"Chủ đề cuối cùng: {topic}\nHãy tạo và đính kèm một file TXT để tải xuống, chỉ chứa lời thuyết minh sạch bằng tiếng Việt. Không chỉ dán nội dung hoặc mô tả tên file; phản hồi bắt buộc phải có file .txt. Không tiêu đề, không ghi chú, không markdown trong file."
+            f"Chủ đề cuối cùng: {topic}\n"
+            "Chỉ trả về đúng nội dung lời thuyết minh thuần văn bản — không mở đầu, không nhắc tên file, không giải thích, không markdown. "
+            "Bắt đầu ngay bằng từ đầu tiên của lời thuyết minh."
         )
         engine = self._audio_first_engine_prompt(settings)
-        return (prefix + "\n\n" if prefix else "") + engine + "\n" + instruction + f" Tên file: audio_script_{safe_output_part(topic, 'topic')}.txt"
+        return (prefix + "\n\n" if prefix else "") + engine + "\n" + instruction
 
     def _image_prompt_request(self, settings: dict[str, Any]) -> str:
         prefix = str(settings.get("systemPrompt") or "").strip()
         language = "English" if str(settings.get("language") or "vi").lower() == "en" else "Vietnamese"
         instruction = (
-            "Read the attached audio and SRT, split visual beats by meaning, then create and attach exactly one downloadable TXT file of image prompts. One prompt per line using 001_[00:00:00.000-00:00:05.000] ...; preserve timecodes; no explanation outside the file. Output prompts in English."
+            "Read the attached SRT with timecodes (or script), split visual beats by meaning, then output ONLY the image prompt lines. "
+            "One prompt per line: 001_[00:00:00.000-00:00:05.000] <English description>. "
+            "No preamble, no explanation, no filename mention — start immediately with line 001."
             if language == "English" else
-            "Đọc audio và SRT đính kèm, chia visual beat theo ý nghĩa, rồi tạo và đính kèm đúng một file TXT để tải xuống chứa prompt ảnh. Mỗi prompt một dòng, có dạng 001_[00:00:00.000-00:00:05.000] ...; giữ đúng timecode; không giải thích ngoài file."
+            "Đọc file SRT có timecode (hoặc kịch bản) đính kèm, chia visual beat theo ý nghĩa, rồi chỉ xuất ra các dòng prompt ảnh. "
+            "Mỗi dòng theo dạng: 001_[00:00:00.000-00:00:05.000] <mô tả tiếng Anh>. "
+            "Không mở đầu, không giải thích, không nhắc tên file — bắt đầu ngay bằng dòng 001."
         )
-        engine = str((settings.get("flow") or {}).get("promptEngine") or "vi")
         instruction = self._audio_first_engine_prompt(settings) + "\n" + instruction
-        instruction += " Tên file: image_prompts.txt"
         return (prefix + "\n\n" if prefix else "") + instruction
 
     @staticmethod
@@ -576,13 +588,52 @@ class AutomationService:
         return list(dict.fromkeys(values))[:5]
 
     @staticmethod
-    def _write_text_result(target: Path, artifact: Path | None, content: str) -> None:
+    def _strip_ai_meta(text: str) -> str:
+        """Remove AI preamble/postamble lines when no artifact file was attached.
+
+        Pattern: lines that are clearly AI commentary rather than content —
+        e.g. 'Đã tạo file...', 'Tên file:', 'Hãy tạo audio...', trailing ```.
+        ponytail: simple line-filter; upgrade to LLM post-processing if needed.
+        """
+        # Strip outer fenced code blocks first
+        text = re.sub(r"^```(?:txt|text|markdown)?\s*", "", text.strip(), flags=re.I)
+        text = re.sub(r"\s*```$", "", text.strip(), flags=re.I)
+        # Drop lines that look like AI meta commentary
+        _META = re.compile(
+            r"^(?:"
+            r"(?:Đã tạo|Đã nhận|Đã phân tích|I(?:'ve| have) (?:created|generated|attached|analyzed))"
+            r"|(?:Tên file|File name|Filename)\s*:"
+            r"|(?:Hãy tạo|Please (?:create|generate|use|send))"
+            r"|(?:Bạn có thể|You can)"
+            r"|(?:Lưu ý|Note)\s*:"
+            r"|```"
+            r")",
+            re.I,
+        )
+        lines = [ln for ln in text.splitlines() if not _META.match(ln.strip())]
+        return "\n".join(lines).strip()
+
+    @classmethod
+    def _write_text_result(cls, target: Path, artifact: Path | None, content: str) -> None:
         source = artifact if artifact and artifact.is_file() else None
-        text = source.read_text(encoding="utf-8-sig", errors="replace") if source else str(content or "")
-        text = re.sub(r"^```(?:txt|text|markdown)?\s*|\s*```$", "", text.strip(), flags=re.I).strip()
+        if source:
+            text = source.read_text(encoding="utf-8-sig", errors="replace")
+            text = re.sub(r"^```(?:txt|text|markdown)?\s*|\s*```$", "", text.strip(), flags=re.I).strip()
+        else:
+            # No artifact: AI pasted content inline — strip meta commentary
+            text = cls._strip_ai_meta(str(content or ""))
         if not text:
             raise RuntimeError("AUTOMATION_CHAT_EMPTY_ARTIFACT")
         target.write_text(text + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _extract_prompt_lines(text: str) -> str:
+        """Keep only valid timecode prompt lines (NNN_[HH:MM:SS...] ...)."""
+        lines = [
+            ln for ln in text.splitlines()
+            if re.match(r"^\d{3}_\[", ln.strip())
+        ]
+        return "\n".join(lines)
 
     @staticmethod
     def _validate_prompt_file(path: Path) -> None:
@@ -705,7 +756,7 @@ class AutomationService:
             jobs = flow_service.enqueue({
                 "prompts": prompt_lines,
                 "kind": "image", "mode": "text", "accountId": account_id,
-                "settings": {"model": str(flow_cfg.get("model") or "Nano Banana 2"), "ratio": str(flow_cfg.get("ratio") or "16:9"), "resolution": str(flow_cfg.get("resolution") or "1K"), "concurrency": str(flow_cfg.get("concurrency") or "3"), "outputDir": f"automation_{job_id}"},
+                "settings": {"model": str(flow_cfg.get("model") or "Nano Banana 2"), "ratio": str(flow_cfg.get("ratio") or "16:9"), "resolution": str(flow_cfg.get("resolution") or "1K"), "count": int(flow_cfg.get("count") or 1), "concurrency": str(flow_cfg.get("concurrency") or "3"), "outputDir": f"automation_{job_id}"},
             })
             child_ids = [str(item["id"]) for item in jobs]
             self.store.update_job(job_id, child_job_ids=child_ids)
@@ -759,7 +810,9 @@ class AutomationService:
             return
         compose = settings.get("compose") if isinstance(settings.get("compose"), dict) else {}
         configured = str(settings.get("outputDir") or "").strip()
-        output_dir = Path(configured).expanduser() if configured else downloads_folder("subtitle-image") / "automation" / safe_output_part(self.store.get_job(job_id)["title"], "job") / job_id
+        from pipeline.core.output_paths import selected_or_default
+        base_dir = selected_or_default("automation", configured)
+        output_dir = base_dir / safe_output_part(self.store.get_job(job_id)["title"], "job") / job_id
         output_dir.mkdir(parents=True, exist_ok=True)
         subtitle_enabled = bool(compose.get("subtitleEnabled", True))
         options = {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { localize, useLocale } from '@/app/i18n'
 import { FLOW_IMAGE_MODELS } from '@/features/flow/flow.helpers'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import './AutomationPage.css'
 
 type InputMode = 'topic' | 'ai_topic' | 'script' | 'bundle'
@@ -28,7 +29,7 @@ type AutomationSettings = {
   chatModel: string
   systemPrompt?: string
   tts: { voice: string; speed: number; volume: number; pitch: number; style: string }
-  flow: { accountId: string; model: string; ratio: string; resolution: string; concurrency: string; promptEngine: 'vi' | 'en' }
+  flow: { accountId: string; model: string; ratio: string; resolution: string; concurrency: string; promptEngine: 'vi' | 'en'; count?: string }
   compose: { resolution: string; fps: number; crf: number; encoder: 'auto' | 'gpu' | 'cpu'; speed: number; volume: number; previewSeconds: number; allowMissingMedia: boolean; subtitleEnabled: boolean; removeMetadata: boolean }
   outputDir: string
 }
@@ -60,7 +61,7 @@ const AUTOMATION_SETTINGS_TAB_KEY = 'videoclone.automation-settings-tab.v1'
 const DEFAULT_SETTINGS: AutomationSettings = {
   language: 'vi', textProvider: 'openrouter', textModel: 'openrouter/free', chatModel: 'GPT-5.6 Sol',
   tts: { voice: 'system', speed: 1, volume: 1, pitch: 0, style: 'tu_nhien' },
-  flow: { accountId: '', model: 'Nano Banana 2', ratio: '16:9', resolution: '1K', concurrency: '3', promptEngine: 'vi' },
+  flow: { accountId: '', model: 'Nano Banana 2', ratio: '16:9', resolution: '1K', concurrency: '3', promptEngine: 'vi', count: '1' },
   compose: { resolution: 'auto', fps: 30, crf: 20, encoder: 'auto', speed: 100, volume: 100, previewSeconds: 0, allowMissingMedia: false, subtitleEnabled: true, removeMetadata: false }, outputDir: '',
 }
 
@@ -170,6 +171,7 @@ export default function AutomationPage() {
   const [chatModelsLoading, setChatModelsLoading] = useState(true)
   const [flowAccounts, setFlowAccounts] = useState<FlowAccountOption[]>([])
   const [ttsVoices, setTtsVoices] = useState<TtsVoiceOption[]>([])
+  const [voiceSearch, setVoiceSearch] = useState('')
   const [optionsLoading, setOptionsLoading] = useState(true)
   const [jobs, setJobs] = useState<AutomationJob[]>([])
   const [loading, setLoading] = useState(true)
@@ -178,6 +180,7 @@ export default function AutomationPage() {
   const [error, setError] = useState('')
   const [editingJobId, setEditingJobId] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<AutomationJob | null>(null)
+  const [isDesktopApp, setIsDesktopApp] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => {
     try { return window.localStorage.getItem(AUTOMATION_SETTINGS_OPEN_KEY) !== '0' } catch { return true }
   })
@@ -236,6 +239,7 @@ export default function AutomationPage() {
   useEffect(() => {
     void Promise.all([
       fetch(`${API}/settings`).then(response => response.ok ? response.json() as Promise<Partial<AutomationSettings>> : null).then(value => { if (value) setSettings(mergeSettings(value)) }).catch(() => undefined),
+      fetch('/api/config').then(async (r) => r.ok && setIsDesktopApp(Boolean((await r.json() as { desktop?: boolean }).desktop))).catch(() => undefined),
       refresh(),
     ])
   }, [refresh])
@@ -413,19 +417,22 @@ export default function AutomationPage() {
       </div>
       <div className="automation-settings-panel">
       {settingsTab === 'text' ? <div id="automation-settings-text" className="automation-setting-grid" role="tabpanel">
-        <label><span>{t('Ngôn ngữ đầu ra', 'Output language')}</span><select value={settings.language} onChange={event => update('language', event.target.value as AutomationSettings['language'])}><option value="vi">{t('Tiếng Việt', 'Vietnamese')}</option><option value="en">{t('Tiếng Anh', 'English')}</option></select><small className="automation-setting-hint">{t('Áp dụng cho script, TTS, SRT và prompt ảnh.', 'Applies to script, TTS, SRT and image prompts.')}</small></label>
-        <label><span>{t('Provider AI text', 'Text AI provider')}</span><select value={settings.textProvider} onChange={event => { const next = chatProviders.find(item => item.id === event.target.value); const nextModel = next?.models[0]?.id || ''; void saveSettings({ ...settings, textProvider: event.target.value, textModel: nextModel, chatModel: event.target.value === 'chatgpt_web' ? nextModel : settings.chatModel }) }} disabled={chatModelsLoading && !chatProviders.length} aria-busy={chatModelsLoading}>{!chatProviders.length ? <option value="">{chatModelsLoading ? t('Đang tải provider…', 'Loading providers…') : t('Chưa có provider khả dụng', 'No available provider')}</option> : null}{chatProviders.map(item => <option key={item.id} value={item.id} disabled={item.status !== 'ready' && !(item.id === 'chatgpt_web' && item.configured)}>{providerName(item.id)}{item.status === 'free_unavailable' ? ` · ${t('không có model khả dụng', 'no available model')}` : ''}</option>)}</select><small className="automation-setting-hint">{t('Chọn một provider cho topic, script và prompt ảnh; chỉ model khả dụng.', 'One provider for topic, script and image prompts; available models only.')}</small></label>
-        <label><span>{t('Model AI text', 'Text AI model')}</span><select value={settings.textModel} onChange={event => update('textModel', event.target.value)} disabled={chatModelsLoading || !chatProviders.length} aria-busy={chatModelsLoading}>{!selectedTextProvider?.models.length ? <option value="">{chatModelsLoading ? t('Đang tải model…', 'Loading models…') : t('Chưa có model khả dụng', 'No available model')}</option> : null}{(selectedTextProvider?.models || []).map(item => <option key={item.id} value={item.id}>{item.label || item.id}</option>)}</select><small className="automation-setting-hint">{t('Provider lỗi/quota sẽ dừng job để bạn chọn lại.', 'Provider errors/quota pause the job so you can choose again.')}</small></label>
+        <label><span>{t('Ngôn ngữ đầu ra', 'Output language')}</span><select value={settings.language} onChange={event => update('language', event.target.value as AutomationSettings['language'])}><option value="vi">{t('Tiếng Việt', 'Vietnamese')}</option><option value="en">{t('Tiếng Anh', 'English')}</option></select></label>
+        <label><span>{t('Provider AI text', 'Text AI provider')}</span><select value={settings.textProvider} onChange={event => { const next = chatProviders.find(item => item.id === event.target.value); const nextModel = next?.models[0]?.id || ''; void saveSettings({ ...settings, textProvider: event.target.value, textModel: nextModel, chatModel: event.target.value === 'chatgpt_web' ? nextModel : settings.chatModel }) }} disabled={chatModelsLoading && !chatProviders.length} aria-busy={chatModelsLoading}>{!chatProviders.length ? <option value="">{chatModelsLoading ? t('Đang tải provider…', 'Loading providers…') : t('Chưa có provider khả dụng', 'No available provider')}</option> : null}{chatProviders.map(item => <option key={item.id} value={item.id} disabled={item.status !== 'ready' && !(item.id === 'chatgpt_web' && item.configured)}>{providerName(item.id)}{item.status === 'free_unavailable' ? ` · ${t('không có model khả dụng', 'no available model')}` : ''}</option>)}</select></label>
+        <label><span>{t('Model AI text', 'Text AI model')}</span><select value={settings.textModel} onChange={event => update('textModel', event.target.value)} disabled={chatModelsLoading || !chatProviders.length} aria-busy={chatModelsLoading}>{!selectedTextProvider?.models.length ? <option value="">{chatModelsLoading ? t('Đang tải model…', 'Loading models…') : t('Chưa có model khả dụng', 'No available model')}</option> : null}{(selectedTextProvider?.models || []).map(item => <option key={item.id} value={item.id}>{item.label || item.id}</option>)}</select></label>
+        <label className="automation-field-full"><span>{t('System prompt (tuỳ chỉnh)', 'System prompt (optional)')}</span><textarea rows={3} value={settings.systemPrompt || ''} onChange={event => update('systemPrompt', event.target.value)} placeholder={t('Bỏ trống để dùng mặc định của Audio-First 2D engine.', 'Leave empty to use the default Audio-First 2D engine prompt.')} /></label>
       </div> : settingsTab === 'tts' ? <div id="automation-settings-tts" className="automation-setting-grid" role="tabpanel">
-        <label><span>{t('Giọng TTS', 'TTS voice')}</span><select value={settings.tts.voice} onChange={event => updateNested('tts', 'voice', event.target.value)} disabled={optionsLoading && !ttsVoices.length}><option value="">{optionsLoading ? t('Đang tải giọng…', 'Loading voices…') : t('Chưa có giọng', 'No voices available')}</option>{ttsVoices.map(voice => <option key={voice.id} value={voice.id}>{voice.name || voice.label || voice.id}</option>)}</select><small className="automation-setting-hint">{ttsVoices.length ? t(`${ttsVoices.length} giọng từ tab TTS`, `${ttsVoices.length} voices from TTS`) : t('Danh sách sẽ lấy từ tab TTS.', 'The list is loaded from the TTS tab.')}</small></label>
+        <label><span>{t('Tìm giọng TTS', 'Search voice')}</span><input type="search" value={voiceSearch} onChange={event => setVoiceSearch(event.target.value)} placeholder={t('Nhập tên giọng để lọc…', 'Filter voices by name…')} /></label>
+        <label><span>{t('Giọng TTS', 'TTS voice')}</span><select value={settings.tts.voice} onChange={event => updateNested('tts', 'voice', event.target.value)} disabled={optionsLoading && !ttsVoices.length}><option value="">{optionsLoading ? t('Đang tải giọng…', 'Loading voices…') : t('Chưa có giọng', 'No voices available')}</option>{ttsVoices.filter(v => !voiceSearch.trim() || (v.name || v.label || v.id).toLowerCase().includes(voiceSearch.trim().toLowerCase())).map(voice => <option key={voice.id} value={voice.id}>{voice.name || voice.label || voice.id}</option>)}</select></label>
+        <label><span>{t('Tốc độ (%)', 'Speed (%)')}</span><input id="auto-tts-speed" type="range" min="50" max="200" step="5" value={Math.round((settings.tts.speed || 1) * 100)} onChange={event => updateNested('tts', 'speed', Number(event.target.value) / 100)} /><output htmlFor="auto-tts-speed">{Math.round((settings.tts.speed || 1) * 100)}%</output></label>
       </div> : settingsTab === 'flow' ? <div id="automation-settings-flow" className="automation-setting-grid" role="tabpanel">
-        <label><span>{t('Model Flow ảnh', 'Flow image model')}</span><select value={settings.flow.model} onChange={event => updateNested('flow', 'model', event.target.value)}>{FLOW_IMAGE_MODELS.map(model => <option key={model} value={model}>{model}</option>)}</select><small className="automation-setting-hint">{t('Các model ảnh hiện có trong tab Flow.', 'Current image models from the Flow tab.')}</small></label>
-        <label><span>{t('Bộ prompt Audio-First 2D', 'Audio-First 2D prompt engine')}</span><select value={settings.flow.promptEngine} onChange={event => updateNested('flow', 'promptEngine', event.target.value as 'vi' | 'en')}><option value="vi">ZMTOOL Audio-First 2D Engine V1.0 (Tiếng Việt)</option><option value="en">ZMTOOL Audio-First 2D Engine V1.0 (Bản Tiếng Anh)</option></select><small className="automation-setting-hint">{t('Dùng cùng chuẩn tạo ảnh và video cho toàn bộ job hàng loạt.', 'Keeps image and video prompts consistent across the batch.')}</small></label>
-        <label><span>{t('Tài khoản Flow', 'Flow account')}</span><select value={settings.flow.accountId} onChange={event => updateNested('flow', 'accountId', event.target.value)} disabled={optionsLoading && !flowAccounts.length}><option value="">{optionsLoading ? t('Đang tải tài khoản…', 'Loading accounts…') : t('Chọn tài khoản Flow', 'Select a Flow account')}</option>{flowAccounts.filter(account => account.status === 'online').map(account => <option key={account.id} value={account.id}>{account.label}{account.plan ? ` · ${account.plan}` : ''}</option>)}</select><small className="automation-setting-hint">{flowAccounts.filter(account => account.status === 'online').length ? t('Chỉ hiển thị tài khoản đang online trong tab Flow.', 'Only online accounts from the Flow tab are shown.') : t('Hãy đăng nhập một tài khoản trong tab Flow trước.', 'Sign in to an account in the Flow tab first.')}</small></label>
+        <label><span>{t('Model Flow ảnh', 'Flow image model')}</span><select value={settings.flow.model} onChange={event => updateNested('flow', 'model', event.target.value)}>{FLOW_IMAGE_MODELS.map(model => <option key={model} value={model}>{model}</option>)}</select></label>
+        <label><span>{t('Bộ prompt Audio-First 2D', 'Audio-First 2D prompt engine')}</span><select value={settings.flow.promptEngine} onChange={event => updateNested('flow', 'promptEngine', event.target.value as 'vi' | 'en')}><option value="vi">ZMTOOL Audio-First 2D Engine V1.0 (Tiếng Việt)</option><option value="en">ZMTOOL Audio-First 2D Engine V1.0 (Bản Tiếng Anh)</option></select></label>
+        <label><span>{t('Tài khoản Flow', 'Flow account')}</span><select value={settings.flow.accountId} onChange={event => updateNested('flow', 'accountId', event.target.value)} disabled={optionsLoading && !flowAccounts.length}><option value="">{optionsLoading ? t('Đang tải tài khoản…', 'Loading accounts…') : t('Chọn tài khoản Flow', 'Select a Flow account')}</option>{flowAccounts.filter(account => account.status === 'online').map(account => <option key={account.id} value={account.id}>{account.label}{account.plan ? ` · ${account.plan}` : ''}</option>)}</select></label>
         <label><span>{t('Tỷ lệ khung hình', 'Aspect ratio')}</span><select value={settings.flow.ratio} onChange={event => updateNested('flow', 'ratio', event.target.value)}><option>16:9</option><option>9:16</option><option>1:1</option></select></label>
+        <label><span>{t('Số ảnh mỗi prompt', 'Images per prompt')}</span><select value={settings.flow.count ?? '1'} onChange={event => updateNested('flow', 'count', event.target.value)}><option value="1">1</option><option value="2">2</option><option value="4">4</option></select></label>
         <label><span>{t('Số luồng Flow', 'Flow concurrency')}</span><input type="number" min="1" max="8" value={settings.flow.concurrency} onChange={event => updateNested('flow', 'concurrency', event.target.value)} /></label>
       </div> : settingsTab === 'compose' ? <div id="automation-settings-compose" className="automation-setting-grid" role="tabpanel">
-        <h3 className="automation-settings-panel-title">{t('Cài đặt ghép video', 'Video composition settings')}</h3>
         <label><span>{t('Chất lượng xuất', 'Output quality')}</span><select value={settings.compose.resolution} onChange={event => updateNested('compose', 'resolution', event.target.value)}><option value="auto">{t('Auto theo media · 1080p', 'Auto from media · 1080p')}</option><option value="1920x1080">{t('1080p ngang', '1080p landscape')}</option><option value="1080x1920">{t('1080p dọc', '1080p portrait')}</option><option value="1080x1080">{t('1080p vuông', '1080p square')}</option><option value="1280x720">{t('720p ngang', '720p landscape')}</option></select></label>
         <label><span>{t('FPS xuất video', 'Output FPS')}</span><input type="number" min="1" max="120" value={settings.compose.fps} onChange={event => updateNested('compose', 'fps', Number(event.target.value) || 30)} /></label>
         <label><span>{t('Chất lượng nén (CRF)', 'Compression quality (CRF)')}</span><select value={settings.compose.crf} onChange={event => updateNested('compose', 'crf', Number(event.target.value) || 20)}><option value="18">{t('Cao · file lớn', 'High · larger file')}</option><option value="20">{t('Cân bằng', 'Balanced')}</option><option value="23">{t('Nhanh · file nhỏ', 'Fast · smaller file')}</option></select></label>
@@ -436,7 +443,22 @@ export default function AutomationPage() {
         <label className="automation-check"><input type="checkbox" checked={settings.compose.subtitleEnabled} onChange={event => updateNested('compose', 'subtitleEnabled', event.target.checked)} /><span>{t('Chèn phụ đề SRT', 'Burn SRT subtitles')}</span></label>
         <label className="automation-check"><input type="checkbox" checked={settings.compose.allowMissingMedia} onChange={event => updateNested('compose', 'allowMissingMedia', event.target.checked)} /><span>{t('Cho phép ghép khi thiếu media', 'Allow composition with missing media')}</span></label>
         <label className="automation-check"><input type="checkbox" checked={settings.compose.removeMetadata} onChange={event => updateNested('compose', 'removeMetadata', event.target.checked)} /><span>{t('Xóa metadata file xuất', 'Remove output metadata')}</span></label>
-        <label><span>{t('Thư mục xuất MP4 (tuỳ chọn)', 'MP4 output folder (optional)')}</span><input value={settings.outputDir} onChange={event => update('outputDir', event.target.value)} placeholder={t('Mặc định: Downloads/ZM_AIO_TOOL/automation', 'Default: Downloads/ZM_AIO_TOOL/automation')} /></label>
+        <div className="automation-field-full">
+          <OutputFolderField
+            isDesktopApp={isDesktopApp}
+            value={settings.outputDir}
+            onChange={(value) => update('outputDir', value)}
+            onChoose={isDesktopApp ? async () => {
+              const res = await fetch('/api/system/pick-folder', { method: 'POST' })
+              if (!res.ok) throw new Error(await res.text())
+              const picked = await res.json() as { path?: string }
+              return picked.path || undefined
+            } : undefined}
+            defaultPath={t('Ví dụ: du-an-01', 'Example: project-01')}
+            appFolder="automation"
+            label={t('Thư mục xuất MP4', 'MP4 output folder')}
+          />
+        </div>
       </div> : null}</div></div></details>
       {notice && <p className="automation-notice" role="status">{notice}</p>}{error && <p className="automation-error" role="alert">{error}</p>}
       <button type="button" className="automation-submit" onClick={() => void submit()} disabled={submitting}>{submitting ? t('Đang thêm job…', 'Adding job…') : mode === 'ai_topic' ? t('✦ Tạo 5 chủ đề', '✦ Generate 5 topics') : t('▶ Chạy job', '▶ Run job')}</button>

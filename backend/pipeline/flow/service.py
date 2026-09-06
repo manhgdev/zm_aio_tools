@@ -923,87 +923,101 @@ class FlowService:
             _log.info("_prepare_ui_model: %s model pill already correct — skipping settings panel", kind)
             return
 
-        mode_tab = await _visible_mode_tab()
-        if mode_tab is None:
-            for attempt in range(3):
-                try:
-                    await page.keyboard.press("Escape")
-                    await asyncio.sleep(0.2)
-                except Exception:
-                    pass
-
-                # Critical: focus the prompt textarea before clicking the settings
-                # pill.  In the current Flow UI the pill only opens the mode/model/
-                # aspect panel when the prompt input already has focus; otherwise it
-                # opens the reference-image media picker.
-                try:
-                    ed = page.locator('textarea, [contenteditable="true"][role="textbox"], div[contenteditable]').first
-                    if await ed.count() > 0:
-                        await ed.click()
-                        await asyncio.sleep(0.4)
-                except Exception:
-                    pass
-
-                # The settings trigger is hydrated after the project shell. Poll
-                # for its semantic label instead of clicking an unrelated toolbar
-                # button while the page is still rendering.
-                pills = page.locator("button, [role='button']")
-                trigger = None
-                trigger_deadline = time.monotonic() + 8
-                while trigger is None and time.monotonic() < trigger_deadline:
-                    for index in range(await pills.count() - 1, -1, -1):
-                        candidate = pills.nth(index)
-                        try:
-                            role = await candidate.get_attribute("role")
-                            if role in {"tab", "radio"} or not await candidate.is_visible():
-                                continue
-                            text = (await candidate.inner_text()).strip()
-                            aria_label = await candidate.get_attribute("aria-label") or ""
-                            if _is_settings_trigger(text, aria_label):
-                                trigger = candidate
-                                break
-                        except Exception:
-                            continue
-                    if trigger is None:
-                        await asyncio.sleep(0.25)
-                if trigger is None:
-                    _log.warning("_prepare_ui_model attempt %d: no settings pill found", attempt + 1)
-                opened = await _open_flow_settings_panel(
-                    page, trigger, controls, ui,
-                )
-                if not opened:
-                    _log.warning(
-                        "_prepare_ui_model attempt %d: settings pill did not open panel",
-                        attempt + 1,
-                    )
-                await asyncio.sleep(1.2)
-                mode_tab = await _visible_mode_tab()
-                if mode_tab is not None:
-                    break
-
-                all_tabs = controls
-                tab_texts: list[str] = []
-                for idx in range(min(10, await all_tabs.count())):
+        # ------------------------------------------------------------------
+        # Step 2: switch to the correct mode tab (Image / Video)
+        # Prefer flow-py's ui.switch_mode() — it uses get_by_role("tab") which
+        # is locale-independent and handles open_settings_panel internally.
+        # ponytail: manual fallback kept only for callers that pass ui=None.
+        # ------------------------------------------------------------------
+        if ui is not None:
+            try:
+                from flow._models import GenerationMode
+                gen_mode = GenerationMode.IMAGE if kind == "image" else GenerationMode.VIDEO
+                switched = await ui.switch_mode(page, gen_mode)
+                if not switched and not await _model_pill_already_visible():
+                    raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
+            except ImportError:
+                pass  # fall through to manual path
+            else:
+                # Mode switched (or pill already correct) — proceed to model selector.
+                pass
+        else:
+            # Manual fallback: find the tab by text and click it.
+            mode_tab = await _visible_mode_tab()
+            if mode_tab is None:
+                for attempt in range(3):
                     try:
-                        tab_texts.append((await all_tabs.nth(idx).inner_text()).strip())
+                        await page.keyboard.press("Escape")
+                        await asyncio.sleep(0.2)
                     except Exception:
                         pass
-                _log.warning(
-                    "_prepare_ui_model attempt %d: no %s tab visible; tabs=%s",
-                    attempt + 1, kind, tab_texts,
-                )
 
-        if mode_tab is None:
-            if await _model_pill_already_visible():
-                _log.info(
-                    "_prepare_ui_model: %s tab not found but model pill present — skipping",
-                    kind,
-                )
-            else:
-                raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
-        elif not await _flow_control_is_selected(mode_tab):
-            await mode_tab.click(force=True)
-            await asyncio.sleep(0.6)
+                    # Critical: focus the prompt textarea before clicking the settings
+                    # pill.  In the current Flow UI the pill only opens the mode/model/
+                    # aspect panel when the prompt input already has focus; otherwise it
+                    # opens the reference-image media picker.
+                    try:
+                        ed = page.locator('textarea, [contenteditable="true"][role="textbox"], div[contenteditable]').first
+                        if await ed.count() > 0:
+                            await ed.click()
+                            await asyncio.sleep(0.4)
+                    except Exception:
+                        pass
+
+                    pills = page.locator("button, [role='button']")
+                    trigger = None
+                    trigger_deadline = time.monotonic() + 8
+                    while trigger is None and time.monotonic() < trigger_deadline:
+                        for index in range(await pills.count() - 1, -1, -1):
+                            candidate = pills.nth(index)
+                            try:
+                                role = await candidate.get_attribute("role")
+                                if role in {"tab", "radio"} or not await candidate.is_visible():
+                                    continue
+                                text = (await candidate.inner_text()).strip()
+                                aria_label = await candidate.get_attribute("aria-label") or ""
+                                if _is_settings_trigger(text, aria_label):
+                                    trigger = candidate
+                                    break
+                            except Exception:
+                                continue
+                        if trigger is None:
+                            await asyncio.sleep(0.25)
+                    if trigger is None:
+                        _log.warning("_prepare_ui_model attempt %d: no settings pill found", attempt + 1)
+                    opened = await _open_flow_settings_panel(page, trigger, controls, ui)
+                    if not opened:
+                        _log.warning(
+                            "_prepare_ui_model attempt %d: settings pill did not open panel",
+                            attempt + 1,
+                        )
+                    await asyncio.sleep(1.2)
+                    mode_tab = await _visible_mode_tab()
+                    if mode_tab is not None:
+                        break
+
+                    tab_texts: list[str] = []
+                    for idx in range(min(10, await controls.count())):
+                        try:
+                            tab_texts.append((await controls.nth(idx).inner_text()).strip())
+                        except Exception:
+                            pass
+                    _log.warning(
+                        "_prepare_ui_model attempt %d: no %s tab visible; tabs=%s",
+                        attempt + 1, kind, tab_texts,
+                    )
+
+            if mode_tab is None:
+                if await _model_pill_already_visible():
+                    _log.info(
+                        "_prepare_ui_model: %s tab not found but model pill present — skipping",
+                        kind,
+                    )
+                else:
+                    raise RuntimeError(f"FLOW_UI_CHANGED: {kind} mode tab was not found")
+            elif not await _flow_control_is_selected(mode_tab):
+                await mode_tab.click(force=True)
+                await asyncio.sleep(0.6)
 
 
 

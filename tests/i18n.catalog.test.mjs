@@ -318,7 +318,6 @@ test('Automation queue UI is bilingual and keeps per-job controls', async () => 
   assert.match(styles, /\.automation-settings-tabs button\.active\{[\s\S]*border-bottom-color/)
   assert.match(page, /role="tab"/)
   assert.match(page, /t\('Ghép video', 'Compose video'\)/)
-  assert.match(page, /t\('Cài đặt ghép video', 'Video composition settings'\)/)
   assert.match(page, /Chất lượng xuất/)
   assert.match(page, /Output quality/)
   assert.match(page, /Chất lượng nén \(CRF\)/)

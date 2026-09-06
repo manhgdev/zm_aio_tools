@@ -21,6 +21,7 @@ _OUTPUT_SUBFOLDERS: dict[str, tuple[str, ...]] = {
     "drawing": ("drawing",),
     "cleaner": ("cleaner",),
     "batch": ("batch",),
+    "automation": ("automation",),
 }
 
 

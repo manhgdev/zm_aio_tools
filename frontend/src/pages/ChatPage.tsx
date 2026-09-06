@@ -95,7 +95,7 @@ export default function ChatPage({ onOpenConfig: _onOpenConfig }: { onOpenConfig
   const accountState = (item: Account) => item.status === 'connected' && item.configured
     ? t('Phiên Web đang hoạt động', 'Web session active')
     : item.errorCode === 'CHAT_BROWSER_WINDOW_CLOSED'
-      ? t('Cửa sổ ChatGPT Web đã đóng', 'ChatGPT Web window closed')
+      ? t('Mất kết nối trình duyệt nền', 'Background browser disconnected')
     : item.status === 'browser_only'
       ? t('Đang chờ đăng nhập trong trình duyệt', 'Waiting for browser sign-in')
       : item.status === 'reauth_required'
@@ -104,9 +104,9 @@ export default function ChatPage({ onOpenConfig: _onOpenConfig }: { onOpenConfig
         ? t('Kiểm tra phiên thất bại', 'Session check failed')
         : t('Chưa đăng nhập', 'Not signed in')
   const accountError = (item: Account) => item.errorCode === 'CHAT_BROWSER_WINDOW_CLOSED'
-    ? t('Cửa sổ ChatGPT Web đã đóng. Hãy mở lại để tiếp tục.', 'The ChatGPT Web window is closed. Reopen it to continue.')
+    ? t('Mất kết nối trình duyệt nền ChatGPT Web. Hãy khởi động lại để tiếp tục.', 'ChatGPT Web background browser disconnected. Restart it to continue.')
     : item.errorCode === 'CHAT_BROWSER_PROFILE_LOCKED'
-    ? t('Cửa sổ ChatGPT Web vẫn đang mở. Hãy đóng nó rồi kiểm tra lại.', 'The ChatGPT Web window is still open. Close it and check again.')
+    ? t('Phiên bản trình duyệt ChatGPT Web khác đang chạy. Hãy đóng các cửa sổ đang mở rồi kiểm tra lại.', 'Another ChatGPT Web browser instance is running. Close open windows and check again.')
     : item.errorCode === 'CHAT_BROWSER_HEALTH_FAILED'
       ? t('Không kiểm tra được phiên browser.', 'Could not check the browser session.')
       : item.errorCode === 'CHAT_BROWSER_BUSY'
@@ -116,8 +116,8 @@ export default function ChatPage({ onOpenConfig: _onOpenConfig }: { onOpenConfig
         : ''
   const errorText = (value: unknown) => {
     const code = String(value || '')
-    if (code.includes('CHAT_BROWSER_WINDOW_CLOSED')) return t('Cửa sổ ChatGPT Web đã đóng. Hãy mở lại để tiếp tục.', 'The ChatGPT Web window is closed. Reopen it to continue.')
-    if (code.includes('CHAT_BROWSER_PROFILE_LOCKED')) return t('Cửa sổ ChatGPT Web vẫn đang mở. Hãy đóng nó rồi kiểm tra lại.', 'The ChatGPT Web window is still open. Close it and check again.')
+    if (code.includes('CHAT_BROWSER_WINDOW_CLOSED')) return t('Mất kết nối trình duyệt nền ChatGPT Web. Hãy khởi động lại để tiếp tục.', 'ChatGPT Web background browser disconnected. Restart it to continue.')
+    if (code.includes('CHAT_BROWSER_PROFILE_LOCKED')) return t('Phiên bản trình duyệt ChatGPT Web khác đang chạy. Hãy đóng các cửa sổ đang mở rồi kiểm tra lại.', 'Another ChatGPT Web browser instance is running. Close open windows and check again.')
     if (code.includes('CHAT_BROWSER_BUSY')) return t('ChatGPT Web đang bận xử lý yêu cầu khác.', 'ChatGPT Web is busy with another request.')
     if (code.includes('CHAT_BROWSER_CANCELLED')) return t('Đã dừng tạo câu trả lời.', 'Generation stopped.')
     if (code.includes('CHAT_BROWSER_NO_OUTPUT')) return t('ChatGPT Web không trả về câu trả lời.', 'ChatGPT Web returned no answer.')
@@ -438,7 +438,7 @@ export default function ChatPage({ onOpenConfig: _onOpenConfig }: { onOpenConfig
         <div className="chat-account-dock-head"><span className="chat-account-avatar">C</span><div><strong>{activeAccount ? accountName(activeAccount) : t('ChatGPT Web', 'ChatGPT Web')}</strong><small>{activeAccount ? accountState(activeAccount) : t('Chưa đăng nhập', 'Not signed in')}</small></div><button type="button" className="chat-account-check" onClick={() => refreshHealth()} disabled={!activeAccount} aria-label={t('Kiểm tra phiên', 'Check session')}>↻</button></div>
         {activeAccount?.email ? <small className="chat-account-email">{activeAccount.email}</small> : null}
         {activeAccount && accountError(activeAccount) ? <p className="chat-account-error">{accountError(activeAccount)}</p> : null}
-        <div className="chat-account-actions">{!activeAccount ? <button type="button" onClick={() => void addAccount()}>{t('Đăng nhập ChatGPT Web', 'Sign in to ChatGPT Web')}</button> : activeAccount.configured ? <button type="button" onClick={() => void signOut(activeAccount.id)}>{t('Đăng xuất', 'Sign out')}</button> : <button type="button" onClick={() => void signIn(activeAccount.id)}>{activeAccount.status === 'browser_only' && activeAccount.errorCode !== 'CHAT_BROWSER_WINDOW_CLOSED' ? t('Kiểm tra phiên', 'Check session') : activeAccount.errorCode === 'CHAT_BROWSER_WINDOW_CLOSED' ? t('Mở lại ChatGPT Web', 'Reopen ChatGPT Web') : t('Đăng nhập lại', 'Sign in again')}</button>}</div>
+        <div className="chat-account-actions">{!activeAccount ? <button type="button" onClick={() => void addAccount()}>{t('Đăng nhập ChatGPT Web', 'Sign in to ChatGPT Web')}</button> : activeAccount.configured ? <button type="button" onClick={() => void signOut(activeAccount.id)}>{t('Đăng xuất', 'Sign out')}</button> : <button type="button" onClick={() => void signIn(activeAccount.id)}>{activeAccount.status === 'browser_only' && activeAccount.errorCode !== 'CHAT_BROWSER_WINDOW_CLOSED' ? t('Kiểm tra phiên', 'Check session') : activeAccount.errorCode === 'CHAT_BROWSER_WINDOW_CLOSED' ? t('Khởi động lại', 'Restart') : t('Đăng nhập lại', 'Sign in again')}</button>}</div>
       </section>
     </aside>
     <section className="chat-main">
