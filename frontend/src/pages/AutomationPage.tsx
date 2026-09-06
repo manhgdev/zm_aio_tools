@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { localize, useLocale } from '@/app/i18n'
 import { FLOW_IMAGE_MODELS } from '@/features/flow/flow.helpers'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { MediaPreviewModal, type MediaPreviewItem } from '@/shared/components/MediaPreviewModal'
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import './AutomationPage.css'
 
@@ -182,6 +183,8 @@ export default function AutomationPage() {
   const [error, setError] = useState('')
   const [editingJobId, setEditingJobId] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<AutomationJob | null>(null)
+  const [videoPreview, setVideoPreview] = useState<MediaPreviewItem | null>(null)
+  const [textPreview, setTextPreview] = useState<string | null>(null)
   const [isDesktopApp, setIsDesktopApp] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => {
     try { return window.localStorage.getItem(AUTOMATION_SETTINGS_OPEN_KEY) !== '0' } catch { return true }
@@ -312,7 +315,13 @@ export default function AutomationPage() {
         const isImages = /\/artifacts\/images(?:$|[?])/.test(link.href)
         if (isVideo && !isDesktopApp) {
           link.hidden = false
-          link.textContent = t('Tải MP4', 'Download MP4')
+          link.removeAttribute('download')
+          link.textContent = t('Xem', 'View')
+          link.dataset.automationVideoAction = '1'
+          link.onclick = event => {
+            event.preventDefault()
+            setVideoPreview({ title: t('Video đã xuất', 'Exported video'), src: link.href, type: 'video' })
+          }
           return
         }
         link.onclick = event => {
@@ -324,9 +333,17 @@ export default function AutomationPage() {
             window.dispatchEvent(new PopStateEvent('popstate'))
             return
           }
-          void fetch(`${API}/jobs/${encodeURIComponent(match[1])}/artifacts/${encodeURIComponent(match[2])}/open`, { method: 'POST' })
-            .then(response => { if (!response.ok) throw new Error(t('Không mở được file bằng ứng dụng ZM.', 'Could not open the file with the ZM app.')) })
-            .catch(cause => setError(cause instanceof Error ? cause.message : t('Không mở được file.', 'Could not open the file.')))
+          const key = match[2]
+          const type = isVideo ? 'video' : key === 'audio' || key === 'audioMp3' ? 'audio' : 'srt'
+          if (type === 'srt') {
+            void fetch(link.href).then(response => response.ok ? response.text() : Promise.reject(new Error('preview failed'))).then(text => {
+              setTextPreview(text)
+              setVideoPreview({ title: link.textContent?.trim() || key, src: link.href, type })
+            }).catch(() => setError(t('Không đọc được nội dung file.', 'Could not read the file content.')))
+          } else {
+            setTextPreview(null)
+            setVideoPreview({ title: link.textContent?.trim() || key, src: link.href, type })
+          }
         }
         if (isImages) {
           link.textContent = t('Hàng đợi Flow', 'Flow queue')
@@ -338,9 +355,39 @@ export default function AutomationPage() {
         }
         link.removeAttribute('download')
         link.textContent = t('Xem', 'View')
+        link.dataset.automationVideoAction = '1'
       })
     }
     updateArtifactActions()
+    jobs.forEach(job => {
+      if (!job.artifacts?.video?.available) return
+      const article = Array.from(document.querySelectorAll<HTMLElement>('.automation-job')).find(item => item.querySelector('h3')?.textContent === job.title)
+      const actions = article?.querySelector<HTMLElement>('.automation-job-actions')
+      if (!actions) return
+      const viewActions = Array.from(actions.querySelectorAll<HTMLElement>('[data-automation-video-action]'))
+      viewActions.slice(1).forEach(action => action.remove())
+      if (!viewActions.length) {
+        const action = document.createElement(isDesktopApp ? 'button' : 'a')
+        action.dataset.automationVideoAction = '1'
+        action.textContent = t('Xem', 'View')
+        if (isDesktopApp) {
+          action.setAttribute('type', 'button')
+          action.onclick = () => setVideoPreview({ title: job.title, src: `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/video`, type: 'video' })
+        } else {
+          action.setAttribute('href', `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/video`)
+          action.onclick = event => { event.preventDefault(); setVideoPreview({ title: job.title, src: action.getAttribute('href') || '', type: 'video' }) }
+        }
+        actions.appendChild(action)
+      }
+      if (!actions.querySelector('[data-automation-video-download]')) {
+        const download = document.createElement('a')
+        download.dataset.automationVideoDownload = '1'
+        download.textContent = t('Tải', 'Download')
+        download.setAttribute('href', `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/video`)
+        download.setAttribute('download', job.artifacts.video.filename || 'output.mp4')
+        actions.appendChild(download)
+      }
+    })
   }, [isDesktopApp, jobs, locale])
 
   const saveSettings = async (next: AutomationSettings) => {
@@ -505,6 +552,9 @@ export default function AutomationPage() {
     </section>
       <div className="automation-resizer" role="separator" aria-orientation="vertical" aria-label={t('Kéo để đổi độ rộng panel', 'Drag to resize panel')} onPointerDown={(event) => { event.preventDefault(); panelDrag.current = { startX: event.clientX, startWidth: builderWidth }; document.body.classList.add('automation-resizing') }} />
       <section className="automation-queue" aria-labelledby="automation-queue-title"><div className="automation-queue-heading"><div><p className="automation-eyebrow">QUEUE</p><h2 id="automation-queue-title">{t('Các job đang chạy', 'Job queue')}</h2></div><span>{jobs.length} {t('job', 'jobs')}</span></div>{loading ? <p className="automation-empty">{t('Đang tải…', 'Loading…')}</p> : !jobs.length ? <p className="automation-empty">{t('Chưa có job. Tạo job đầu tiên ở bên trái.', 'No jobs yet. Create the first job on the left.')}</p> : <div className="automation-job-list">{jobs.map(job => { const jobProvider = String(job.settings?.textProvider || ''); const jobModel = String(job.settings?.textModel || job.settings?.chatModel || ''); return <article className={`automation-job automation-job--${job.status}`} key={job.id}><div className="automation-job-head"><div><h3>{job.title}</h3><p>{modeLabel(job.input_mode, t)} · {stageLabel(job.stage, t)}{jobProvider ? ` · ${providerName(jobProvider)}` : ''}{jobModel ? ` · ${jobModel}` : ''}</p></div><span className="automation-status">{statusLabel(job.status, t)}</span></div><div className="automation-progress-row"><div className="automation-progress"><i style={{ width: `${Math.max(0, Math.min(100, job.progress || 0))}%` }} /></div><strong>{Math.round(job.progress || 0)}%</strong></div>{job.error ? <p className="automation-job-error"><strong>{job.error.code || t('Lỗi', 'Error')}</strong> {job.error.message}</p> : null}{job.status === 'awaiting_topic' && <div className="automation-topic-choices">{(job.input?.topicCandidates || []).map(candidate => <button type="button" key={candidate} onClick={() => void chooseTopic(job, candidate)}>{candidate}</button>)}</div>}<div className="automation-job-actions">{job.status === 'running' || job.status === 'queued' ? <button type="button" onClick={() => void mutate(job.id, 'pause')}>{t('Tạm dừng', 'Pause')}</button> : null}{job.status === 'paused' || job.status === 'interrupted' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button><button type="button" onClick={() => void mutate(job.id, 'retry')}>{t('Chạy lại chặng lỗi', 'Retry failed stage')}</button></> : null}{!['completed', 'cancelled'].includes(job.status) ? <button type="button" className="danger" onClick={() => void mutate(job.id, 'cancel')}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => removeJob(job)}>{t('Xoá job', 'Delete job')}</button>{(job.status === 'completed' || Object.keys(job.artifacts || {}).length > 0) ? <button type="button" onClick={() => void openFolder(job)}>{t('Mở thư mục', 'Open folder')}</button> : null}{job.artifacts && Object.entries(job.artifacts).map(([key, artifact]) => artifact?.available ? <a key={key} href={`${API}/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(key)}`} download={artifact.filename}>{key === 'video' ? t('Tải MP4', 'Download MP4') : artifact.filename || key}</a> : null)}</div>{job.logs?.length ? <details className="automation-logs"><summary>{t('Xem log', 'View logs')} ({job.logs.length})</summary><div>{job.logs.slice(-12).map((log, index) => <p key={`${log.id || index}-${log.message}`}><time>{log.stage}</time> {log.message}</p>)}</div></details> : null}</article> })}</div>}</section>
+      <MediaPreviewModal open={Boolean(videoPreview)} item={videoPreview} onClose={() => { setVideoPreview(null); setTextPreview(null) }} downloadLabel={t('Tải file', 'Download file')} onDownload={() => { if (videoPreview) { const link = document.createElement('a'); link.href = videoPreview.src; link.download = videoPreview.downloadFilename || 'automation-output'; link.click() } }}>
+        {videoPreview?.type === 'srt' && textPreview !== null ? <pre style={{ width: '100%', maxHeight: '60vh', overflow: 'auto', margin: 0, padding: 20, whiteSpace: 'pre-wrap', textAlign: 'left', color: 'white' }}>{textPreview}</pre> : undefined}
+      </MediaPreviewModal>
       <ConfirmDialog open={Boolean(deleteTarget)} title={t('Xác nhận xoá job', 'Confirm job deletion')} message={deleteTarget ? t(`Xoá job “${deleteTarget.title}” và dữ liệu tạm của job?`, `Delete job “${deleteTarget.title}” and its temporary data?`) : ''} cancelLabel={t('Quay lại', 'Go back')} confirmLabel={t('Xoá job', 'Delete job')} onCancel={() => setDeleteTarget(null)} onConfirm={() => void confirmRemoveJob()} danger />
   </main>
 }
