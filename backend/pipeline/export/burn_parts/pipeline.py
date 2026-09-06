@@ -148,6 +148,17 @@ def _auto_blur_band_segments(
     return bands
 
 
+def _replacement_source_mask(box, verified, width, height):
+    """Match preview source coverage without moving caption or blur geometry."""
+    lower = (box[1] + box[3]) / 2 >= height / 2
+    peers = [peer for peer in verified if ((peer[1] + peer[3]) / 2 >= height / 2) == lower]
+    if not peers:
+        return box
+    band = _union_box([box, *peers])
+    pad = max(3, round(height * 0.002))
+    return (0, max(0, band[1] - pad), width, min(height, band[3] + pad))
+
+
 def _merge_overlapping_caption_cue_boxes(
     cues: list[tuple],
     cue_segment_ids: list[str],
@@ -471,6 +482,14 @@ def cover_and_burn(
 
     ocr = None
     segments_by_id = {str(seg.get("id") or ""): seg for seg in segments}
+    replacement_sources = [
+        box for seg in segments
+        if seg.get("bboxDetected") is True
+        and not seg.get("maskOnly")
+        and str(seg.get("layout") or "horizontal") in ("horizontal", "mid")
+        for box in [_segment_bbox_override(seg, w, h, accept_automatic=True)]
+        if box is not None
+    ]
     auto_band_boxes = [
         box for box in (_segment_bbox_override(seg, w, h, accept_automatic=True) for seg in auto_band_segments)
         if box is not None
@@ -1099,6 +1118,21 @@ def cover_and_burn(
                     cue_fits.append([one] if one else [])
         else:
             cue_fits.append([])
+
+        # Only extend replacement paint; overlay text and mask-only effects
+        # retain their original boxes and timing.
+        if cover and not seg_meta.get("skipCoverMask") and not seg_meta.get("maskOnly") and lay_mode in ("horizontal", "mid"):
+            # A borrowed bbox alone is unsafe, but a verified source lane can
+            # safely cover it even when this cue's own OCR sample was missed.
+            if unverified_auto and not cue_fits[-1]:
+                seed = _segment_bbox_override(seg_meta, w, h, accept_automatic=True)
+                if seed is not None and _replacement_source_mask(seed, replacement_sources, w, h) != seed:
+                    cue_fits[-1] = [seed]
+                    cue_need_mask[-1] = True
+            cue_fits[-1] = [
+                _replacement_source_mask(box, replacement_sources, w, h)
+                for box in cue_fits[-1]
+            ]
 
     # P1: thử ffmpeg vẽ trực tiếp (nhanh 6-8×, khung không rời GPU);
     # không khả thi / lỗi → đường Python cũ vẫn nguyên.

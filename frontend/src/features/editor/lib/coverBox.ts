@@ -222,6 +222,18 @@ export function expandOverlappingSubtitleBand(
   return clampCoverBox({ ...band, y, h: band.y + band.h - y }, frameW, frameH)
 }
 
+/** Source replacement mask only; never use this box to position translated text. */
+export function replacementSourceMask(box: PixelBox, verified: PixelBox[], frameW: number, frameH: number): PixelBox {
+  const lower = box.y + box.h / 2 >= frameH / 2
+  const peers = verified.filter((peer) => (peer.y + peer.h / 2 >= frameH / 2) === lower)
+  if (!peers.length) return box
+  const band = [box, ...peers].reduce(unionBox)
+  const pad = Math.max(3, Math.round(frameH * 0.002))
+  const y = Math.max(0, band.y - pad)
+  // Fixed subtitle lanes cover inherited one-row samples and longer source lines.
+  return clampCoverBox({ x: 0, y, w: frameW, h: band.y + band.h + pad - y }, frameW, frameH)
+}
+
 export function coverMaxHeight(frameH: number, fontSizePx = AUTO_SUBTITLE_FONT) {
   const one = Math.round(fontSizePx * 1.45 + 10)
   const cap = Math.round(fontSizePx * 3.4 + 16)

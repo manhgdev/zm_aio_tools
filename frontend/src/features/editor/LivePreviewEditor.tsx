@@ -88,6 +88,7 @@ import {
   previewVideoRate,
   reindexSegments,
   resolveCaptionFontSize,
+  replacementSourceMask,
   resolveCoverMaskOnly,
   resolveCropRect,
   resolveBelowAboveLayout,
@@ -1531,10 +1532,15 @@ export default function LivePreviewEditor({
           })
           .map((s) => {
             const override = s.id === selected?.id ? activeCoverDraft : undefined
-            if (s.translation.trim()) {
-              return getCachedPreviewLayout(s, override)?.mask ?? resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
-            }
-            return resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
+            const mask = s.translation.trim()
+              ? getCachedPreviewLayout(s, override)?.mask ?? resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
+              : resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
+            if (!mask || !overCoverMode || s.layout === 'vertical' || s.layout === 'label') return mask
+            const sourceMask = replacementSourceMask(mask, layoutSegs.flatMap((peer) =>
+              peer.bboxDetected === true && peer.bbox && peer.layout !== 'vertical' && peer.layout !== 'label'
+                ? [peer.bbox] : [],
+            ), sourceWidth, sourceHeight)
+            return resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, sourceMask)
           })
           .filter((b): b is PixelBox => !!b)
       : []

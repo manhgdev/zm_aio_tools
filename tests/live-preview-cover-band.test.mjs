@@ -26,6 +26,16 @@ async function loadCoverBoxHelpers() {
   return sandbox.exports
 }
 
+test('replacement masks cover inherited samples above, below and beside translated text', async () => {
+  const { replacementSourceMask } = await loadCoverBoxHelpers()
+  const verified = [{ x: 215, y: 1328, w: 658, h: 99 }, { x: 287, y: 1409, w: 521, h: 89 }, { x: 155, y: 1326, w: 768, h: 106 }]
+  for (const box of [{ x: 130, y: 1328, w: 828, h: 99 }, { x: 287, y: 1409, w: 521, h: 89 }, { x: 230, y: 1326, w: 619, h: 106 }]) {
+    const original = { ...box }
+    assert.deepEqual({ ...replacementSourceMask(box, verified, 1080, 1920) }, { x: 0, y: 1322, w: 1080, h: 180 })
+    assert.deepEqual(box, original)
+  }
+})
+
 test('Live Preview expands overlapping one-row OCR boxes into a two-row subtitle band', async () => {
   const expandOverlappingSubtitleBand = await loadExpandOverlappingSubtitleBand()
   const band = expandOverlappingSubtitleBand([

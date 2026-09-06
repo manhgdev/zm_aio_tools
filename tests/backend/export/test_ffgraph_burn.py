@@ -40,6 +40,15 @@ def test_feathered_blur_softens_the_top_and_bottom_edges():
     assert bottom_change < centre_change
 
 
+def test_replacement_source_mask_matches_preview_inherited_rows():
+    from pipeline.export.burn_parts.pipeline import _replacement_source_mask
+
+    verified = [(215, 1328, 873, 1427), (287, 1409, 808, 1498), (155, 1326, 923, 1432)]
+    for box in [(130, 1328, 958, 1427), (287, 1409, 808, 1498), (230, 1326, 849, 1432)]:
+        assert _replacement_source_mask(box, verified, 1080, 1920) == (0, 1322, 1080, 1502)
+    assert _replacement_source_mask((10, 10, 100, 50), verified, 1080, 1920) == (10, 10, 100, 50)
+
+
 def test_persistent_blur_band_uses_only_manual_region():
     from pipeline.export.burn_parts.pipeline import _persistent_blur_band_segment
 
