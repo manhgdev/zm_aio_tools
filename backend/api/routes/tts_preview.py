@@ -99,21 +99,58 @@ def api_preview_tts(project_id: str, seg_id: str, body: PreviewTtsIn):
         if wav.exists():
             dur = ffprobe_duration(wav)
         else:
-            dur = tts_segment(
-                text,
-                body.voice or "system",
-                wav,
-                None,
-                "none",
-                lang=lang,
-                speed=speed,
-            )
+            dur = _tts_segment_safe(text, body.voice or "system", wav, lang, speed)
     except Exception as e:
         raise HTTPException(500, str(e)) from e
     return {
         "audioUrl": f"/api/projects/{project_id}/tts/{name}?t={int(dur * 1000)}",
         "duration": dur,
     }
+
+
+def _tts_segment_safe(text: str, voice: str, wav: Path, lang: str, speed: float) -> float:
+    """Gọi tts_segment — trong frozen app chạy qua subprocess .venv-runtime để có torch."""
+    import sys
+    if not getattr(sys, "frozen", False):
+        return tts_segment(text, voice, wav, None, "none", lang=lang, speed=speed)
+    # ponytail: frozen app — torch/model chỉ có trong .venv-runtime, không trong bundle
+    import json as _json
+    import subprocess
+    import tempfile
+    from api.job_spawn import _job_python, _worker_environment
+    from pathlib import Path as _Path
+    _WORKER = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "p = json.loads(Path(sys.argv[1]).read_text())\n"
+        "from pipeline.tts.manager import tts_segment\n"
+        "dur = tts_segment(p['text'], p['voice'], Path(p['wav']), None, 'none', lang=p['lang'], speed=p['speed'])\n"
+        "print(dur)\n"
+    )
+    try:
+        py = _job_python()
+    except RuntimeError as e:
+        raise RuntimeError(f"Thiếu .venv-runtime — vào Thiết lập → Cài gói AI\n{e}") from e
+    backend = _Path(__file__).resolve().parent.parent.parent
+    with tempfile.TemporaryDirectory(prefix="vc-tts-") as td:
+        td = _Path(td)
+        payload = td / "p.json"
+        worker = td / "w.py"
+        payload.write_text(_json.dumps({"text": text, "voice": voice, "wav": str(wav), "lang": lang, "speed": speed}), encoding="utf-8")
+        worker.write_text(_WORKER, encoding="utf-8")
+        env = _worker_environment(backend)
+        kw: dict = {"cwd": str(backend), "env": env, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+        if sys.platform == "win32":
+            kw["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
+        proc = subprocess.run([py, str(worker), str(payload)], **kw, timeout=60)
+        if proc.returncode:
+            err = (proc.stderr or b"").decode("utf-8", "replace")[-800:]
+            raise RuntimeError(f"TTS subprocess lỗi (exit {proc.returncode}): {err}")
+        out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+        try:
+            return float(out.splitlines()[-1])
+        except (ValueError, IndexError):
+            return float(ffprobe_duration(wav) or 0)
 
 
 @router.post("/api/projects/{project_id}/segments/{seg_id}/retranslate")

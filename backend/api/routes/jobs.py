@@ -89,17 +89,25 @@ async def api_project_events(project_id: str, after: int = 0):
         import asyncio
 
         cursor = max(0, int(after))
+        # Grace period: subprocess takes ~0.2s to start and flip running=True.
+        # ponytail: 10 ticks × 0.3s = 3s window before declaring idle.
+        idle_ticks = 0
         # A bounded stream works with proxies and lets the UI reconnect safely.
         for _ in range(100):
             meta = load_meta(project_id)
             events = [event for event in meta.get("jobEvents") or [] if isinstance(event, dict) and int(event.get("id") or 0) > cursor]
             for event in events:
                 cursor = max(cursor, int(event.get("id") or 0))
+                idle_ticks = 0
                 yield f"id: {cursor}\nevent: {event.get('type', 'STATUS')}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
             status = meta.get("status") or {}
             if not status.get("running") and not events:
-                yield ": idle\n\n"
-                return
+                idle_ticks += 1
+                if idle_ticks >= 10:  # 3s grace period
+                    yield ": idle\n\n"
+                    return
+            else:
+                idle_ticks = 0
             await asyncio.sleep(0.3)
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

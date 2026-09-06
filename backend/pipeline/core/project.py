@@ -242,15 +242,24 @@ def trans_cache_key(settings: dict[str, Any]) -> str:
 
 
 def _read_meta_file(path: Path) -> dict[str, Any]:
-    raw = path.read_text(encoding="utf-8")
-    try:
-        obj = json.loads(raw)
-    except json.JSONDecodeError:
-        # ponytail: file bị append/ghi đè một phần → lấy JSON object đầu
-        obj, _end = json.JSONDecoder().raw_decode(raw.lstrip())
-    if not isinstance(obj, dict):
-        raise json.JSONDecodeError("meta root must be object", raw, 0)
-    return obj
+    # ponytail: subprocess có thể đang atomic-replace meta.json → retry ngắn nếu lỗi
+    for attempt in range(3):
+        raw = path.read_text(encoding="utf-8")
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            if attempt < 2:
+                time.sleep(0.025)
+                continue
+            # last attempt: lấy JSON object đầu tiên nếu file bị truncate
+            try:
+                obj, _end = json.JSONDecoder().raw_decode(raw.lstrip())
+            except json.JSONDecodeError:
+                raise
+        if not isinstance(obj, dict):
+            raise json.JSONDecodeError("meta root must be object", raw, 0)
+        return obj
+    raise json.JSONDecodeError("meta read failed after retries", "", 0)
 
 
 def _write_meta_file(path: Path, meta: dict[str, Any]) -> None:
