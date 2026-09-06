@@ -117,7 +117,12 @@ def api_no_vocals_status(project_id: str):
 
 @router.post("/api/projects/{project_id}/audio/no-vocals")
 def api_prepare_no_vocals(project_id: str):
-    """Tách stem xóa lời (Demucs) — cache dùng chung preview + export."""
+    """Tách stem xóa lời (Demucs) — cache dùng chung preview + export.
+
+    Nếu chưa cache: chạy nền (thread) để không block uvicorn — FE poll /progress.
+    Nếu đã cache: trả kết quả ngay.
+    """
+    import threading as _threading
     from pipeline.export.mux import find_cached_no_vocals
 
     meta = load_meta(project_id)
@@ -126,19 +131,32 @@ def api_prepare_no_vocals(project_id: str):
     video = Path(meta["videoPath"])
     if not video.is_file():
         raise HTTPException(404, "Thiếu video nguồn")
-    had_cache = find_cached_no_vocals(project_id) is not None
-    try:
-        # Luôn theo videoPath gốc (ignore work bake) — export tái dùng cùng file
-        path = separate_no_vocals(project_id, video, report=False)
-    except Exception as e:
-        from pipeline.core.jobs import short_cmd_error
 
-        raise HTTPException(500, short_cmd_error(e)) from e
-    name = path.name
+    cached = find_cached_no_vocals(project_id)
+    if cached is not None:
+        # Cache hit — trả ngay, không block
+        return {
+            "audioUrl": f"/api/projects/{project_id}/cache/{cached.name}",
+            "file": cached.name,
+            "cached": True,
+            "running": False,
+        }
+
+    # ponytail: chạy nền — Demucs mất 5–30 phút, không thể block uvicorn thread
+    def _run() -> None:
+        try:
+            separate_no_vocals(project_id, video, report=True)
+        except Exception as e:
+            from pipeline.core.jobs import short_cmd_error
+            set_status(project_id, step="stem", progress=0,
+                       message=f"Tách stem lỗi: {short_cmd_error(e)}", running=False, error=str(e))
+
+    _threading.Thread(target=_run, name=f"demucs-{project_id[:8]}", daemon=True).start()
     return {
-        "audioUrl": f"/api/projects/{project_id}/cache/{name}",
-        "file": name,
-        "cached": had_cache or True,
+        "audioUrl": None,
+        "file": None,
+        "cached": False,
+        "running": True,
     }
 
 

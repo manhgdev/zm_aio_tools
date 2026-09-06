@@ -88,7 +88,11 @@ class RetranscribeRangeIn(BaseModel):
 
 @router.post("/api/projects/{project_id}/segments/retranscribe-range")
 def api_retranscribe_range(project_id: str, body: RetranscribeRangeIn):
-    """Run Whisper only on a selected timeline range and atomically replace overlaps."""
+    """Run Whisper only on a selected timeline range and atomically replace overlaps.
+
+    Returns 202 immediately — work runs in background thread.
+    FE tracks progress via /status (running=True, step=asr).
+    """
     from pipeline.asr import asr_whisper
     from pipeline.core.jobs import run_cmd
 
@@ -104,52 +108,56 @@ def api_retranscribe_range(project_id: str, body: RetranscribeRangeIn):
     if not math.isfinite(start) or not math.isfinite(end) or end - start < 0.15:
         raise HTTPException(422, "Vùng nhận dạng phải dài ít nhất 0.15 giây")
 
+    source_lang = body.sourceLang or "auto"
+    default_voice = str((meta.get("settings") or {}).get("defaultVoice") or "system")
     cache_dir = ensure_layout(project_id) / "cache"
-    wav = cache_dir / f"retranscribe_{start:.3f}_{end:.3f}.wav"
-    set_status(project_id, step="asr", progress=10, message=f"Nhận dạng lại {start:.2f}–{end:.2f}s…", running=True)
-    try:
-        run_cmd(project_id, [
-            "ffmpeg", "-y", "-ss", f"{start:.6f}", "-t", f"{end - start:.6f}",
-            "-i", str(source), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav),
-        ])
-        fresh = asr_whisper(wav, body.sourceLang or "auto", workers=0, project_id=project_id)
-        default_voice = str((meta.get("settings") or {}).get("defaultVoice") or "system")
-        for item in fresh:
-            item["start"] = start + max(0.0, float(item.get("start") or 0))
-            item["end"] = min(end, start + max(0.05, float(item.get("end") or 0)))
-            item["translation"] = ""
-            item["sourceSubtitle"] = str(item.get("source") or "")
-            item["dubSubtitle"] = ""
-            item["voice"] = default_voice
+    set_status(project_id, step="asr", progress=5, message=f"Nhận dạng lại {start:.2f}–{end:.2f}s…", running=True)
 
-        result: dict[str, Any] = {}
-        def apply(current: dict) -> list[dict]:
-            old = list(current.get("segments") or [])
-            # Only source timing/text is replaced. Existing dub/OCR data outside
-            # the range remains untouched; callers may regenerate dub separately.
-            kept = [s for s in old if float(s.get("end") or 0) <= start or float(s.get("start") or 0) >= end]
-            replaced = len(old) - len(kept)
-            merged = sorted([*kept, *fresh], key=lambda s: (float(s.get("start") or 0), float(s.get("end") or 0)))
-            for index, seg in enumerate(merged):
-                seg["index"] = index
-                seg.setdefault("id", f"seg-{uuid.uuid4().hex[:12]}")
-            current["segments"] = merged
-            current.pop("timelineBaseline", None)
-            result.update(replaced=replaced, inserted=len(fresh))
-            return merged
-        segments = mutate_meta(project_id, apply)
-        set_status(project_id, step="asr", progress=100, message=f"Đã nhận dạng lại {len(fresh)} đoạn", running=False)
-        from pipeline.core.project import append_job_event
-        append_job_event(project_id, "ASR_CHUNK_READY", {"range": [start, end], "segments": fresh})
-        return {"segments": segments, **result}
-    except Exception as exc:
-        set_status(project_id, step="asr", progress=0, message=f"Nhận dạng lại lỗi: {exc}", running=False)
-        raise HTTPException(500, f"Nhận dạng lại thất bại: {exc}") from exc
-    finally:
+    # ponytail: spawn background — asr_whisper blocks 30s–3min
+    def _run() -> None:
+        wav = cache_dir / f"retranscribe_{start:.3f}_{end:.3f}.wav"
         try:
-            wav.unlink(missing_ok=True)
-        except OSError:
-            pass
+            run_cmd(project_id, [
+                "ffmpeg", "-y", "-ss", f"{start:.6f}", "-t", f"{end - start:.6f}",
+                "-i", str(source), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav),
+            ])
+            set_status(project_id, step="asr", progress=15, message=f"Đang nhận dạng {start:.2f}–{end:.2f}s…", running=True)
+            fresh = asr_whisper(wav, source_lang, workers=0, project_id=project_id)
+            for item in fresh:
+                item["start"] = start + max(0.0, float(item.get("start") or 0))
+                item["end"] = min(end, start + max(0.05, float(item.get("end") or 0)))
+                item["translation"] = ""
+                item["sourceSubtitle"] = str(item.get("source") or "")
+                item["dubSubtitle"] = ""
+                item["voice"] = default_voice
+
+            def apply(current: dict) -> list[dict]:
+                old = list(current.get("segments") or [])
+                kept = [s for s in old if float(s.get("end") or 0) <= start or float(s.get("start") or 0) >= end]
+                merged = sorted([*kept, *fresh], key=lambda s: (float(s.get("start") or 0), float(s.get("end") or 0)))
+                for index, seg in enumerate(merged):
+                    seg["index"] = index
+                    seg.setdefault("id", f"seg-{uuid.uuid4().hex[:12]}")
+                current["segments"] = merged
+                current.pop("timelineBaseline", None)
+                return merged
+
+            mutate_meta(project_id, apply)
+            set_status(project_id, step="asr", progress=100, message=f"Đã nhận dạng lại {len(fresh)} đoạn", running=False)
+            from pipeline.core.project import append_job_event
+            append_job_event(project_id, "ASR_CHUNK_READY", {"range": [start, end], "segments": fresh})
+        except Exception as exc:
+            set_status(project_id, step="asr", progress=0, message=f"Nhận dạng lại lỗi: {exc}", running=False)
+        finally:
+            try:
+                wav.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    import threading as _threading
+    _threading.Thread(target=_run, name=f"retranscribe-{project_id[:8]}", daemon=True).start()
+    from fastapi.responses import Response
+    return Response(status_code=202)
 
 
 def _validate_segment_editor_fields(body: SegmentIn, meta: dict) -> None:

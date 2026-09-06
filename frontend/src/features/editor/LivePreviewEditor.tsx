@@ -1514,9 +1514,11 @@ export default function LivePreviewEditor({
       ? coverSegs
           .filter((s) => {
             if (overCoverMode) {
-              return (
-                s.bboxDetected === true || s.bboxInherited === false
-              )
+              // A carried-forward OCR box is still the only known location of
+              // the old glyphs.  Skipping it left the source subtitle visible
+              // under its translation whenever the persistent blur band was
+              // disabled.
+              return Boolean(s.bbox)
             }
             // below/above: không che chữ hardsub mid/ngang — chỉ dọc/nhãn
             return s.layout === 'vertical' || s.layout === 'label'
@@ -1964,6 +1966,29 @@ export default function LivePreviewEditor({
     video.pause()
     video.currentTime = timelineToVideoTime(target)
     setTime(target)
+  }
+
+  function editManualBlurBand() {
+    if (sourceWidth <= 0 || sourceHeight <= 0) return
+    const stored = settings.blurBandRegion
+    const values = stored ? [stored.x, stored.y, stored.w, stored.h].map(Number) : []
+    const valid = values.length === 4
+      && values.every(Number.isFinite)
+      && values[2] > 0
+      && values[3] > 0
+    // A new manual mode must always have a visible target.  The old UI only
+    // switched tools, leaving a null region and therefore nothing to drag.
+    const region = valid
+      ? { x: values[0], y: values[1], w: values[2], h: values[3] }
+      : { x: 0.08, y: 0.72, w: 0.84, h: 0.14 }
+    setBlurBandDraft(null)
+    setActiveBboxId(null)
+    setSelectedOverlayId(null)
+    setActiveAutoBlurBand(true)
+    setTrackFocus('text')
+    setTool('select')
+    setPropTab('caption')
+    onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: region })
   }
 
   const {
@@ -4228,9 +4253,20 @@ export default function LivePreviewEditor({
     if (!selected || busy || rangeAsrBusy) return
     setRangeAsrBusy(true)
     try {
-      const result = await api.retranscribeRange(projectId, selected.start, selected.end, settings.sourceLang)
-      pushHistory()
-      await Promise.resolve(onSegmentsReplace(result.segments, { persist: false }))
+      // Kick off — backend trả 202 ngay (không blocking)
+      await api.retranscribeRange(projectId, selected.start, selected.end, settings.sourceLang)
+      // Poll /status cho đến khi running=false (ASR xong)
+      for (let i = 0; i < 600; i++) {
+        await new Promise((r) => window.setTimeout(r, 1000))
+        const st = await api.status(projectId).catch(() => null)
+        if (!st || !st.running) break
+      }
+      // Reload segments sau khi ASR ghi vào meta
+      const segs = await api.segments(projectId)
+      if (segs && segs.length > 0) {
+        pushHistory()
+        await Promise.resolve(onSegmentsReplace(segs, { persist: false }))
+      }
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Không thể nhận dạng lại vùng đã chọn')
     } finally {
@@ -5841,6 +5877,7 @@ export default function LivePreviewEditor({
                         segments={segments}
                         settings={settings}
                         onSettings={onSettings}
+                        onEditManualBlurBand={editManualBlurBand}
                         onPreviewCoverMaskOpacity={previewCoverMaskOpacity}
                         onPreviewEffectOpacity={previewEffectOpacity}
                         onRunPipeline={onRunPipeline}

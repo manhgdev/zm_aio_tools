@@ -86,7 +86,13 @@ from pipeline.tts.voice_store import TTS_OUTPUT, ensure_vieneu_dirs
 
 @router.post("/api/tts/studio/synthesize")
 def api_tts_studio_synth(body: StudioSynthIn):
-    """TTS Studio: text or SRT batch → data/tts_output/{jobId}/."""
+    """TTS Studio: text or SRT batch → data/tts_output/{jobId}/.
+
+    Trả job_id ngay, chạy nền — FE poll /jobs/{job_id}/progress.
+    ponytail: synth_srt_job mất vài phút, không block uvicorn.
+    """
+    import threading as _threading
+    import uuid as _uuid
     from pipeline.tts.studio import synth_srt_job, synth_text_job
 
     srt_text = (body.srtText or "").strip()
@@ -94,51 +100,56 @@ def api_tts_studio_synth(body: StudioSynthIn):
     if not srt_text and not text:
         raise HTTPException(400, "Thiếu nội dung hoặc SRT")
     selected_voice = body.speaker_id or body.voice or "system"
-    try:
-        if srt_text:
-            result = synth_srt_job(
-                srt_text=srt_text,
-                voice=selected_voice,
-                lang=body.lang or "vi",
-                speed=float(body.speed or 1.0),
-                volume=float(body.volume or 1.0),
-                pitch=float(body.pitch or 0.0),
-                style=body.style or "tu_nhien",
-                match_duration=body.matchDuration or "natural",
-                keep_timeline=bool(body.keepTimeline),
-                title=body.title or "",
-                gap_ms=int(body.gapMs or 0),
-                job_id=body.jobId,
-            )
-        else:
-            result = synth_text_job(
-                text=text,
-                voice=selected_voice,
-                lang=body.lang or "vi",
-                speed=float(body.speed or 1.0),
-                volume=float(body.volume or 1.0),
-                pitch=float(body.pitch or 0.0),
-                style=body.style or "tu_nhien",
-                match_duration=body.matchDuration or "none",
-                title=body.title or "",
-                auto_split=bool(body.autoSplit),
-                gap_ms=int(body.gapMs or 0),
-                job_id=body.jobId,
-            )
-        jid = result.get("id") or result.get("job_id")
-        if jid:
-            try:
-                from pipeline.tts.studio import publish_job_outputs
-                result["publishedDir"] = str(
-                    publish_job_outputs(str(jid), body.outputDir, body.outputFormat)
+    # Pre-generate job_id để FE có thể poll progress ngay
+    job_id = body.jobId or _uuid.uuid4().hex[:12]
+
+    def _run() -> None:
+        try:
+            if srt_text:
+                result = synth_srt_job(
+                    srt_text=srt_text,
+                    voice=selected_voice,
+                    lang=body.lang or "vi",
+                    speed=float(body.speed or 1.0),
+                    volume=float(body.volume or 1.0),
+                    pitch=float(body.pitch or 0.0),
+                    style=body.style or "tu_nhien",
+                    match_duration=body.matchDuration or "natural",
+                    keep_timeline=bool(body.keepTimeline),
+                    title=body.title or "",
+                    gap_ms=int(body.gapMs or 0),
+                    job_id=job_id,
                 )
-            except Exception as pub_err:
-                import logging
-                logging.getLogger(__name__).warning("publish_job_outputs failed: %s", pub_err)
-                result["publishError"] = str(pub_err)
-        return result
-    except Exception as e:
-        raise HTTPException(500, str(e)) from e
+            else:
+                result = synth_text_job(
+                    text=text,
+                    voice=selected_voice,
+                    lang=body.lang or "vi",
+                    speed=float(body.speed or 1.0),
+                    volume=float(body.volume or 1.0),
+                    pitch=float(body.pitch or 0.0),
+                    style=body.style or "tu_nhien",
+                    match_duration=body.matchDuration or "none",
+                    title=body.title or "",
+                    auto_split=bool(body.autoSplit),
+                    gap_ms=int(body.gapMs or 0),
+                    job_id=job_id,
+                )
+            jid = result.get("id") or result.get("job_id")
+            if jid:
+                try:
+                    from pipeline.tts.studio import publish_job_outputs
+                    publish_job_outputs(str(jid), body.outputDir, body.outputFormat)
+                except Exception as pub_err:
+                    import logging
+                    logging.getLogger(__name__).warning("publish_job_outputs failed: %s", pub_err)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("tts_studio_synth background error: %s", e)
+
+    _threading.Thread(target=_run, name=f"studio-synth-{job_id[:8]}", daemon=True).start()
+    # Trả job_id ngay — FE dùng GET /jobs/{job_id}/progress để theo dõi
+    return {"id": job_id, "job_id": job_id, "running": True}
 
 
 @router.get("/api/tts/studio/history")
@@ -339,7 +350,11 @@ async def api_tts_studio_clone(
     tags: str = "[]",
     file: UploadFile = File(...),
 ):
-    """Clone giọng VieNeu từ file ref (3–8s)."""
+    """Clone giọng VieNeu từ file ref (3–8s).
+
+    ponytail: clone_voice blocking → dùng asyncio.to_thread để không block event loop.
+    """
+    import asyncio
     if not name.strip():
         raise HTTPException(400, "Thiếu tên giọng")
     try:
@@ -353,7 +368,8 @@ async def api_tts_studio_clone(
     try:
         with tmp.open("wb") as f:
             shutil.copyfileobj(file.file, f)
-        voice = vieneu_engine.clone_voice(
+        voice = await asyncio.to_thread(
+            vieneu_engine.clone_voice,
             name.strip(),
             tmp,
             transcript=(transcript or "").strip(),

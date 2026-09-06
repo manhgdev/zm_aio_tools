@@ -501,15 +501,15 @@ export const api = {
     }),
 
   retranscribeRange: (projectId: string, start: number, end: number, sourceLang = 'auto') =>
-    fetchJson<{ segments: Segment[]; replaced: number; inserted: number }>(
-      `${base}/projects/${projectId}/segments/retranscribe-range`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start, end, sourceLang, engine: 'whisper' }),
-      },
-      10 * 60_000,
-    ),
+    fetch(`${base}/projects/${projectId}/segments/retranscribe-range`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start, end, sourceLang, engine: 'whisper' }),
+      signal: AbortSignal.timeout(10 * 60_000),
+    }).then((r) => {
+      if (!r.ok && r.status !== 202) throw new Error(`HTTP ${r.status}`)
+      return null  // 202 — caller polls /status
+    }),
 
   /** CapCut Alt+G — compound clip (giữ children + mix TTS). */
   createCompound: (projectId: string, segmentIds: string[]) =>
