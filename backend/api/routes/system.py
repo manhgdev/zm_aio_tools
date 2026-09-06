@@ -184,32 +184,38 @@ def _download_update(asset: dict[str, Any], updates: Path, version: str) -> Path
     last_error: Exception | None = None
     for attempt in range(3):
         try:
+            offset = partial.stat().st_size if partial.is_file() else 0
+            request = urllib.request.Request(url, headers={"User-Agent": "ZM-AIO-TOOL"})
+            if offset:
+                request.add_header("Range", f"bytes={offset}-")
             # Large desktop bundles can take several minutes on a slow connection;
             # this is a socket-idle timeout, not a total-download deadline.
-            with urllib.request.urlopen(url, timeout=_UPDATE_DOWNLOAD_TIMEOUT_SECONDS) as response, partial.open("wb") as output:
-                try:
-                    total = max(0, int(response.headers.get("Content-Length") or 0))
-                except (TypeError, ValueError):
-                    total = 0
-                received = 0
-                while chunk := response.read(1024 * 1024):
-                    output.write(chunk)
-                    received += len(chunk)
-                    progress = min(99, int(received * 100 / total)) if total else 0
-                    _set_update_state(progress=progress)
+            with urllib.request.urlopen(request, timeout=_UPDATE_DOWNLOAD_TIMEOUT_SECONDS) as response:
+                if offset and response.status != 206:
+                    offset = 0
+                    partial.unlink(missing_ok=True)
+                with partial.open("ab" if offset else "wb") as output:
+                    try:
+                        content_range = str(response.headers.get("Content-Range") or "")
+                        total = int(content_range.rsplit("/", 1)[1]) if "/" in content_range else int(response.headers.get("Content-Length") or 0) + offset
+                    except (TypeError, ValueError, IndexError):
+                        total = 0
+                    received = offset
+                    while chunk := response.read(1024 * 1024):
+                        output.write(chunk)
+                        received += len(chunk)
+                        progress = min(99, int(received * 100 / total)) if total else 0
+                        _set_update_state(progress=progress)
             partial.replace(target)
             last_error = None
             break
         except (BrokenPipeError, ConnectionError, TimeoutError, OSError) as exc:
             last_error = exc
-            try:
-                partial.unlink()
-            except OSError:
-                pass
             if attempt < 2:
                 _set_update_state(message=f"Kết nối gián đoạn, đang thử lại ({attempt + 2}/3)…")
                 time.sleep(0.5 * (attempt + 1))
             else:
+                partial.unlink(missing_ok=True)
                 raise
     if last_error is not None:
         raise last_error
