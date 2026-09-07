@@ -107,83 +107,6 @@ def _persistent_blur_band_segment(
     }
 
 
-def _ocr_fallback_blur_band(
-    src: Path,
-    width: int,
-    height: int,
-    duration: float,
-    style: str,
-    color: str,
-    opacity: int,
-) -> list[dict[str, Any]]:
-    """OCR vài frame để tìm vị trí hardsub khi không có bboxDetected data."""
-    if width < 8 or height < 8 or duration <= 0:
-        return []
-    try:
-        ocr = _rapidocr_labels()
-    except ImportError:
-        return []
-    if ocr is None:
-        return []
-    import subprocess
-    import tempfile
-    import os as _os
-    probes = [max(0.5, duration * t) for t in (0.05, 0.25, 0.50, 0.75)]
-    boxes: list[tuple[int, int, int, int]] = []
-    with tempfile.TemporaryDirectory() as tmp:
-        for t in probes:
-            frame_path = _os.path.join(tmp, f"frame_{t:.2f}.jpg")
-            try:
-                subprocess.run(
-                    ["ffmpeg", "-y", "-ss", str(t), "-i", str(src),
-                     "-vframes", "1", "-q:v", "3", frame_path],
-                    capture_output=True, timeout=15,
-                )
-            except Exception:
-                continue
-            if not _os.path.exists(frame_path):
-                continue
-            try:
-                from PIL import Image
-                import numpy as np
-                img = Image.open(frame_path).convert("RGB")
-                arr = np.array(img)
-                hits = ocr(arr)
-                if not hits:
-                    continue
-                for hit in hits:
-                    pts = hit[0]
-                    ys = [p[1] for p in pts]
-                    xs = [p[0] for p in pts]
-                    x0, y0 = max(0, int(min(xs))), max(0, int(min(ys)))
-                    x1, y1 = min(width, int(max(xs))), min(height, int(max(ys)))
-                    # Chỉ nhận text spans đủ rộng (subtitle thường full width)
-                    if x1 - x0 > width * 0.15 and y1 - y0 > 4:
-                        boxes.append((x0, y0, x1, y1))
-            except Exception:
-                continue
-    if not boxes:
-        return []
-    # Build lane bands same as _auto_blur_band_segments
-    bands: list[dict[str, Any]] = []
-    for lower in (False, True):
-        lane = [b for b in boxes if ((b[1] + b[3]) * 0.5 >= height * 0.5) == lower]
-        if not lane:
-            continue
-        top = max(0, min(b[1] for b in lane))
-        bottom = min(height, max(b[3] for b in lane))
-        band_h = max(24, bottom - top)
-        y = max(0, min(height - band_h, top))
-        bands.append({
-            "id": f"__ocr_blur_band_{'lower' if lower else 'upper'}__",
-            "start": 0.0, "end": duration,
-            "translation": "", "source": "",
-            "layout": "mid", "maskOnly": True,
-            "bbox": {"x": 0, "y": y, "w": width, "h": band_h},
-            "coverMaskStyle": style, "coverMaskColor": color, "coverMaskOpacity": opacity,
-        })
-    return bands
-
 
 def _auto_blur_band_segments(
     segments: list[dict[str, Any]], *, width: int, height: int, duration: float,
@@ -422,11 +345,7 @@ def cover_and_burn(
                 segments, width=w, height=h, duration=vid_dur,
                 style=mask_style, color=mask_color, opacity=mask_opacity,
             )
-            # Fallback: không có bboxDetected data → OCR 1 vài frame đầu để tìm hardsub
-            if not auto_band_segments:
-                auto_band_segments = _ocr_fallback_blur_band(
-                    src, w, h, vid_dur, mask_style, mask_color, mask_opacity,
-                )
+
         segments.extend(auto_band_segments)
     for seg in segments:
         raw = (seg.get("translation") or "").strip()
