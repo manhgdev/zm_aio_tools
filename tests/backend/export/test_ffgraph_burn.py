@@ -352,3 +352,42 @@ def test_logo_fade_opacity_matches_legacy(clip, tmp_path):
     # logo thật sự hiện lúc alpha đỉnh
     src = _grab(clip, 4.0)[y0:y1, x0:x1]
     assert np.abs(_grab(ff, 4.0)[y0:y1, x0:x1] - src).mean() > 8
+
+
+def test_above_caption_clears_multi_row_hardsub_lane(clip, tmp_path):
+    out = tmp_path / "above_lane.mp4"
+    segments = [
+        {
+            "id": "s0",
+            "index": 0,
+            "start": 0.5,
+            "end": 3.0,
+            "source": "Row 1",
+            "translation": "Dòng 1",
+            "bbox": {"x": 100, "y": 1330, "w": 880, "h": 80},
+            "bboxDetected": True,
+            "layout": "mid",
+        },
+        {
+            "id": "s1",
+            "index": 1,
+            "start": 3.0,
+            "end": 6.0,
+            "source": "Row 2",
+            "translation": "Dòng 2 ở trên dải phụ đề",
+            "bbox": {"x": 100, "y": 1420, "w": 880, "h": 80},
+            "bboxDetected": False,
+            "bboxInherited": True,
+            "layout": "mid",
+        },
+    ]
+    cover_and_burn(
+        clip,
+        segments,
+        out,
+        cover=False,
+        burn=True,
+        caption_placement="above",
+    )
+    assert out.is_file()
+

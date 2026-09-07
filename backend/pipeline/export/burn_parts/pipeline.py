@@ -952,6 +952,28 @@ def cover_and_burn(
                         ):
                             use_preview = False
                 if use_preview:
+                    if (
+                        place in ("below", "above")
+                        and seg_meta.get("bboxInherited") is not False
+                        and replacement_sources
+                    ):
+                        pbox = preview_lay["box"]
+                        lower = (pbox[1] + pbox[3]) * 0.5 >= h * 0.5
+                        peers = [b for b in replacement_sources if ((b[1] + b[3]) * 0.5 >= h * 0.5) == lower]
+                        if peers:
+                            gap = max(3, int(preview_lay.get("fontsize", cue_fs)) // 6)
+                            if place == "above":
+                                top_hardsub = min(b[1] for b in peers)
+                                if pbox[3] > top_hardsub - gap:
+                                    bh = pbox[3] - pbox[1]
+                                    new_y0 = max(0, top_hardsub - gap - bh)
+                                    preview_lay["box"] = (pbox[0], new_y0, pbox[2], new_y0 + bh)
+                            elif place == "below":
+                                bot_hardsub = max(b[3] for b in peers)
+                                if pbox[1] < bot_hardsub + gap:
+                                    bh = pbox[3] - pbox[1]
+                                    new_y0 = min(h - bh, bot_hardsub + gap)
+                                    preview_lay["box"] = (pbox[0], new_y0, pbox[2], new_y0 + bh)
                     lay = preview_lay
                     used_preview_layout = True
                     if editor_locked:
@@ -1031,9 +1053,23 @@ def cover_and_burn(
                         font_path=cue_font_path,
                     )
             elif lay is None:
+                paint_for_layout = paint
+                eff_place = place if unverified_auto else layout_place
+                if (
+                    eff_place in ("below", "above")
+                    and paint is not None
+                    and replacement_sources
+                    and seg_meta.get("bboxInherited") is not False
+                ):
+                    lower = (paint[1] + paint[3]) * 0.5 >= h * 0.5
+                    peers = [b for b in replacement_sources if ((b[1] + b[3]) * 0.5 >= h * 0.5) == lower]
+                    if peers:
+                        top = min(paint[1], min(b[1] for b in peers))
+                        bottom = max(paint[3], max(b[3] for b in peers))
+                        paint_for_layout = (paint[0], top, paint[2], bottom)
                 lay = _layout_caption(
-                    text, cue_font, cue_fs, paint, w, h,
-                    placement=place if unverified_auto else layout_place,
+                    text, cue_font, cue_fs, paint_for_layout, w, h,
+                    placement=eff_place,
                 )
         else:
             lay = None

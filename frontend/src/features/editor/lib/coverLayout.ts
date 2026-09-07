@@ -498,9 +498,10 @@ export function estimatePreviewCaptionBox(
   frameH: number,
   crop: CropRect,
   placement: 'over' | 'below' | 'above',
+  lane?: PixelBox | null,
 ): PixelBox {
   if (cropCoversFull(crop, frameW, frameH)) {
-    return estimateCaptionBox(ocr, text, fontSizePx, frameW, frameH, placement)
+    return estimateCaptionBox(ocr, text, fontSizePx, frameW, frameH, placement, lane)
   }
   const localOcr = {
     x: Math.max(0, ocr.x - crop.x),
@@ -508,7 +509,13 @@ export function estimatePreviewCaptionBox(
     w: Math.min(ocr.w, crop.w),
     h: Math.min(ocr.h, crop.h),
   }
-  const box = estimateCaptionBox(localOcr, text, fontSizePx, crop.w, crop.h, placement)
+  const localLane = lane ? {
+    x: Math.max(0, lane.x - crop.x),
+    y: Math.max(0, lane.y - crop.y),
+    w: Math.min(lane.w, crop.w),
+    h: Math.min(lane.h, crop.h),
+  } : null
+  const box = estimateCaptionBox(localOcr, text, fontSizePx, crop.w, crop.h, placement, localLane)
   return { x: box.x + crop.x, y: box.y + crop.y, w: box.w, h: box.h }
 }
 
@@ -540,6 +547,7 @@ export function resolveBelowAboveLayout(
   frameH: number,
   crop: CropRect,
   placement: 'below' | 'above',
+  lane?: PixelBox | null,
 ): OverLayout | null {
   if (!seg.translation.trim()) return null
   setMeasureFontFamily(captionFontCss(seg.fontFamily || settings.subtitleFontFamily || 'system'))
@@ -550,7 +558,7 @@ export function resolveBelowAboveLayout(
     ?? fallbackCoverBox(frameW, frameH, preferred)
   const fitFrameW = cropCoversFull(crop, frameW, frameH) ? frameW : crop.w
   const { lines, fontPx } = fitOutsideCaption(ocr, seg.translation, preferred, fitFrameW)
-  const caption = estimatePreviewCaptionBox(ocr, seg.translation, fontPx, frameW, frameH, crop, placement)
+  const caption = estimatePreviewCaptionBox(ocr, seg.translation, fontPx, frameW, frameH, crop, placement, lane)
   return { cover: ocr, caption, lines, fontPx }
 }
 
@@ -578,6 +586,33 @@ export function fitOutsideCaption(
     lines = wrapCaptionText(text, maxInnerW, fontPx, 2)
   }
   return { lines, fontPx }
+}
+
+/** ponytail: tính dải hardsub bao trùm toàn bộ các hàng phụ đề verified trong nửa khung hình tương ứng. */
+export function hardsubLaneForSegment(
+  segments: Segment[],
+  frameW: number,
+  frameH: number,
+  seg?: Segment | null,
+): PixelBox | null {
+  if (frameW <= 0 || frameH <= 0) return null
+  const verified = segments
+    .filter((s) => s.bboxDetected === true && s.bbox && s.layout !== 'vertical' && s.layout !== 'label')
+    .map((s) => clampCoverBox(s.bbox!, frameW, frameH))
+  if (!verified.length) {
+    return seg?.bbox ? clampCoverBox(seg.bbox, frameW, frameH) : null
+  }
+  const center = seg?.bbox ? seg.bbox.y + seg.bbox.h / 2 : frameH * 0.84
+  const isLower = center >= frameH / 2
+  const peers = verified.filter((b) => (b.y + b.h / 2 >= frameH / 2) === isLower)
+  if (!peers.length) {
+    return seg?.bbox ? clampCoverBox(seg.bbox, frameW, frameH) : null
+  }
+  const segBox = seg?.bbox ? clampCoverBox(seg.bbox, frameW, frameH) : null
+  const allBoxes = segBox ? [...peers, segBox] : peers
+  const top = Math.max(0, Math.min(...allBoxes.map((b) => b.y)))
+  const bottom = Math.min(frameH, Math.max(...allBoxes.map((b) => b.y + b.h)))
+  return { x: 0, y: top, w: frameW, h: Math.max(24, bottom - top) }
 }
 
 /** Bake đúng layout đang hiện ở preview vào segment — Xuất bản khóa WYSIWYG. */
@@ -621,7 +656,8 @@ export function buildExportSegments(
       && styledSeg.layout !== 'vertical'
       && styledSeg.layout !== 'label'
     ) {
-      const baked = resolveBelowAboveLayout(styledSeg, settings, frameW, frameH, crop, place)
+      const lane = hardsubLaneForSegment(segments, frameW, frameH, styledSeg)
+      const baked = resolveBelowAboveLayout(styledSeg, settings, frameW, frameH, crop, place, lane)
       if (baked) {
         return segmentWithLayout(
           styledSeg,
@@ -955,6 +991,11 @@ export function __checkExportBakePlacement(): void {
   const cl = baked.captionLayout
   if (!cl) throw new Error('below bake must produce captionLayout')
   if (cl.y < 880) throw new Error('auto mid must bake the below lane, got y=' + cl.y)
+  const aboveSettings = { ...settings, captionPlacement: 'above' } as unknown as ProjectSettings
+  const [bakedAbove] = buildExportSegments([seg], aboveSettings, 1080, 1920)
+  const clAbove = bakedAbove.captionLayout
+  if (!clAbove) throw new Error('above bake must produce captionLayout')
+  if (clAbove.y + clAbove.h > 800) throw new Error('above mid must stay above hardsub box, got bottom=' + (clAbove.y + clAbove.h))
   const dragged = { ...seg, id: 's2', bboxInherited: false } as Segment
   const [bakedDrag] = buildExportSegments([dragged], settings, 1080, 1920)
   const cl2 = bakedDrag.captionLayout
@@ -962,7 +1003,7 @@ export function __checkExportBakePlacement(): void {
   if (cl2.y >= 880) throw new Error('dragged mid must stay anchored in its bbox, got y=' + cl2.y)
 }
 
-/** Ước lượng vị trí phụ đề — below/above: cỡ ≈ bbox che, neo sát trên/dưới dải OCR. */
+/** Ước lượng vị trí phụ đề — below/above: cỡ ≈ bbox che, neo sát trên/dưới dải OCR hoặc dải hardsub. */
 export function estimateCaptionBox(
   ocr: PixelBox,
   text: string,
@@ -970,6 +1011,7 @@ export function estimateCaptionBox(
   frameW: number,
   frameH: number,
   placement: 'over' | 'below' | 'above',
+  lane?: PixelBox | null,
 ): PixelBox {
   if (placement === 'over') return layoutOverMode(ocr, text, fontSizePx, frameW, frameH, '').caption
 
@@ -983,8 +1025,11 @@ export function estimateCaptionBox(
   // below/above: căn giữa theo bề rộng video, không theo tâm bbox OCR
   // (bbox OCR có thể ngắn/lệch → caption bị lệch so với chữ gốc)
   const cx = frameW / 2
-  const belowY = ocr.y + ocr.h + gap
-  const aboveY = ocr.y - gap - textBox.h
+  // ponytail: neo vào dải hardsub để phụ đề dịch không đè lên câu thoại 2 dòng/dải hardsub
+  const topAnchor = lane ? Math.min(ocr.y, lane.y) : ocr.y
+  const bottomAnchor = lane ? Math.max(ocr.y + ocr.h, lane.y + lane.h) : ocr.y + ocr.h
+  const belowY = bottomAnchor + gap
+  const aboveY = topAnchor - gap - textBox.h
   let y0: number
   if (placement === 'below') {
     // Near an edge, clamping the requested lane can put its text straight on

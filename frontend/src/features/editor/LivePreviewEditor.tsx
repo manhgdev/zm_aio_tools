@@ -92,6 +92,7 @@ import {
   resolveCoverMaskOnly,
   resolveCropRect,
   resolveBelowAboveLayout,
+  hardsubLaneForSegment,
   resolveOverLayout,
   resolveOverlayFontPreferred,
   resolvePreviewOverLayout,
@@ -4052,6 +4053,12 @@ export default function LivePreviewEditor({
     }
     if (captionTimelineSeg.layout === 'vertical' || captionTimelineSeg.layout === 'label') return null
     if (captionTimelineSeg.bboxInherited === false) return null
+    const lane = captionBandForSegment(captionTimelineSeg) ?? hardsubLaneForSegment(
+      layoutSegs,
+      sourceWidth,
+      sourceHeight,
+      captionTimelineSeg,
+    )
     const laid = resolveBelowAboveLayout(
       captionTimelineSeg,
       settings,
@@ -4059,6 +4066,7 @@ export default function LivePreviewEditor({
       sourceHeight,
       crop,
       placement,
+      lane,
     )
     if (!laid) return null
     return {
