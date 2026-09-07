@@ -727,7 +727,7 @@ def _segment_bbox_override(
         y = int(round(float(bbox["y"])))
         bw = int(round(float(bbox["w"])))
         bh = int(round(float(bbox["h"])))
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
     min_size = 12
     if bw < min_size or bh < min_size:

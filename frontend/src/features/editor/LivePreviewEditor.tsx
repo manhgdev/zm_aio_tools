@@ -4323,7 +4323,7 @@ export default function LivePreviewEditor({
       // Phải đặt SAU ...settings để override settings.burnSubs
       // Caption track ẩn (icon mắt) → không burn subtitle vào export
       // Phải đặt SAU ...settings để override settings.burnSubs
-      ...(trackHidden.caption ? { burnSubs: false } : {}),
+      ...(trackHidden.caption ? { burnSubs: false, coverHardsubs: false, blurBandMode: 'off' as const } : {}),
     }
     // Chỉ lưu settings thật (không lưu burnSubs:false tạm từ trackHidden)
     const persistedSettings: ProjectSettings = {
@@ -4349,7 +4349,29 @@ export default function LivePreviewEditor({
     ].map((family) => loadCaptionFont(family)))
     // Chốt bbox/line chỉ sau khi font bundle thật đã sẵn sàng.
     layoutCacheRef.current = {}
-    const payload = buildExportSegments(segments, updatedSettings, sourceWidth, sourceHeight)
+    const snapshotSegments = (items: Segment[]): Segment[] => buildExportSegments(items, updatedSettings, sourceWidth, sourceHeight).map((baked, index) => {
+      if (baked.isCompound && baked.compoundChildren) return { ...baked, compoundChildren: snapshotSegments(baked.compoundChildren) }
+      const seg = layoutSegs.find((item) => item.id === items[index].id) ?? items[index]
+      const isVertLabel = seg.layout === 'vertical' || seg.layout === 'label'
+      const band = overCoverMode && !isVertLabel ? captionBandForSegment(seg) : null
+      const layout = band
+        ? resolvePreviewOverLayout({ ...seg, bbox: band, bboxInherited: false, captionLayout: null }, updatedSettings, sourceWidth, sourceHeight, crop)
+        : getCachedPreviewLayout(seg)
+      const usesOverLayout = overCoverMode || isVertLabel || seg.bboxInherited === false
+      const cl = usesOverLayout && layout
+        ? { ...layout.cover, lines: layout.lines, fontSize: layout.fontPx ?? baked.captionLayout?.fontSize ?? 16 }
+        : baked.captionLayout
+      if (!cl || !updatedSettings.burnSubs) return baked
+      const baseMask = getCachedPreviewLayout(seg)?.mask ?? resolveCoverMaskOnly(seg, sourceWidth, sourceHeight, crop)
+      const sourceMask = baseMask && overCoverMode && !isVertLabel
+        ? replacementSourceMask(baseMask, layoutSegs.flatMap((peer) => peer.bboxDetected === true && peer.bbox && peer.layout !== 'vertical' && peer.layout !== 'label' ? [peer.bbox] : []), sourceWidth, sourceHeight)
+        : baseMask
+      // Snapshot exactly what is painted; blur has its own persistent mask.
+      const hasBand = Boolean(persistentBlurBandBox || (settings.blurBandMode === 'auto' && autoBlurBandBoxes.length))
+      const mask = updatedSettings.burnSubs && !hasBand && (overCoverMode || isVertLabel) ? sourceMask : null
+      return { ...baked, bbox: seg.bbox, captionLayout: { ...cl, previewVersion: 1 as const, mask } }
+    })
+    const payload = snapshotSegments(segments)
     // Sau Áp dụng tốc độ: work file = đồng hồ display — dùng start/end timeline (không sourceStart 1×).
     // Chưa bake: cắt trên file 1× qua sourceStart + span.
     const timelineFinal =
@@ -4371,6 +4393,7 @@ export default function LivePreviewEditor({
       }
     }
     const exportOverride: Partial<ProjectSettings> = {
+      ...updatedSettings,
       exportResolution: options.exportResolution as ProjectSettings['exportResolution'],
       exportVideo: options.exportVideo,
       exportVideoFormat: options.exportVideoFormat,

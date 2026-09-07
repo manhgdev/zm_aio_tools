@@ -24,6 +24,9 @@ export type Segment = {
     h: number
     lines: string[]
     fontSize: number
+    /** Exact live-preview snapshot; source bbox remains independent. */
+    previewVersion?: 1
+    mask?: { x: number; y: number; w: number; h: number } | null
   } | null
   /** Tốc độ hình của đoạn này khi xuất; 1 = giữ nguyên. */
   videoSpeed?: number

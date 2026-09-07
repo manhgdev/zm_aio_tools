@@ -319,7 +319,7 @@ def cover_and_burn(
     vid_dur = ffprobe_duration(video) or 0.0
     persistent_band = _persistent_blur_band_segment(
         segments,
-        mode=str(blur_band_mode or "off").lower(),
+        mode=str(blur_band_mode or "off").lower() if burn else "off",
         region=blur_band_region,
         width=w,
         height=h,
@@ -331,8 +331,13 @@ def cover_and_burn(
     if persistent_band is not None:
         segments.append(persistent_band)
     auto_band_segments: list[dict[str, Any]] = []
-    if str(blur_band_mode or "off").lower() == "auto":
-        auto_band_segments = _auto_blur_band_segments(
+    if burn and str(blur_band_mode or "off").lower() == "auto":
+        stored_band = _persistent_blur_band_segment(
+            segments, mode="manual", region=blur_band_auto_region,
+            width=w, height=h, duration=vid_dur,
+            style=mask_style, color=mask_color, opacity=mask_opacity,
+        )
+        auto_band_segments = [stored_band] if stored_band else _auto_blur_band_segments(
             segments, width=w, height=h, duration=vid_dur,
             style=mask_style, color=mask_color, opacity=mask_opacity,
         )
@@ -499,6 +504,25 @@ def cover_and_burn(
     for sid in cue_segment_ids:
         seg = segments_by_id.get(sid, {})
         layout = str(seg.get("layout") or "horizontal")
+        cl = seg.get("captionLayout") or {}
+        if cl.get("previewVersion") == 1 and _editor_layout_locked(seg):
+            # The snapshot contains display geometry, even when its source
+            # OCR box is inherited. Never relocate a committed preview.
+            # mask = cover region (separate from caption display box).
+            snap_mask = cl.get("mask")
+            if isinstance(snap_mask, dict):
+                mb = _segment_bbox_override({"bbox": snap_mask}, w, h)
+            else:
+                mb = None
+            if mb is not None:
+                unverified_auto_by_idx.append(False)
+                manual_by_idx.append(mb)
+                continue
+            # mask=None: blur-band covers OR no cover needed.
+            # Use sentinel to skip OCR without providing a cover box.
+            unverified_auto_by_idx.append(False)
+            manual_by_idx.append((-1, -1, -1, -1))  # sentinel: snapshot-locked, no cover
+            continue
         # Preview places every normal caption inside its nearest fixed auto
         # band.  Export must use that same box, not the cue's old OCR bbox.
         if (
@@ -526,14 +550,23 @@ def cover_and_burn(
         unverified_auto_by_idx.append(unverified_auto)
         mb = _segment_bbox_override(seg, w, h)
         # Bbox đáy bake sẵn + source CJK → bỏ, OCR lại vị trí thật (giữa/đáy)
+        # If still None and not cover mode, accept inherited bbox to skip OCR.
+        if mb is None and not cover and seg.get("bbox"):
+            mb = _segment_bbox_override(seg, w, h, accept_automatic=True)
         manual_by_idx.append(mb)
+    _SNAP_SKIP = (-1, -1, -1, -1)  # sentinel: snapshot-locked, no cover needed
     cue_segment_map = {str(seg.get("id") or ""): seg for seg in segments}
     cue_boxes: list[list[tuple[int, int, int, int]]] = [[] for _ in cues]
     for i, mb in enumerate(manual_by_idx):
-        if mb is not None:
+        if mb is not None and mb != _SNAP_SKIP:
             cue_boxes[i] = [mb]
 
+    # need_ocr: only cues with no bbox at all (None); sentinel = intentional skip
     need_ocr_idx = [i for i, mb in enumerate(manual_by_idx) if mb is None]
+    # Clear sentinels so downstream code sees empty boxes (not a real tuple).
+    for i, mb in enumerate(manual_by_idx):
+        if mb == _SNAP_SKIP:
+            manual_by_idx[i] = None
     manual_n = len(cues) - len(need_ocr_idx)
     if need_ocr_idx and (cover or burn) and cues:
         try:
@@ -1021,6 +1054,8 @@ def cover_and_burn(
                 "bg_opacity": cap_bg_op,
                 "stroke": cap_stroke,
             }
+            if (seg_meta.get("captionLayout") or {}).get("previewVersion") == 1 and preview_lay is not None:
+                lay["box"] = preview_lay["box"]
         logo_asset = str(seg_meta.get("logoAssetPath") or "")
         cue_overlays.append(
             _image_overlay(logo_asset, tuple(map(int, lay["box"])))
@@ -1133,6 +1168,14 @@ def cover_and_burn(
                 _replacement_source_mask(box, replacement_sources, w, h)
                 for box in cue_fits[-1]
             ]
+
+        snapshot = seg_meta.get("captionLayout") or {}
+        if snapshot.get("previewVersion") == 1 and _editor_layout_locked(seg_meta):
+            # Mask and caption are separate preview layers. In particular,
+            # a blur lane must not be unioned into the caption's cover box.
+            mask = _segment_bbox_override({"bbox": snapshot.get("mask")}, w, h)
+            cue_fits[-1] = [mask] if mask else []
+            cue_need_mask[-1] = mask is not None and burn
 
     # P1: thử ffmpeg vẽ trực tiếp (nhanh 6-8×, khung không rời GPU);
     # không khả thi / lỗi → đường Python cũ vẫn nguyên.

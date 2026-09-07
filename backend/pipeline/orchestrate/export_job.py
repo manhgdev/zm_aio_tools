@@ -90,7 +90,7 @@ from pipeline.orchestrate.tts_fit import assign_tts_fit_speeds
 
 
 _BURN_SETTINGS_KEYS = (
-    "cover", "burn", "captionPlacement",
+    "coverHardsubs", "burnSubs", "captionPlacement",
     "subtitleFontSize", "subtitleFontFamily",
     "coverMaskStyle", "coverMaskColor", "coverMaskOpacity",
     "captionTextColor", "captionBgStyle", "captionBgColor",
@@ -111,14 +111,13 @@ def _burn_cache_key(
 ) -> str:
     """SHA-256 digest của các input ảnh hưởng pixel burned.mp4."""
     h = hashlib.sha256()
+    h.update(b"live-preview-parity-v1")
     h.update(video_fp.encode())
     for k in _BURN_SETTINGS_KEYS:
         h.update(f"{k}={json.dumps(settings.get(k), sort_keys=True)}".encode())
     h.update(f"match={match_mode}|bake={bake_speed:.4f}".encode())
-    seg_fields = ("id", "start", "end", "translation", "bbox", "layout",
-                  "coverStart", "coverEnd", "maskOnly", "fontFamily", "fontSize")
     for seg in segments + text_overlays:
-        h.update(json.dumps({k: seg.get(k) for k in seg_fields}, sort_keys=True).encode())
+        h.update(json.dumps(seg, sort_keys=True).encode())
     return h.hexdigest()[:32]
 
 

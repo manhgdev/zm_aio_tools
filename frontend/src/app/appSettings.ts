@@ -146,6 +146,7 @@ export const defaultSettings: ProjectSettings = {
     paddleocr: { ...ENGINE_DEFAULTS.paddleocr },
     subtitle: { ...ENGINE_DEFAULTS.subtitle },
   },
+  blurBandMode: 'auto',
 }
 
 export function loadTheme(): boolean {
