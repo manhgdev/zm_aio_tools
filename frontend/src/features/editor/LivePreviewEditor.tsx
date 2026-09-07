@@ -1598,7 +1598,7 @@ export default function LivePreviewEditor({
     : settings.blurBandMode === 'auto' && autoBlurBandBoxes.length
       ? autoBlurBandBoxes
       : maskBoxes
-  const hasAutoBlurCues = autoBlurBandBoxes.length > 0
+  const hasAutoBlurCues = settings.blurBandMode === 'auto' && autoBlurBandBoxes.length > 0
   const editableBlurBandBox = blurBandDraft
     ?? persistentBlurBandBox
     ?? autoBlurBandBoxes[Math.min(activeBlurBandIndex, Math.max(0, autoBlurBandBoxes.length - 1))]
