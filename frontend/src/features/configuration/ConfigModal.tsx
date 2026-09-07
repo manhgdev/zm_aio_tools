@@ -12,7 +12,7 @@ import './ConfigModal.css'
 
 import {
   type InstallKind, type Section, type CloudTab, type UpdateDialog, type CloudDraft,
-  PROVIDERS,
+  PROVIDERS, PROVIDER_PRESET_MODELS,
   installLabel, nextAutoInstall, emptyCloud, savedKeyPlaceholder,
 } from './configModal.helpers'
 
@@ -58,6 +58,9 @@ export default function ConfigModal({
   /** Empty slots normally mean "keep saved keys"; track explicit edits so the
    * remove button can clear the first/only saved key on the next save. */
   const [cloudKeysDirty, setCloudKeysDirty] = useState<Record<CloudProviderId, boolean>>(() => Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>)
+  const [customModelTabs, setCustomModelTabs] = useState<Record<CloudProviderId, boolean>>(() =>
+    Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>
+  )
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -764,9 +767,54 @@ export default function ConfigModal({
                   <span>{t('Base URL', 'Base URL')}</span>
                   <input type="text" value={cur.baseUrl} onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], baseUrl: e.target.value } }))} />
                 </label>
-                <label>
+                <label className="cfg-cloud-model">
                   <span>Model</span>
-                  <input type="text" value={cur.model} onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], model: e.target.value } }))} />
+                  {(() => {
+                    const presets = PROVIDER_PRESET_MODELS[tab] || []
+                    const isPreset = presets.some((m) => m.id === cur.model)
+                    const isCustom = (!isPreset && !cur.model) || !!customModelTabs[tab]
+                    return (
+                      <>
+                        <select
+                          className="cfg-cloud-model-select"
+                          value={isCustom ? '__custom__' : cur.model}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            if (val === '__custom__') {
+                              setCustomModelTabs((prev) => ({ ...prev, [tab]: true }))
+                            } else {
+                              setCustomModelTabs((prev) => ({ ...prev, [tab]: false }))
+                              setDraft((d) => ({ ...d, [tab]: { ...d[tab], model: val } }))
+                            }
+                          }}
+                        >
+                          {presets.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {localize(locale, m.labelVi, m.labelEn)}
+                            </option>
+                          ))}
+                          {!isPreset && cur.model ? (
+                            <option value={cur.model}>
+                              {cur.model} ({t('Hiện tại', 'Current')})
+                            </option>
+                          ) : null}
+                          <option value="__custom__">
+                            {t('Tùy chỉnh khác… (tự nhập)', 'Custom model… (enter manually)')}
+                          </option>
+                        </select>
+                        {isCustom ? (
+                          <input
+                            type="text"
+                            className="cfg-cloud-model-custom"
+                            placeholder={t('Nhập tên model tùy chỉnh…', 'Enter custom model name…')}
+                            value={cur.model}
+                            onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], model: e.target.value } }))}
+                            autoFocus={customModelTabs[tab]}
+                          />
+                        ) : null}
+                      </>
+                    )
+                  })()}
                 </label>
               </section>
             </div>

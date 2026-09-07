@@ -1250,3 +1250,23 @@ test('Chat browser activates a requested tool or returns an explicit availabilit
   assert.match(browser, /CHAT_BROWSER_MODE_\{mode\.upper\(\)\}_UNAVAILABLE/)
   assert.doesNotMatch(browser, /if await choice\.count\(\): await choice\.click\(\)/)
 })
+
+test('Configuration Cloud AI model selector provides bilingual presets and custom option', async () => {
+  const [config, helpers] = await Promise.all([
+    readFile(new URL('../frontend/src/features/configuration/ConfigModal.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../frontend/src/features/configuration/configModal.helpers.ts', import.meta.url), 'utf8'),
+  ])
+  assert.match(config, /cfg-cloud-model-select/)
+  assert.match(config, /Tùy chỉnh khác… \(tự nhập\)/)
+  assert.match(config, /Custom model… \(enter manually\)/)
+  assert.match(config, /Nhập tên model tùy chỉnh…/)
+  assert.match(config, /Enter custom model name…/)
+  assert.match(helpers, /PROVIDER_PRESET_MODELS/)
+  assert.match(helpers, /gpt-4o-mini/)
+  assert.match(helpers, /gemini-3\.1-flash-lite/)
+  assert.match(helpers, /deepseek-chat/)
+  assert.match(helpers, /google\/gemini-2\.5-flash/)
+  assert.match(helpers, /grok-3-mini/)
+  assert.match(helpers, /openai\/gpt-oss-20b/)
+  assert.match(helpers, /nvidia\/riva-translate-4b-instruct-v2/)
+})

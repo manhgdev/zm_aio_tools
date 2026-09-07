@@ -265,7 +265,8 @@
 }
 
 .cfg-body-grid label,
-.cfg-body-grid input {
+.cfg-body-grid input,
+.cfg-body-grid select {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -291,7 +292,7 @@
 
 .cfg-cloud-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, .55fr);
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 1.25fr);
   gap: 10px 12px;
   padding: 12px;
   border: 1px solid var(--line, #d7dbe6);
@@ -307,6 +308,12 @@
 
 .cfg-cloud-panel label:first-of-type {
   grid-column: auto;
+}
+
+.cfg-cloud-model {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .cfg-el-grid {
@@ -528,17 +535,24 @@
   color: var(--muted-foreground);
 }
 
-.cfg-body input {
+.cfg-body input,
+.cfg-body select {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 9px 10px;
   background: var(--input);
   color: var(--ink);
+  font-family: inherit;
   font-weight: 500;
   font-size: 0.86rem;
 }
 
-.cfg-body input:focus {
+.cfg-body select {
+  cursor: pointer;
+}
+
+.cfg-body input:focus,
+.cfg-body select:focus {
   outline: 2px solid var(--secondary);
   border-color: var(--primary);
 }
