@@ -112,9 +112,7 @@ jobs:
             | awk '{print "- " $0}' \
             || echo '- Cải tiến và sửa lỗi')
 
-          BODY="## Thay đổi trong $TAG
-
-$NOTES"
+          BODY=$(printf '## Thay đổi trong %s\n\n%s' "$TAG" "$NOTES")
 
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" "$ZIP" --clobber
