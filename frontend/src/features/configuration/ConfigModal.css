@@ -292,8 +292,8 @@
 
 .cfg-cloud-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 1.25fr);
-  gap: 10px 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
   padding: 12px;
   border: 1px solid var(--line, #d7dbe6);
   border-radius: 10px;
@@ -306,14 +306,60 @@
   font-size: 14px;
 }
 
+.cfg-cloud-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+}
+
 .cfg-cloud-panel label:first-of-type {
   grid-column: auto;
+}
+
+.cfg-cloud-panel input,
+.cfg-cloud-panel select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .cfg-cloud-model {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
+}
+
+.cfg-cloud-model-select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 30px !important;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 17px) 50%,
+    calc(100% - 12px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.cfg-cloud-model-custom {
+  width: 100%;
+  min-width: 0;
 }
 
 .cfg-el-grid {
