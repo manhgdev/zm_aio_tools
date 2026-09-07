@@ -298,6 +298,17 @@ def api_export(project_id: str, payload: ExportPayload):
         ui_prev = max(0, int((meta.get("settings") or {}).get("previewSec") or 0)) or 20
     dumped["previewSec"] = ui_prev
     # Settings editor thắng hoàn toàn (mask/font/cover/burn…)
+    # Ngoại lệ: blurBandAutoRegion được backend lưu sau review phase.
+    # Frontend xóa nó khỏi in-memory sau review (để reset preview), nhưng
+    # backend vừa tính xong → preserve nếu request không mang region mới hơn.
+    old_settings = meta.get("settings") or {}
+    if (
+        not dumped.get("blurBandAutoRegion")
+        and int(old_settings.get("blurBandAutoRegionVersion") or 0) == 1
+        and old_settings.get("blurBandAutoRegion")
+    ):
+        dumped["blurBandAutoRegion"] = old_settings["blurBandAutoRegion"]
+        dumped["blurBandAutoRegionVersion"] = 1
     meta["settings"] = dumped
     # xuất theo clip lần dịch gần nhất (0 = full), không theo ô Preview
     meta["previewSec"] = run_preview

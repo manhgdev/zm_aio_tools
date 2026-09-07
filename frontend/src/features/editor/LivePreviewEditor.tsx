@@ -5285,7 +5285,7 @@ export default function LivePreviewEditor({
                             'group/bbox absolute border cursor-move z-[30] overflow-visible touch-none',
                             // A selected blur owns pointer input, even where it overlaps a
                             // subtitle. Otherwise this invisible bbox steals its move cursor.
-                            (selectedOverlayId || activeAutoBlurBand || blurBandInteractive) && 'pointer-events-none',
+                            (selectedOverlayId || activeAutoBlurBand) && 'pointer-events-none',
                             showBboxAtPlayhead ? 'border-white/75 border-dashed' : 'border-transparent bg-transparent',
                             showBboxAtPlayhead && !showCoverBlur && 'bg-white/5',
                             draggingBox && 'opacity-80',
