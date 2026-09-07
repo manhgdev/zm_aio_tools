@@ -635,10 +635,13 @@ def cover_and_burn(
         )
         unverified_auto_by_idx.append(unverified_auto)
         mb = _segment_bbox_override(seg, w, h)
-        # Bbox đáy bake sẵn + source CJK → bỏ, OCR lại vị trí thật (giữa/đáy)
-        # If still None and not cover mode, accept inherited bbox to skip OCR.
-        if mb is None and not cover and seg.get("bbox"):
-            mb = _segment_bbox_override(seg, w, h, accept_automatic=True)
+        # bboxDetected=True → đã xác minh bởi OCR review phase → dùng thẳng, không OCR lại.
+        # bboxInherited=True (chưa xác minh) chỉ accept khi không cover (tránh che sai vị trí).
+        if mb is None and seg.get("bbox"):
+            if seg.get("bboxDetected") is True:
+                mb = _segment_bbox_override(seg, w, h, accept_automatic=True)
+            elif not cover:
+                mb = _segment_bbox_override(seg, w, h, accept_automatic=True)
         manual_by_idx.append(mb)
     _SNAP_SKIP = (-1, -1, -1, -1)  # sentinel: snapshot-locked, no cover needed
     cue_segment_map = {str(seg.get("id") or ""): seg for seg in segments}
