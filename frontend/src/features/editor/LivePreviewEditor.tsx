@@ -1635,10 +1635,13 @@ export default function LivePreviewEditor({
           ) {
             return null
           }
+          const liveDragBox = s.id === selected?.id ? activeCoverDraft : undefined
           // Center cover captions in the stable OCR lane, not in the manual
           // blur region. This preserves the original fixed caption alignment
           // while keeping the two drag geometries independent.
-          const captionBand = overCoverMode && !isVertLabel ? captionBandForSegment(s) : null
+          // BUT: if the user manually modified this segment's bbox (bboxInherited === false)
+          // or is actively dragging it (liveDragBox), we MUST render it at that specific position!
+          const captionBand = overCoverMode && !isVertLabel && s.bboxInherited !== false && !liveDragBox ? captionBandForSegment(s) : null
           const layout = captionBand
             ? resolvePreviewOverLayout(
                 { ...s, bbox: captionBand, bboxInherited: false, captionLayout: null },
@@ -1647,7 +1650,7 @@ export default function LivePreviewEditor({
                 sourceHeight,
                 crop,
               )
-            : getCachedPreviewLayout(s, s.id === selected?.id ? activeCoverDraft : undefined)
+            : getCachedPreviewLayout(s, liveDragBox)
           return layout ? { seg: s, layout, outsideFallback: false } : null
         }).filter((x): x is { seg: Segment; layout: NonNullable<ReturnType<typeof resolvePreviewOverLayout>>; outsideFallback: boolean } => !!x)
       : []
