@@ -179,8 +179,11 @@ export function useDubAudioSync(deps: DubAudioSyncDeps) {
       : 0)
     
     const heldClipEnded = held ? videoTime >= heldEffectiveEnd - 0.01 : false
-    
-    if (held?.audioUrl && !heldClipEnded && !a.ended && a.currentTime > 0.02 && videoTime >= heldEffectiveStart - 0.08) {
+    // "done" = display window ended. Audio may finish early (short TTS) — that's OK,
+    // we still hold the segment until heldEffectiveEnd so we don't jump prematurely.
+    const heldAudioDone = heldClipEnded
+
+    if (held?.audioUrl && !heldClipEnded && a.currentTime > 0.02 && videoTime >= heldEffectiveStart - 0.08) {
       const playRate = previewVideoRate(
         settings.matchDuration,
         bakedPreferVideo,
@@ -199,13 +202,15 @@ export function useDubAudioSync(deps: DubAudioSyncDeps) {
           if (Math.abs(a.currentTime - wantTime) > 0.2) a.currentTime = wantTime
         } catch { /* ignore */ }
       }
-      if (a.paused) void a.play().catch(() => { /* autoplay */ })
-      syncOriginalBg(videoTime, true, true, playRate, hardSync)
+      // Audio ended early (TTS shorter than display window): hold position but
+      // don't restart playback — just keep video rate synced until window ends.
+      if (!a.ended && a.paused) void a.play().catch(() => { /* autoplay */ })
+      syncOriginalBg(videoTime, true, !a.ended, playRate, hardSync)
       return
     }
 
     // Vừa xong câu → đánh dấu, không play lại
-    if (held && (a.ended || heldClipEnded)) {
+    if (held && heldAudioDone) {
       if (heldClipEnded) a.pause()
       finished.add(held.id)
       dubTokenRef.current = ''

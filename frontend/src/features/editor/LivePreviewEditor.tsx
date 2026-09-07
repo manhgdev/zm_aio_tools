@@ -4392,8 +4392,23 @@ export default function LivePreviewEditor({
           : Math.max(0, ...videoClips.map((c) => c.end))
       }
     }
+    // Blur band auto: snapshot preview band into blurBandAutoRegion so backend
+    // uses the exact same region that is visible — not a re-computed one.
+    const autoRegionOverride: Partial<ProjectSettings> = (() => {
+      if (updatedSettings.blurBandMode !== 'auto' || !autoBlurBandBoxes.length || sourceWidth <= 0 || sourceHeight <= 0) return {}
+      // Union all auto boxes (may be 2 lanes: upper + lower) into one bounding region.
+      const minX = Math.min(...autoBlurBandBoxes.map((b) => b.x))
+      const minY = Math.min(...autoBlurBandBoxes.map((b) => b.y))
+      const maxX = Math.max(...autoBlurBandBoxes.map((b) => b.x + b.w))
+      const maxY = Math.max(...autoBlurBandBoxes.map((b) => b.y + b.h))
+      return {
+        blurBandAutoRegion: { x: minX / sourceWidth, y: minY / sourceHeight, w: (maxX - minX) / sourceWidth, h: (maxY - minY) / sourceHeight },
+        blurBandAutoRegionVersion: 1,
+      }
+    })()
     const exportOverride: Partial<ProjectSettings> = {
       ...updatedSettings,
+      ...autoRegionOverride,
       exportResolution: options.exportResolution as ProjectSettings['exportResolution'],
       exportVideo: options.exportVideo,
       exportVideoFormat: options.exportVideoFormat,
