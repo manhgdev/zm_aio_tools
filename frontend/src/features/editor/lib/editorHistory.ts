@@ -1,6 +1,8 @@
 import type { Segment, TextOverlay, ProjectSettings } from '@/features/project/project.types'
 import type { MediaClip } from './mediaClips'
 
+import type { TrackId } from './editorUiConsts'
+
 export type EditorSnap = {
   segments: Segment[]
   overlays: TextOverlay[]
@@ -8,7 +10,7 @@ export type EditorSnap = {
   bookmarks: number[]
   selectedId: string | null
   selectedOverlayId: string | null
-  trackFocus: 'video' | 'caption' | 'dub' | 'bg' | 'watermark' | 'ocr' | 'text'
+  trackFocus: TrackId
   videoClips: MediaClip[]
   bgClips: MediaClip[]
   selectedMediaId: string | null

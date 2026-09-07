@@ -46,7 +46,7 @@ type TimelineDragDeps = {
   sourceWidth: number
   sourceHeight: number
   crop: Box
-  trackFocus: 'video' | 'caption' | 'dub' | 'bg' | 'watermark' | 'ocr' | 'text'
+  trackFocus: TrackId
   selected: Segment | undefined
   selectedId: string | null
   selectedIds: string[]

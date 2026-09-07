@@ -6233,11 +6233,19 @@ export default function LivePreviewEditor({
                         focus: 'ocr' as const,
                       },
                       {
+                        id: 'fx' as const,
+                        h: 'h-10',
+                        label: t('Hiệu ứng', 'Effects'),
+                        icon: <span className="text-xs leading-none shrink-0">✦</span>,
+                        mute: false,
+                        hide: true,
+                        lock: true,
+                        focus: 'fx' as const,
+                      },
+                      {
                         id: 'text' as const,
                         h: 'h-10',
-                        label: overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr') || hasTimelineBlurBand
-                          ? t('Văn bản / Hiệu ứng', 'Text / Effects')
-                          : 'Text',
+                        label: t('Văn bản', 'Text'),
                         icon: <span className="text-xs font-semibold leading-none shrink-0">T</span>,
                         mute: false,
                         hide: true,
@@ -6263,7 +6271,8 @@ export default function LivePreviewEditor({
                       && !(logoDetection?.tracks || []).some((track) => (track.text || '').trim().startsWith('@'))
                     ) return null
                     if (row.id === 'ocr' && !overlays.some((overlay) => overlay.track === 'ocr')) return null
-                    if (row.id === 'text' && !hasTimelineBlurBand && !overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr')) return null
+                    if (row.id === 'fx' && !hasTimelineBlurBand) return null
+                    if (row.id === 'text' && !overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr')) return null
                     const muted =
                       row.id === 'bg'
                         ? settings.processOriginalAudio && settings.originalAudioMode === 'mute'
@@ -6990,9 +6999,8 @@ export default function LivePreviewEditor({
                        </div>}
 
 
-                       {/* Text overlay track — chỉ tạo khi thực sự có text. */}
-                       {(hasTimelineBlurBand || overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr')) && <div className={cn('relative h-10 box-border border-b border-border/80 overflow-hidden', trackHidden.text && 'opacity-30')} style={{ backgroundColor: 'var(--background)' }}>
-                         {hasTimelineBlurBand && (
+                       {/* FX / Blur Band track */}
+                       {hasTimelineBlurBand && <div className={cn('relative h-10 box-border border-b border-border/80 overflow-hidden', trackHidden.fx && 'opacity-30')} style={{ backgroundColor: 'var(--background)' }}>
                            <button
                              type="button"
                              data-blur-band-clip=""
@@ -7004,14 +7012,17 @@ export default function LivePreviewEditor({
                                setActiveBboxId(null)
                                setSelectedOverlayId(null)
                                setActiveAutoBlurBand(true)
-                               setTrackFocus('text')
+                               setTrackFocus('fx')
                                setTool('select')
                                setPropTab('caption')
                              }}
                            >
                              <span className="truncate pointer-events-none">{timelineBlurBandLabel}</span>
                            </button>
-                         )}
+                       </div>}
+
+                       {/* Text overlay track — chỉ tạo khi thực sự có text. */}
+                       {overlays.some((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr') && <div className={cn('relative h-10 box-border border-b border-border/80 overflow-hidden', trackHidden.text && 'opacity-30')} style={{ backgroundColor: 'var(--background)' }}>
                          {overlays.filter((overlay) => !isWatermarkOverlay(overlay) && overlay.track !== 'ocr').map((overlay) => {
                            const display = groupDraft?.[overlay.id]
                              ? { ...overlay, ...groupDraft[overlay.id] }
