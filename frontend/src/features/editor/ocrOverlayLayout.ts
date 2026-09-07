@@ -330,11 +330,14 @@ export function layoutMidOverlay(
   const MAX_LINES = 3
   const words = raw.split(/\s+/).filter(Boolean)
 
-  const pads = (fs: number) => ({
-    x: Math.max(16, Math.round(fs * OCR_MID_PAD_EM)),
-    top: Math.max(3, Math.round(fs * 0.1)),
-    bot: Math.max(5, Math.round(fs * 0.2)),
-  })
+  const pads = (fs: number) => {
+    const padY = Math.max(5, Math.round(fs * 0.15))
+    return {
+      x: Math.max(16, Math.round(fs * OCR_MID_PAD_EM)),
+      top: padY,
+      bot: padY,
+    }
+  }
 
   const blockSize = (fs: number, lines: string[]) => {
     const p = pads(fs)
@@ -415,8 +418,8 @@ export function layoutMidOverlay(
       if (sharedLines.length <= MAX_LINES && sharedW <= frameW && sharedSize.needH <= frameH) {
         const cx = seed.x + seed.w / 2
         const cy = seed.y + seed.h / 2
-        const w = Math.max(seed.w, sharedW)
-        const h = Math.max(seed.h, sharedSize.needH)
+        const w = Math.min(frameW, sharedW)
+        const h = Math.min(frameH, sharedSize.needH)
         const cover = clampBox({ x: cx - w / 2, y: cy - h / 2, w, h }, frameW, frameH)
         const p = pads(sharedFont)
         return {
@@ -487,15 +490,21 @@ export function layoutMidOverlay(
     fontPx -= 1
   }
 
-  // ponytail: nới rộng cover ngang nếu chữ dịch tràn bbox gốc
+  // ponytail: co gọn/nới rộng cover theo chữ dịch thực tế
   const p2b = pads(fontPx)
   const maxLineW = Math.max(...lines.map((ln) => estimateLineW(ln, fontPx)), 0)
   const needW = safeWidth(Math.ceil(maxLineW + p2b.x * 2), fontPx)
-  if (allowExpand && needW > cover.w) {
+  const needH = Math.ceil(lines.length * fontPx * LINE + p2b.top + p2b.bot)
+  if (allowExpand) {
     const cx = cover.x + cover.w / 2
+    const cy = cover.y + cover.h / 2
     const newW = Math.min(frameW, needW)
-    const newX = Math.max(0, Math.min(frameW - newW, Math.round(cx - newW / 2)))
-    cover = { ...cover, x: newX, w: newW }
+    const newH = Math.min(frameH, needH)
+    cover = clampBox(
+      { x: cx - newW / 2, y: cy - newH / 2, w: newW, h: newH },
+      frameW,
+      frameH,
+    )
   }
 
   const p3 = pads(fontPx)

@@ -388,7 +388,7 @@ export function resolvePreviewOverLayout(
     overlayLay === 'vertical' ||
     seg?.bbox
   ) {
-    const finalCover = overlayLay === 'mid'
+    const finalCover = overlayLay === 'mid' && seg?.bboxInherited !== false && !coverOverride
       ? expandCoverForCaptionLines(
           base.cover,
           base.lines.length,
