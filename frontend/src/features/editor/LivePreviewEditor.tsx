@@ -1520,7 +1520,7 @@ export default function LivePreviewEditor({
       : undefined
   // Che mask: cover mode = mọi hardsub; below/above = chỉ watermark dọc/nhãn (không che mid)
   const maskBoxes =
-    settings.burnSubs && !trackHidden.caption
+    settings.burnSubs && !trackHidden.fx
       ? coverSegs
           .filter((s) => {
             if (overCoverMode) {
@@ -1528,8 +1528,8 @@ export default function LivePreviewEditor({
               // temporary mask; export still re-measures it from video.
               return hasPreviewCoverBbox(s)
             }
-            // below/above: không che chữ hardsub mid/ngang — chỉ dọc/nhãn
-            return s.layout === 'vertical' || s.layout === 'label'
+            // below/above: không che chữ hardsub mid/ngang — chỉ dọc/nhãn HOẶC kéo tay
+            return s.layout === 'vertical' || s.layout === 'label' || s.bboxInherited === false || s.id === selected?.id
           })
           .map((s) => {
             const override = s.id === selected?.id ? activeCoverDraft : undefined
@@ -1537,6 +1537,7 @@ export default function LivePreviewEditor({
               ? getCachedPreviewLayout(s, override)?.mask ?? resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
               : resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
             if (!mask || !overCoverMode || s.layout === 'vertical' || s.layout === 'label') return mask
+            if (s.bboxInherited === false || override) return mask
             const sourceMask = replacementSourceMask(mask, layoutSegs.flatMap((peer) =>
               peer.bboxDetected === true && peer.bbox && peer.layout !== 'vertical' && peer.layout !== 'label'
                 ? [peer.bbox] : [],
@@ -1549,7 +1550,7 @@ export default function LivePreviewEditor({
   // full-video band makes the mask oversized and disconnects it from caption.
   // Only a user-drawn manual region is intentionally persistent.
   const persistentBlurBandBox = (() => {
-    if (settings.blurBandMode !== 'manual' || !settings.burnSubs || trackHidden.caption || sourceWidth <= 0 || sourceHeight <= 0) return null
+    if (settings.blurBandMode !== 'manual' || !settings.burnSubs || trackHidden.fx || sourceWidth <= 0 || sourceHeight <= 0) return null
     const region = settings.blurBandRegion
     if (!region) return null
     const values = [region.x, region.y, region.w, region.h].map(Number)
@@ -1603,7 +1604,7 @@ export default function LivePreviewEditor({
     ?? persistentBlurBandBox
     ?? autoBlurBandBoxes[Math.min(activeBlurBandIndex, Math.max(0, autoBlurBandBoxes.length - 1))]
     ?? null
-  const blurBandInteractive = Boolean(editableBlurBandBox) && settings.burnSubs && !trackHidden.caption
+  const blurBandInteractive = Boolean(editableBlurBandBox) && settings.burnSubs && !trackHidden.fx
   // Auto lanes remain visible in the timeline as fixed source-text zones.
   const hasTimelineBlurBand = Boolean((persistentBlurBandBox || hasAutoBlurCues) && timelineDuration > 0)
   const timelineBlurBandLabel = settings.blurBandMode === 'manual'
@@ -4071,7 +4072,7 @@ export default function LivePreviewEditor({
     activeCaptionMeta?.fontPx
     ?? overlayLaidFont
     ?? resolveCaptionFontSize(focusCaptionSeg ?? undefined, settings, sourceWidth, sourceHeight)
-  const showCoverBlur = settings.burnSubs && !trackHidden.caption && previewMaskBoxes.length > 0
+  const showCoverBlur = settings.burnSubs && !trackHidden.fx && previewMaskBoxes.length > 0
   const coverMaskStyle = settings.coverMaskStyle ?? 'blur'
   const coverMaskColor = settings.coverMaskColor ?? '#4c1d95'
   const coverMaskOpacity = settings.coverMaskOpacity ?? 0
@@ -4325,8 +4326,10 @@ export default function LivePreviewEditor({
       // Caption track ẩn (icon mắt) → không burn subtitle vào export
       // Phải đặt SAU ...settings để override settings.burnSubs
       // Caption track ẩn (icon mắt) → không burn subtitle vào export
+      // FX track ẩn → không burn blur band
       // Phải đặt SAU ...settings để override settings.burnSubs
-      ...(trackHidden.caption ? { burnSubs: false, coverHardsubs: false, blurBandMode: 'off' as const } : {}),
+      ...(trackHidden.caption ? { burnSubs: false } : {}),
+      ...(trackHidden.fx ? { coverHardsubs: false, blurBandMode: 'off' as const } : {}),
     }
     // Chỉ lưu settings thật (không lưu burnSubs:false tạm từ trackHidden)
     const persistedSettings: ProjectSettings = {
@@ -4366,12 +4369,12 @@ export default function LivePreviewEditor({
         : baked.captionLayout
       if (!cl || !updatedSettings.burnSubs) return baked
       const baseMask = getCachedPreviewLayout(seg)?.mask ?? resolveCoverMaskOnly(seg, sourceWidth, sourceHeight, crop)
-      const sourceMask = baseMask && overCoverMode && !isVertLabel
+      const sourceMask = baseMask && overCoverMode && !isVertLabel && seg.bboxInherited !== false
         ? replacementSourceMask(baseMask, layoutSegs.flatMap((peer) => peer.bboxDetected === true && peer.bbox && peer.layout !== 'vertical' && peer.layout !== 'label' ? [peer.bbox] : []), sourceWidth, sourceHeight)
         : baseMask
       // Snapshot exactly what is painted; blur has its own persistent mask.
       const hasBand = Boolean(persistentBlurBandBox || (settings.blurBandMode === 'auto' && autoBlurBandBoxes.length))
-      const mask = updatedSettings.burnSubs && !hasBand && (overCoverMode || isVertLabel) ? sourceMask : null
+      const mask = updatedSettings.burnSubs && !hasBand && usesOverLayout ? sourceMask : null
       return { ...baked, bbox: seg.bbox, captionLayout: { ...cl, previewVersion: 1 as const, mask } }
     })
     const payload = snapshotSegments(segments)

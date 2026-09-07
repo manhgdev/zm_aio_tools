@@ -174,7 +174,10 @@ def _merge_overlapping_caption_cue_boxes(
         current = _union_box(box_list) if box_list else None
         if current is None:
             continue
-        layout_i = str(segments_by_id.get(cue_segment_ids[i], {}).get("layout") or "horizontal")
+        seg_i = segments_by_id.get(cue_segment_ids[i], {})
+        if seg_i.get("maskOnly"):
+            continue
+        layout_i = str(seg_i.get("layout") or "horizontal")
         if layout_i not in ("horizontal", "mid"):
             continue
         peer_indices = {i}
@@ -188,7 +191,10 @@ def _merge_overlapping_caption_cue_boxes(
             for j, other_list in enumerate(cue_boxes):
                 if j in peer_indices or not other_list:
                     continue
-                layout_j = str(segments_by_id.get(cue_segment_ids[j], {}).get("layout") or "horizontal")
+                seg_j = segments_by_id.get(cue_segment_ids[j], {})
+                if seg_j.get("maskOnly"):
+                    continue
+                layout_j = str(seg_j.get("layout") or "horizontal")
                 if layout_j not in ("horizontal", "mid"):
                     continue
                 cs1, ce1 = float(cues[j][0]), float(cues[j][1])
@@ -426,8 +432,11 @@ def cover_and_burn(
             mid = (ce0 + cs1) * 0.5
             cues[i] = (cs0, mid, bs0, be0, t0, src0, lay0)
             cues[i + 1] = (mid, ce1, bs1, be1, t1, src1, lay1)
-    # Mid-mid: cắt cover/burn tại giữa khe — không đè «hoàn thiện» bằng câu sau
-    mid_idx = [i for i, c in enumerate(cues) if (c[6] if len(c) > 6 else "") == "mid"]
+    # Mid-mid: cắt cover/burn tại giữa khe — không đè «hoàn thiện» bằng câu sau (bỏ qua maskOnly)
+    mid_idx = [
+        i for i, c in enumerate(cues)
+        if not _is_mask_only[i] and (c[6] if len(c) > 6 else "") == "mid"
+    ]
     for a, b in zip(mid_idx, mid_idx[1:]):
         cs0, ce0, bs0, be0, t0, src0, lay0 = cues[a]
         cs1, ce1, bs1, be1, t1, src1, lay1 = cues[b]
@@ -1202,7 +1211,12 @@ def cover_and_burn(
     # The FFmpeg fast path has no per-cue timeline object after the graph is
     # assembled.  Keep cascaded TTS captions on the frame renderer, where the
     # exact spoken start/end is applied to each prepared overlay.
-    needs_preview_accurate_mask = has_feathered_blur or bool(auto_band_segments) or bool(dub_windows)
+    needs_preview_accurate_mask = (
+        has_feathered_blur
+        or bool(auto_band_segments)
+        or bool(persistent_band)
+        or bool(dub_windows)
+    )
     if not needs_preview_accurate_mask and try_render_ffmpeg(
         video,
         out,
