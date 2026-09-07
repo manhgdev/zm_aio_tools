@@ -157,9 +157,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
+
+          # Build bullet-point release notes from commits since previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]' | sed -n '2p' || true)
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..$TAG"
+          else
+            RANGE="$TAG"
+          fi
+
+          NOTES=$(git log "$RANGE" --pretty=format:'%s' --no-merges \
+            | grep -v '^chore: release' \
+            | sed 's/^feat: /🚀 /; s/^fix: /🐛 /; s/^chore: /🔧 /; s/^perf: /⚡ /; s/^refactor: /♻️ /; s/^docs: /📝 /; s/^test: /✅ /' \
+            | awk '{print "- " $0}' \
+            || echo '- Cải tiến và sửa lỗi')
+
+          BODY="## Thay đổi trong $TAG
+
+$NOTES"
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" --clobber
-          elif ! gh release create "$TAG" "$PKG" --generate-notes --title "ZM AIO TOOL $TAG"; then
+          elif ! gh release create "$TAG" "$PKG" --title "ZM AIO TOOL $TAG" --notes "$BODY"; then
             sleep 5
             gh release upload "$TAG" "$PKG" --clobber
           fi
