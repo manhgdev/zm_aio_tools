@@ -139,14 +139,14 @@ export function CloneBatchSettingsPanel({ settings, voices, onChange }: Props) {
               <input
                 type="checkbox"
                 id="blurBandEnabled"
-                checked={(settings.blurBandMode ?? 'off') !== 'off'}
+                checked={(settings.blurBandMode ?? 'auto') !== 'off'}
                 onChange={(e) =>
                   set('blurBandMode', e.target.checked ? 'auto' : 'off')
                 }
               />
               {t('Bật vùng làm mờ (chạy suốt video)', 'Enable blur band (full video)')}
             </label>
-            {(settings.blurBandMode ?? 'off') !== 'off' && (
+            {(settings.blurBandMode ?? 'auto') !== 'off' && (
               <select
                 id="blurBandMode"
                 value={settings.blurBandMode ?? 'auto'}

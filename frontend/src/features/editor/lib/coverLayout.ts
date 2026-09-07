@@ -133,10 +133,11 @@ export function resolveSegmentCover(
 
 /** Seed khung che overlay: chỉ fallback đúng layout; không bbox CJK → null (đừng bịa cột dọc). */
 export function overlayCoverSeed(seg: Segment, frameW: number, frameH: number): PixelBox | null {
-  if (!seg.bbox) {
+  const seed = seg.coverBox ?? seg.bbox
+  if (!seed) {
     return null
   }
-  const box = clampCoverBox(seg.bbox, frameW, frameH)
+  const box = clampCoverBox(seed, frameW, frameH)
   // mid: chỉ bỏ khung gần full-frame (lưới đáy nhầm). 2 dòng hardsub giữa/đáy vẫn giữ.
   return box
 }
@@ -156,7 +157,7 @@ export function toCaptionLayout(caption: PixelBox, lines: string[], fontSize: nu
 /** User đã kéo tay / lưu layout — giữ nguyên bbox (không adaptive reset). */
 export function hasStoredLayout(seg: Segment | undefined, fontPx?: number): boolean {
   const cl = seg?.captionLayout
-  const b = seg?.bbox
+  const b = seg?.captionBox ?? seg?.bbox
   if (!(b && cl?.lines?.length && cl.w > 0 && cl.h > 0)) return false
   if (fontPx != null && fontPx > 0 && cl.fontSize > 0 && fontPx !== cl.fontSize) return false
   return true
@@ -165,7 +166,7 @@ export function hasStoredLayout(seg: Segment | undefined, fontPx?: number): bool
 /** Đọc đúng bbox + captionLayout đã lưu — không tính lại (preview = xuất). */
 export function storedOverLayout(seg: Segment, frameW: number, frameH: number): OverLayout | null {
   const cl = seg.captionLayout
-  const b = seg.bbox
+  const b = seg.captionBox ?? seg.bbox
   if (!b || !cl?.lines?.length || cl.w <= 0 || cl.h <= 0) return null
   return {
     cover: clampCoverBox(b, frameW, frameH),
@@ -187,6 +188,7 @@ export function resolveOverLayout(
   frameH: number,
   coverOverride?: PixelBox,
 ): OverLayout | null {
+  const effOverride = coverOverride ?? (seg?.captionBox ? clampCoverBox(seg.captionBox, frameW, frameH) : undefined)
   if (!seg?.translation.trim()) return null
   if (!settings.burnSubs) return null
   // ponytail: sync measurement font with CSS render font — prevents text overflow
@@ -198,13 +200,12 @@ export function resolveOverLayout(
   const overlayLay = effectiveOverlayLayout(seg, frameH, frameW)
   if (overlayLay) {
     const preferred = resolveOverlayFontPreferred(seg)
-    if (coverOverride) {
-      // Kéo tay: fit theo khung draft (preferred=0 trừ khi user khóa fontSize trên đoạn)
-      // Không khóa captionLayout.fontSize cũ — không thì thả chuột chữ tụt bé lại.
+    if (effOverride) {
+      // Kéo tay hoặc có captionBox riêng: fit theo khung draft/captionBox
       const lockFs = resolveOverlayFontPreferred(seg)
-      const laid = layoutOcrOverlay(overlayLay, coverOverride, seg.translation, lockFs, frameW, frameH, false)
+      const laid = layoutOcrOverlay(overlayLay, effOverride, seg.translation, lockFs, frameW, frameH, false)
       return {
-        cover: clampCoverBox(coverOverride, frameW, frameH),
+        cover: clampCoverBox(effOverride, frameW, frameH),
         caption: laid.caption,
         lines: laid.lines,
         fontPx: laid.fontPx,
@@ -257,13 +258,13 @@ export function resolveOverLayout(
   // Caption đáy/over horizontal — cần chế độ che chữ
   if (!(settings.coverHardsubs && settings.burnSubs)) return null
 
-  // Đang kéo: bám đúng draft (user chỉnh tay)
-  if (coverOverride) {
+  // Đang kéo hoặc có captionBox riêng: bám đúng khung
+  if (effOverride) {
     const dragFont = Math.max(
       10,
-      Math.floor(autoFontFromBbox(coverOverride, seg.translation, fontPx) * 0.86),
+      Math.floor(autoFontFromBbox(effOverride, seg.translation, fontPx) * 0.86),
     )
-    return manualCoverLayout(coverOverride, seg.translation, dragFont, frameW, frameH, true, false)
+    return manualCoverLayout(effOverride, seg.translation, dragFont, frameW, frameH, true, false)
   }
 
   // Đã lưu từ editor (kéo tay) — giữ đúng bbox; chỉ xếp chữ trong cover (như mid)
@@ -377,18 +378,20 @@ export function resolvePreviewOverLayout(
   crop: CropRect,
   coverOverride?: PixelBox,
 ): PreviewOverLayout | null {
-  const base = resolveOverLayout(seg, settings, frameW, frameH, coverOverride)
+  const effOverride = coverOverride ?? (seg?.captionBox ? clampCoverBox(seg.captionBox, frameW, frameH) : undefined)
+  const base = resolveOverLayout(seg, settings, frameW, frameH, effOverride)
   if (!base) return null
-  // Nếu segment có bbox (OCR hoặc user kéo) HOẶC thuộc layout mid/label/vertical
+  // Nếu segment có bbox/captionBox HOẶC thuộc layout mid/label/vertical
   // -> GIỮ NGUYÊN tọa độ đè đúng chỗ. Không tự động shift/fallback xuống đáy màn hình.
   const overlayLay = seg ? effectiveOverlayLayout(seg, frameH, frameW) : null
   if (
     overlayLay === 'mid' ||
     overlayLay === 'label' ||
     overlayLay === 'vertical' ||
+    seg?.captionBox ||
     seg?.bbox
   ) {
-    const finalCover = overlayLay === 'mid' && seg?.bboxInherited !== false && !coverOverride
+    const finalCover = overlayLay === 'mid' && seg?.bboxInherited !== false && !effOverride
       ? expandCoverForCaptionLines(
           base.cover,
           base.lines.length,
@@ -530,8 +533,10 @@ export function segmentWithLayout(
   return {
     ...seg,
     fontFamily: family,
-    fontSize: seg.fontSize && seg.fontSize > 0 ? seg.fontSize : fs,
-    bbox: { x: layout.cover.x, y: layout.cover.y, w: layout.cover.w, h: layout.cover.h },
+    fontSize: seg.fontSize && seg.fontSize > 0 ? seg.fontSize : 0,
+    bbox: seg.bbox ?? { x: layout.cover.x, y: layout.cover.y, w: layout.cover.w, h: layout.cover.h },
+    coverBox: seg.coverBox ?? null,
+    captionBox: seg.captionBox ?? { x: layout.caption.x, y: layout.caption.y, w: layout.caption.w, h: layout.caption.h },
     captionLayout: toCaptionLayout(layout.caption, layout.lines, fs),
   }
 }
@@ -636,26 +641,26 @@ export function buildExportSegments(
   return segments.map((seg) => {
     const styledSeg = stampFont(seg)
     if (!styledSeg.translation.trim()) return styledSeg
-    // below/above: preview hiện caption auto (mid/ngang chưa kéo tay) ở lane
-    // đáy (activeCaptionBox) — bake đúng khung đó, KHÔNG neo bbox OCR.
-    const bottomLane =
-      place !== 'over'
-      && styledSeg.layout !== 'vertical'
-      && styledSeg.layout !== 'label'
-      && styledSeg.bboxInherited !== false
-    if (!bottomLane) {
+    const isVertLabel = styledSeg.layout === 'vertical' || styledSeg.layout === 'label'
+    if (isVertLabel) {
       const layout = resolvePreviewOverLayout(styledSeg, settings, frameW, frameH, crop)
+      if (layout) {
+        const fontPx = layout.fontPx ?? resolveCaptionFontSize(styledSeg, settings, frameW, frameH)
+        return segmentWithLayout(styledSeg, layout, fontPx, settings)
+      }
+      return styledSeg
+    }
+    // Caption kéo tay riêng (captionBox): xuất đúng tọa độ người dùng đã kéo
+    if (styledSeg.captionBox) {
+      const norm = clampCoverBox(styledSeg.captionBox, frameW, frameH)
+      const layout = resolvePreviewOverLayout(styledSeg, settings, frameW, frameH, crop, norm)
       if (layout) {
         const fontPx = layout.fontPx ?? resolveCaptionFontSize(styledSeg, settings, frameW, frameH)
         return segmentWithLayout(styledSeg, layout, fontPx, settings)
       }
     }
     // Chèn dưới/trên: bake mid + horizontal (không dọc/nhãn) — khớp preview emerald box
-    if (
-      (place === 'below' || place === 'above')
-      && styledSeg.layout !== 'vertical'
-      && styledSeg.layout !== 'label'
-    ) {
+    if (place === 'below' || place === 'above') {
       const lane = hardsubLaneForSegment(segments, frameW, frameH, styledSeg)
       const baked = resolveBelowAboveLayout(styledSeg, settings, frameW, frameH, crop, place, lane)
       if (baked) {
@@ -666,6 +671,12 @@ export function buildExportSegments(
           settings,
         )
       }
+    }
+    // Che chữ cũ (place === 'over')
+    const layout = resolvePreviewOverLayout(styledSeg, settings, frameW, frameH, crop)
+    if (layout) {
+      const fontPx = layout.fontPx ?? resolveCaptionFontSize(styledSeg, settings, frameW, frameH)
+      return segmentWithLayout(styledSeg, layout, fontPx, settings)
     }
     return styledSeg
   })

@@ -23,7 +23,7 @@ def test_engine_label_reports_coreml_when_the_onnx_session_uses_it() -> None:
     assert runtime.engine_device_label(Engine()) == "CoreML"
 
 
-def test_rapidocr_inserts_coreml_before_cpu_when_provider_is_available(monkeypatch) -> None:
+def test_rapidocr_does_not_insert_coreml_ep_into_session(monkeypatch) -> None:
     class FakeOrtInferSession:
         def __init__(self) -> None:
             self.had_providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
@@ -42,5 +42,5 @@ def test_rapidocr_inserts_coreml_before_cpu_when_provider_is_available(monkeypat
     runtime._patch_rapidocr_onnxruntime_ep()
 
     providers = FakeOrtInferSession()._get_ep_list()
-    assert providers[0][0] == "CoreMLExecutionProvider"
-    assert providers[1][0] == "CPUExecutionProvider"
+    assert all(name != "CoreMLExecutionProvider" for name, _opts in providers)
+    assert providers[0][0] == "CPUExecutionProvider"

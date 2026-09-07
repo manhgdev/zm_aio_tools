@@ -43,7 +43,7 @@ def test_changed_lane_is_bisected_and_budget_is_bounded() -> None:
         20: (300, 1450, 700, 1530),
     }
     assert _refinement_indices(boxes, 21, 1080, 1920) == [10]
-    assert _QUICK_PROBE_LIMIT == 16
+    assert _QUICK_PROBE_LIMIT == 32
 
 
 def test_missed_anchor_retries_nearest_cue() -> None:

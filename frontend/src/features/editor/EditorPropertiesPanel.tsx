@@ -14,7 +14,7 @@ import { EditorMaskPanel, type CoverApplyRange } from '@/features/editor/EditorM
 import {
   type PixelBox,
   type PropTab,
-  AUTO_SUBTITLE_FONT,
+  autoSubtitleFontSize,
   CAPTION_COLORS,
   CAPTION_FONT_PRESETS,
   COVER_MASK_STYLES,
@@ -439,14 +439,14 @@ export function EditorPropertiesPanel({
                               <input
                                 type="checkbox"
                                 className="size-3.5 accent-primary"
-                                checked={(settings.blurBandMode ?? 'off') !== 'off'}
+                                checked={(settings.blurBandMode ?? 'auto') !== 'off'}
                                 onChange={(e) =>
                                   onSettings({ ...settings, blurBandMode: e.target.checked ? 'auto' : 'off' })
                                 }
                               />
                               <span className="text-xs font-medium">{t('Vùng làm mờ cố định', 'Persistent blur zone')}</span>
                             </label>
-                            {(settings.blurBandMode ?? 'off') !== 'off' && (
+                            {(settings.blurBandMode ?? 'auto') !== 'off' && (
                               <>
                                 <select
                                   className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs outline-none focus:border-ring"
@@ -634,8 +634,11 @@ export function EditorPropertiesPanel({
                                 >
                                   <option value="0">
                                     {isOverlaySeg
-                                      ? 'Tự động theo khung (đủ đọc)'
-                                      : `Tự động (${AUTO_SUBTITLE_FONT}px${settings.subtitleFontSize > 0 ? ` · dự án ${settings.subtitleFontSize}px` : ''})`}
+                                      ? t('Tự động theo khung (đủ đọc)', 'Auto fit to box (readable)')
+                                      : t(
+                                          `Tự động (${autoSubtitleFontSize(sourceWidth, sourceHeight)}px${settings.subtitleFontSize > 0 ? ` · dự án ${settings.subtitleFontSize}px` : ''})`,
+                                          `Auto (${autoSubtitleFontSize(sourceWidth, sourceHeight)}px${settings.subtitleFontSize > 0 ? ` · project ${settings.subtitleFontSize}px` : ''})`,
+                                        )}
                                   </option>
                                   {fontSizeOptions.map((px) => (
                                     <option key={px} value={px}>{px} px</option>

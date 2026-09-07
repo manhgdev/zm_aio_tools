@@ -801,14 +801,14 @@ export default function Sidebar({
             </span>
             <input
               type="checkbox"
-              checked={(settings.blurBandMode ?? 'off') !== 'off'}
+              checked={(settings.blurBandMode ?? 'auto') !== 'off'}
               disabled={busy}
               onChange={(e) => {
                 if (!busy) onSettings({ ...settings, blurBandMode: e.target.checked ? 'auto' : 'off' })
               }}
             />
           </label>
-          {(settings.blurBandMode ?? 'off') !== 'off' && (
+          {(settings.blurBandMode ?? 'auto') !== 'off' && (
             <select
               className="blur-zone-select"
               value={settings.blurBandMode ?? 'auto'}

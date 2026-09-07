@@ -1153,9 +1153,10 @@ export default function LivePreviewEditor({
     : appliedCrop
   const getCachedPreviewLayout = (s: Segment, override?: PixelBox) => {
     const cl = s.captionLayout
+    const cb = s.captionBox
     // Cover mode changes the geometry (caption must be inside the mask), so it
     // must invalidate a layout calculated for above/below mode.
-    const key = `v17|${s.id}|${s.translation}|${s.layout}|${s.bboxInherited}|${s.bboxDetected}|${s.bbox ? `${s.bbox.x},${s.bbox.y},${s.bbox.w},${s.bbox.h}` : ''}|${cl ? `${cl.x},${cl.y},${cl.w},${cl.h},${cl.fontSize},${(cl.lines || []).join('\\n')}` : ''}|${settings.burnSubs}|${settings.coverHardsubs}|${settings.captionPlacement}|${settings.subtitleFontSize}|${s.fontFamily || settings.subtitleFontFamily}|${crop.x},${crop.y},${crop.w},${crop.h}|${override ? `${override.x},${override.y},${override.w},${override.h}` : ''}`
+    const key = `v18|${s.id}|${s.translation}|${s.layout}|${s.bboxInherited}|${s.bboxDetected}|${s.bbox ? `${s.bbox.x},${s.bbox.y},${s.bbox.w},${s.bbox.h}` : ''}|${cb ? `${cb.x},${cb.y},${cb.w},${cb.h}` : ''}|${cl ? `${cl.x},${cl.y},${cl.w},${cl.h},${cl.fontSize},${(cl.lines || []).join('\\n')}` : ''}|${settings.burnSubs}|${settings.coverHardsubs}|${settings.captionPlacement}|${settings.subtitleFontSize}|${s.fontFamily || settings.subtitleFontFamily}|${crop.x},${crop.y},${crop.w},${crop.h}|${override ? `${override.x},${override.y},${override.w},${override.h}` : ''}`
     const cached = layoutCacheRef.current[s.id]
     if (cached && cached.key === key) {
       return cached.val
@@ -1515,10 +1516,6 @@ export default function LivePreviewEditor({
     ?? (coverSeg && (isOcrOverlayLayout(coverSeg.layout) || (coverSeg.translation || '').trim()) ? coverSeg : null)
     ?? timelineSeg
     ?? selectedLayout
-  const activeCoverDraft =
-    bboxSeg && bboxDraft && bboxSeg.id === selected?.id
-      ? bboxDraft
-      : undefined
   // Che mask: cover mode = mọi hardsub; below/above = chỉ watermark dọc/nhãn (không che mid)
   const maskBoxes =
     settings.burnSubs && !trackHidden.fx
@@ -1529,16 +1526,15 @@ export default function LivePreviewEditor({
               // temporary mask; export still re-measures it from video.
               return hasPreviewCoverBbox(s)
             }
-            // below/above: không che chữ hardsub mid/ngang — chỉ dọc/nhãn HOẶC kéo tay
-            return s.layout === 'vertical' || s.layout === 'label' || s.bboxInherited === false || s.id === selected?.id
+            // below/above: không che chữ hardsub mid/ngang — chỉ dọc/nhãn HOẶC có coverBox riêng
+            return s.layout === 'vertical' || s.layout === 'label' || Boolean(s.coverBox)
           })
           .map((s) => {
-            const override = s.id === selected?.id ? activeCoverDraft : undefined
             const mask = s.translation.trim()
-              ? getCachedPreviewLayout(s, override)?.mask ?? resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
-              : resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop, override)
+              ? getCachedPreviewLayout(s)?.mask ?? resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop)
+              : resolveCoverMaskOnly(s, sourceWidth, sourceHeight, crop)
             if (!mask || !overCoverMode || s.layout === 'vertical' || s.layout === 'label') return mask
-            if (s.bboxInherited === false || override) return mask
+            if (s.bboxInherited === false) return mask
             const sourceMask = replacementSourceMask(mask, layoutSegs.flatMap((peer) =>
               peer.bboxDetected === true && peer.bbox && peer.layout !== 'vertical' && peer.layout !== 'label'
                 ? [peer.bbox] : [],
@@ -1595,23 +1591,9 @@ export default function LivePreviewEditor({
       return [{ x: 0, y, w: sourceWidth, h: height }]
     })
   }, [layoutSegs, settings.blurBandAutoRegion, settings.blurBandAutoRegionVersion, sourceHeight, sourceWidth])
-  const previewMaskBoxes = persistentBlurBandBox
-    ? [persistentBlurBandBox]
-    : settings.blurBandMode === 'auto' && autoBlurBandBoxes.length
-      ? autoBlurBandBoxes
-      : maskBoxes
-  const hasAutoBlurCues = settings.blurBandMode === 'auto' && autoBlurBandBoxes.length > 0
-  const editableBlurBandBox = blurBandDraft
-    ?? persistentBlurBandBox
-    ?? autoBlurBandBoxes[Math.min(activeBlurBandIndex, Math.max(0, autoBlurBandBoxes.length - 1))]
-    ?? null
-  const blurBandInteractive = Boolean(editableBlurBandBox) && settings.burnSubs && !trackHidden.fx
-  // Auto lanes remain visible in the timeline as fixed source-text zones.
-  const hasTimelineBlurBand = Boolean((persistentBlurBandBox || hasAutoBlurCues) && timelineDuration > 0)
-  const timelineBlurBandLabel = settings.blurBandMode === 'manual'
-    ? t('Vùng làm mờ thủ công', 'Manual blur zone')
-    : t('Làm mờ tự động (OCR)', 'Auto blur (OCR)')
-  const captionBandForSegment = (segment: Segment) => {
+  const activeBlurBandForSegment = (segment: Segment) => {
+    if (blurBandDraft) return blurBandDraft
+    if (persistentBlurBandBox) return persistentBlurBandBox
     if (!autoBlurBandBoxes.length) return null
     const center = segment.bbox
       ? segment.bbox.y + segment.bbox.h / 2
@@ -1622,14 +1604,59 @@ export default function LivePreviewEditor({
         : nearest,
     )
   }
+  const captionBandForSegment = activeBlurBandForSegment
+  const placement = captionPlacement(settings)
+  // below/above: mid + horizontal — cỡ = bbox che, neo trên/dưới dải OCR
+  const activeCaptionMeta = (() => {
+    if (!overlayBurnOn || trackHidden.caption || !captionTimelineSeg?.translation.trim() || placement === 'over') {
+      return null as null | { box: PixelBox; fontPx: number; lines: string[] }
+    }
+    if (captionTimelineSeg.layout === 'vertical' || captionTimelineSeg.layout === 'label') return null
+    if (captionTimelineSeg.bboxInherited === false) return null
+    const lane = captionBandForSegment(captionTimelineSeg) ?? hardsubLaneForSegment(
+      layoutSegs,
+      sourceWidth,
+      sourceHeight,
+      captionTimelineSeg,
+    )
+    const laid = resolveBelowAboveLayout(
+      captionTimelineSeg,
+      settings,
+      sourceWidth,
+      sourceHeight,
+      crop,
+      placement,
+      lane,
+    )
+    if (!laid) return null
+    return {
+      box: laid.caption,
+      fontPx: laid.fontPx ?? resolveCaptionFontSize(captionTimelineSeg, settings, sourceWidth, sourceHeight),
+      lines: laid.lines,
+    }
+  })()
+  const activeCaptionBox = activeCaptionMeta?.box ?? null
+  const hasBand = Boolean(persistentBlurBandBox || ((settings.blurBandMode ?? 'auto') === 'auto' && autoBlurBandBoxes.length))
+  const hasAutoBlurCues = (settings.blurBandMode ?? 'auto') === 'auto' && autoBlurBandBoxes.length > 0
+  const editableBlurBandBox = blurBandDraft
+    ?? persistentBlurBandBox
+    ?? autoBlurBandBoxes[Math.min(activeBlurBandIndex, Math.max(0, autoBlurBandBoxes.length - 1))]
+    ?? null
+  const blurBandInteractive = Boolean(editableBlurBandBox) && settings.burnSubs && !trackHidden.fx
+  // Auto lanes remain visible in the timeline as fixed source-text zones.
+  const hasTimelineBlurBand = Boolean((persistentBlurBandBox || hasAutoBlurCues) && timelineDuration > 0)
+  const timelineBlurBandLabel = settings.blurBandMode === 'manual'
+    ? t('Vùng làm mờ thủ công', 'Manual blur zone')
+    : t('Làm mờ tự động (OCR)', 'Auto blur (OCR)')
   // Caption "over" layers: cover mode; hoặc dọc/nhãn. Mid/horizontal ở below/above → activeCaptionBox.
   const captionLayers =
     overlayBurnOn && !trackHidden.caption
       ? captionTimelineSegs.map((s) => {
           const isVertLabel = s.layout === 'vertical' || s.layout === 'label'
           if (!overCoverMode) {
-            // below/above: không vẽ mid/horizontal kiểu cover (đè OCR)
-            if (!isVertLabel && s.bboxInherited !== false) return null
+            // below/above: mid/horizontal đã được render bởi activeCaptionBox (ở trên/dưới)
+            // Tuyệt đối không vẽ thêm một bản dịch nữa vào preview qua captionLayers
+            if (!isVertLabel) return null
           } else if (
             !isOcrOverlayLayout(s.layout)
             && !effectiveOverlayLayout(s, sourceHeight, sourceWidth)
@@ -1637,13 +1664,11 @@ export default function LivePreviewEditor({
           ) {
             return null
           }
-          const liveDragBox = s.id === selected?.id ? activeCoverDraft : undefined
-          // Center cover captions in the stable OCR lane, not in the manual
-          // blur region. This preserves the original fixed caption alignment
-          // while keeping the two drag geometries independent.
-          // BUT: if the user manually modified this segment's bbox (bboxInherited === false)
-          // or is actively dragging it (liveDragBox), we MUST render it at that specific position!
-          const captionBand = overCoverMode && !isVertLabel && s.bboxInherited !== false && !liveDragBox ? captionBandForSegment(s) : null
+          const liveDragBox = s.id === selected?.id && bboxDraft ? bboxDraft : undefined
+          // Caption band: chỉ neo chữ vào blur band khi ở overCoverMode (che hardsub gốc)
+          const captionBand = !s.captionBox && overCoverMode && !isVertLabel && s.bboxInherited !== false && !liveDragBox
+            ? activeBlurBandForSegment(s)
+            : null
           const layout = captionBand
             ? resolvePreviewOverLayout(
                 { ...s, bbox: captionBand, bboxInherited: false, captionLayout: null },
@@ -1656,6 +1681,58 @@ export default function LivePreviewEditor({
           return layout ? { seg: s, layout, outsideFallback: false } : null
         }).filter((x): x is { seg: Segment; layout: NonNullable<ReturnType<typeof resolvePreviewOverLayout>>; outsideFallback: boolean } => !!x)
       : []
+  const previewMaskBoxes = useMemo(() => {
+    const baseBands = blurBandDraft
+      ? [blurBandDraft]
+      : persistentBlurBandBox
+        ? [persistentBlurBandBox]
+        : (settings.blurBandMode ?? 'auto') === 'auto' && autoBlurBandBoxes.length
+          ? autoBlurBandBoxes
+          : []
+
+    if (!baseBands.length) {
+      return maskBoxes
+    }
+
+    // Dynamic blur band expansion: ONLY when overCoverMode is true (caption is inside the blur band),
+    // the caption is NOT actively being dragged (bboxDraft is null), has NO separate captionBox,
+    // and actually has multiple lines (> 1). Dragging a caption never stretches the blur band!
+    const expandableBoxes = overCoverMode && !bboxDraft
+      ? captionLayers
+          .filter((c) => !c.seg.captionBox && c.layout.lines.length > 1)
+          .map((c) => c.layout.cover)
+      : []
+
+    const expandedBands = baseBands.map((band) => {
+      const laneBoxes = expandableBoxes.filter((box) => {
+        const overlap = Math.max(0, Math.min(box.y + box.h, band.y + band.h) - Math.max(box.y, band.y))
+        return overlap >= Math.min(band.h, box.h) * 0.4
+      })
+      if (!laneBoxes.length) return band
+      let minY = band.y
+      let maxBottom = band.y + band.h
+      for (const box of laneBoxes) {
+        if (box.y < minY) minY = box.y
+        if (box.y + box.h > maxBottom) maxBottom = box.y + box.h
+      }
+      return clampCoverBox({
+        x: 0,
+        y: Math.max(0, minY),
+        w: sourceWidth,
+        h: Math.min(sourceHeight, maxBottom) - Math.max(0, minY),
+      }, sourceWidth, sourceHeight)
+    })
+
+    // Retain any active vertical, label, or separate masks outside the horizontal band lanes
+    const otherMasks = maskBoxes.filter((box) => {
+      return !baseBands.some((band) => {
+        const overlap = Math.max(0, Math.min(box.y + box.h, band.y + band.h) - Math.max(box.y, band.y))
+        return overlap >= Math.min(band.h, box.h) * 0.4
+      })
+    })
+
+    return [...expandedBands, ...otherMasks]
+  }, [blurBandDraft, persistentBlurBandBox, settings.blurBandMode, autoBlurBandBoxes, maskBoxes, captionLayers, sourceHeight, sourceWidth])
   const captionOverLayout =
     captionLayers.find((c) => c.seg.id === bboxSeg?.id)?.layout
     ?? captionLayers.find((c) => c.seg.id === timelineSeg?.id)?.layout
@@ -1663,18 +1740,22 @@ export default function LivePreviewEditor({
     ?? null
   const bboxLayoutCover =
     bboxSeg && captionLayers.find((c) => c.seg.id === bboxSeg.id)?.layout.cover
+  const isBboxVertOrLabel = bboxSeg?.layout === 'vertical' || bboxSeg?.layout === 'label'
   const selectedBox = bboxDraft && selected && bboxSeg?.id === selected.id
     ? bboxDraft
-    : bboxLayoutCover
+    : (placement !== 'over' && !isBboxVertOrLabel && activeCaptionBox
+        ? activeCaptionBox
+        : (bboxSeg?.captionBox ? clampCoverBox(bboxSeg.captionBox, sourceWidth, sourceHeight) : null))
+      ?? bboxLayoutCover
       ?? (bboxSeg
         ? (
-            getCachedPreviewLayout(bboxSeg)?.cover
-            ?? resolveCoverMaskOnly(bboxSeg, sourceWidth, sourceHeight, crop)
-            ?? (bboxSeg.bbox ? clampCoverBox(bboxSeg.bbox, sourceWidth, sourceHeight) : null)
-            ?? overlayCoverSeed(bboxSeg, sourceWidth, sourceHeight)
+            (overCoverMode ? getCachedPreviewLayout(bboxSeg)?.cover : null)
+            ?? (overCoverMode ? resolveCoverMaskOnly(bboxSeg, sourceWidth, sourceHeight, crop) : null)
+            ?? (overCoverMode && bboxSeg.bbox ? clampCoverBox(bboxSeg.bbox, sourceWidth, sourceHeight) : null)
+            ?? (overCoverMode ? overlayCoverSeed(bboxSeg, sourceWidth, sourceHeight) : null)
           )
         : null)
-      ?? selectedBoxSource
+      ?? (overCoverMode || isBboxVertOrLabel ? selectedBoxSource : null)
   // Caption bbox is always clickable during its own time range, just like a
   // manual blur region. It must not depend on first selecting the timeline row.
   const bboxInteractiveAtPlayhead = (() => {
@@ -1690,6 +1771,19 @@ export default function LivePreviewEditor({
   const showBboxAtPlayhead = bboxInteractiveAtPlayhead
     && activeBboxId === bboxSeg?.id
     && !selectedOverlayId
+  const prevCaptionPlacementRef = useRef(settings.captionPlacement)
+  const prevCoverHardsubsRef = useRef(settings.coverHardsubs)
+  useEffect(() => {
+    if (
+      prevCaptionPlacementRef.current !== settings.captionPlacement
+      || prevCoverHardsubsRef.current !== settings.coverHardsubs
+    ) {
+      prevCaptionPlacementRef.current = settings.captionPlacement
+      prevCoverHardsubsRef.current = settings.coverHardsubs
+      setActiveBboxId(null)
+      setBboxDraft(null)
+    }
+  }, [settings.captionPlacement, settings.coverHardsubs])
   useEffect(() => {
     if (activeBboxId || selectedOverlayId || (activeAutoBlurBand && trackFocus !== 'text')) {
       setActiveAutoBlurBand(false)
@@ -2782,6 +2876,8 @@ export default function LivePreviewEditor({
 
   function applyCaptionModeAll(mode: 'cover' | 'below' | 'above' | 'none') {
     pushHistory()
+    setActiveBboxId(null)
+    setBboxDraft(null)
     if (mode === 'cover') {
       onSettings({ ...settings, coverHardsubs: true, burnSubs: true })
       return
@@ -2789,11 +2885,11 @@ export default function LivePreviewEditor({
     if (mode === 'none') {
       onSettings({ ...settings, coverHardsubs: false, burnSubs: false })
       void onSegmentsReplace(
-        segments.map((s) => ({ ...s, captionLayout: null })),
+        segments.map((s) => ({ ...s, captionBox: null, captionLayout: null })),
       )
       return
     }
-    // below/above: tắt che, xóa layout bake cover (đỡ đè OCR như mode cover)
+    // below/above: tắt che, xóa layout bake cover và xóa captionBox kéo tay (về vị trí chuẩn trên/dưới)
     onSettings({
       ...settings,
       coverHardsubs: false,
@@ -2801,7 +2897,7 @@ export default function LivePreviewEditor({
       captionPlacement: mode,
     })
     void onSegmentsReplace(
-      segments.map((s) => ({ ...s, captionLayout: null })),
+      segments.map((s) => ({ ...s, captionBox: null, captionLayout: null })),
     )
   }
 
@@ -4045,37 +4141,6 @@ export default function LivePreviewEditor({
           resolveOverlayFontPreferred(timelineSeg),
         )
       : undefined)
-  const placement = captionPlacement(settings)
-  // below/above: mid + horizontal — cỡ = bbox che, neo trên/dưới dải OCR
-  const activeCaptionMeta = (() => {
-    if (!overlayBurnOn || trackHidden.caption || !captionTimelineSeg?.translation.trim() || placement === 'over') {
-      return null as null | { box: PixelBox; fontPx: number; lines: string[] }
-    }
-    if (captionTimelineSeg.layout === 'vertical' || captionTimelineSeg.layout === 'label') return null
-    if (captionTimelineSeg.bboxInherited === false) return null
-    const lane = captionBandForSegment(captionTimelineSeg) ?? hardsubLaneForSegment(
-      layoutSegs,
-      sourceWidth,
-      sourceHeight,
-      captionTimelineSeg,
-    )
-    const laid = resolveBelowAboveLayout(
-      captionTimelineSeg,
-      settings,
-      sourceWidth,
-      sourceHeight,
-      crop,
-      placement,
-      lane,
-    )
-    if (!laid) return null
-    return {
-      box: laid.caption,
-      fontPx: laid.fontPx ?? resolveCaptionFontSize(captionTimelineSeg, settings, sourceWidth, sourceHeight),
-      lines: laid.lines,
-    }
-  })()
-  const activeCaptionBox = activeCaptionMeta?.box ?? null
   const activeCaptionPx =
     activeCaptionMeta?.fontPx
     ?? overlayLaidFont
@@ -4367,11 +4432,11 @@ export default function LivePreviewEditor({
       if (baked.isCompound && baked.compoundChildren) return { ...baked, compoundChildren: snapshotSegments(baked.compoundChildren) }
       const seg = layoutSegs.find((item) => item.id === items[index].id) ?? items[index]
       const isVertLabel = seg.layout === 'vertical' || seg.layout === 'label'
-      const band = overCoverMode && !isVertLabel ? captionBandForSegment(seg) : null
+      const band = overCoverMode && !seg.captionBox && !isVertLabel && seg.bboxInherited !== false ? activeBlurBandForSegment(seg) : null
       const layout = band
         ? resolvePreviewOverLayout({ ...seg, bbox: band, bboxInherited: false, captionLayout: null }, updatedSettings, sourceWidth, sourceHeight, crop)
         : getCachedPreviewLayout(seg)
-      const usesOverLayout = overCoverMode || isVertLabel || seg.bboxInherited === false
+      const usesOverLayout = overCoverMode || isVertLabel || Boolean(seg.captionBox)
       const cl = usesOverLayout && layout
         ? { ...layout.cover, lines: layout.lines, fontSize: layout.fontPx ?? baked.captionLayout?.fontSize ?? 16 }
         : baked.captionLayout
@@ -4380,10 +4445,39 @@ export default function LivePreviewEditor({
       const sourceMask = baseMask && overCoverMode && !isVertLabel && seg.bboxInherited !== false
         ? replacementSourceMask(baseMask, layoutSegs.flatMap((peer) => peer.bboxDetected === true && peer.bbox && peer.layout !== 'vertical' && peer.layout !== 'label' ? [peer.bbox] : []), sourceWidth, sourceHeight)
         : baseMask
-      // Snapshot exactly what is painted; blur has its own persistent mask.
-      const hasBand = Boolean(persistentBlurBandBox || (settings.blurBandMode === 'auto' && autoBlurBandBoxes.length))
-      const mask = updatedSettings.burnSubs && !hasBand && usesOverLayout ? sourceMask : null
-      return { ...baked, bbox: seg.bbox, captionLayout: { ...cl, previewVersion: 1 as const, mask } }
+      // Snapshot exactly what is painted.
+      // If a blur band is active and this segment extends outside the base band,
+      // export an expanded full-width mask for this segment so backend blurs
+      // the enlarged region during this segment and reverts to the base band outside it.
+      let mask: PixelBox | null = null
+      if (updatedSettings.burnSubs && overCoverMode) {
+        if (band) {
+          const overlap = Math.max(0, Math.min(cl.y + cl.h, band.y + band.h) - Math.max(cl.y, band.y))
+          if (overlap >= Math.min(band.h, cl.h) * 0.4) {
+            const topY = Math.min(band.y, cl.y)
+            const botY = Math.max(band.y + band.h, cl.y + cl.h)
+            if (topY < band.y - 1 || botY > band.y + band.h + 1) {
+              mask = clampCoverBox({
+                x: 0,
+                y: Math.max(0, topY),
+                w: sourceWidth,
+                h: Math.min(sourceHeight, botY) - Math.max(0, topY),
+              }, sourceWidth, sourceHeight)
+            }
+          }
+        } else if (!hasBand || seg.bboxInherited === false) {
+          mask = sourceMask
+        }
+      } else if (updatedSettings.burnSubs && isVertLabel) {
+        mask = baseMask
+      }
+      return {
+        ...baked,
+        bbox: seg.bbox,
+        coverBox: seg.coverBox ?? (mask || null),
+        captionBox: seg.captionBox ?? (usesOverLayout ? { x: cl.x, y: cl.y, w: cl.w, h: cl.h } : null),
+        captionLayout: { ...cl, previewVersion: 1 as const, mask },
+      }
     })
     const payload = snapshotSegments(segments)
     // Sau Áp dụng tốc độ: work file = đồng hồ display — dùng start/end timeline (không sourceStart 1×).
@@ -4409,7 +4503,7 @@ export default function LivePreviewEditor({
     // Blur band auto: snapshot preview band into blurBandAutoRegion so backend
     // uses the exact same region that is visible — not a re-computed one.
     const autoRegionOverride: Partial<ProjectSettings> = (() => {
-      if (updatedSettings.blurBandMode !== 'auto' || !autoBlurBandBoxes.length || sourceWidth <= 0 || sourceHeight <= 0) return {}
+      if ((updatedSettings.blurBandMode ?? 'auto') !== 'auto' || !autoBlurBandBoxes.length || sourceWidth <= 0 || sourceHeight <= 0) return {}
       // Union all auto boxes (may be 2 lanes: upper + lower) into one bounding region.
       const minX = Math.min(...autoBlurBandBoxes.map((b) => b.x))
       const minY = Math.min(...autoBlurBandBoxes.map((b) => b.y))
@@ -4649,6 +4743,7 @@ export default function LivePreviewEditor({
                         onCancel={onCancel}
                         onDub={onDub}
                         onExport={() => setIsExportModalOpen(true)}
+                        applyCaptionModeAll={applyCaptionModeAll}
                         onUpdateSpeakerProfile={updateSpeakerProfile}
                       />
                     )}
@@ -4783,6 +4878,7 @@ export default function LivePreviewEditor({
                         onCancel={onCancel}
                         onDub={onDub}
                         onExport={() => setIsExportModalOpen(true)}
+                        applyCaptionModeAll={applyCaptionModeAll}
                         onUpdateSpeakerProfile={updateSpeakerProfile}
                       />
                     )}
@@ -5292,7 +5388,7 @@ export default function LivePreviewEditor({
                       {/* Bbox caption: same thin, unobtrusive frame as manual blur. */}
                       {bboxSeg && selectedBox && bboxInteractiveAtPlayhead && tool !== 'text' && (
                         <div
-                          data-cover-mask-preview={showBboxAtPlayhead && !maskBoxes.length && showCoverBlur ? '' : undefined}
+                          data-cover-mask-preview={showBboxAtPlayhead && !maskBoxes.length && showCoverBlur && overCoverMode ? '' : undefined}
                           className={cn(
                             // Preview subtitles render above the mask. Keep its editable hitbox
                             // above them as well, otherwise a transparent caption layer swallows clicks.
@@ -5301,12 +5397,12 @@ export default function LivePreviewEditor({
                             // subtitle. Otherwise this invisible bbox steals its move cursor.
                             (selectedOverlayId || activeAutoBlurBand) && 'pointer-events-none',
                             showBboxAtPlayhead ? 'border-white/75 border-dashed' : 'border-transparent bg-transparent',
-                            showBboxAtPlayhead && !showCoverBlur && 'bg-white/5',
+                            showBboxAtPlayhead && (!showCoverBlur || !overCoverMode) && 'bg-white/5',
                             draggingBox && 'opacity-80',
                           )}
                           style={{
                             ...sourceToDisplayStyle(selectedBox, crop),
-                            ...(showBboxAtPlayhead && !maskBoxes.length && showCoverBlur
+                            ...(showBboxAtPlayhead && !maskBoxes.length && showCoverBlur && overCoverMode
                               ? coverMaskPreviewStyle(coverMaskStyle, coverMaskColor, coverMaskOpacity)
                               : {}),
                           }}

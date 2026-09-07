@@ -214,6 +214,8 @@ def _merge_segment_content(dst: dict, src: dict, *, prefer_src: bool = False) ->
         "audioFile",
         "audioDuration",
         "bbox",
+        "coverBox",
+        "captionBox",
         "bboxInherited",
         "captionLayout",
         "layout",

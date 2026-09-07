@@ -32,7 +32,7 @@ class Settings(BaseModel):
     # from coverLogo so each detected logo can be toggled independently.
     hiddenLogoTexts: list[str] = []
     coverHardsubs: bool = True
-    blurBandMode: Literal["off", "auto", "manual"] = "off"
+    blurBandMode: Literal["off", "auto", "manual"] = "auto"
     blurBandRegion: dict[str, float] | None = None
     blurBandAutoRegion: dict[str, float] | None = None
     blurBandAutoRegionVersion: int = 0
@@ -121,6 +121,8 @@ class SegmentIn(BaseModel):
         pattern=r"^(?:system|segoe|arial|bold|helvetica|verdana|tahoma|trebuchet|rounded|impact|georgia|times|palatino|garamond|courier|mono|comic|cjk|meiryo|malgun)$",
     )
     textColor: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    coverBox: dict[str, Any] | None = None
+    captionBox: dict[str, Any] | None = None
     captionLayout: dict[str, Any] | None = None
     groupId: str | None = None
     isCompound: bool | None = None
@@ -311,6 +313,8 @@ SEG_PRESERVE = (
     "bbox",
     "bboxInherited",
     "bboxDetected",
+    "coverBox",
+    "captionBox",
     "captionLayout",
     "layout",
     "dub",

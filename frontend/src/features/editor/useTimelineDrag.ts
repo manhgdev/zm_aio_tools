@@ -179,11 +179,11 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
   } = deps
 
   function commitCaptionBoxResult(next: Segment, skipHistory: boolean) {
-    if (!applyCaptionToAll || !next.bbox) {
+    if (!applyCaptionToAll || (!next.captionBox && !next.bbox)) {
       editSegment(next, { skipHistory })
       return
     }
-    const box = next.bbox
+    const box = next.captionBox ?? next.bbox!
     const lane = captionLaneOf(next, sourceHeight, sourceWidth)
     const all = segments.map((peer) => {
       if (!(peer.translation || '').trim() || captionLaneOf(peer, sourceHeight, sourceWidth) !== lane) return peer
@@ -198,7 +198,7 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
           sourceWidth,
           sourceHeight,
         )
-        return segmentWithLayout({ ...peer, bbox: box, bboxInherited: false }, {
+        return segmentWithLayout({ ...peer, captionBox: box }, {
           cover: box,
           caption: laid.caption,
           lines: laid.lines,
@@ -209,10 +209,10 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
         const laid = getCachedPreviewLayout(peer, box)
         if (laid) {
           const fontPx = laid.fontPx ?? autoFontFromBbox(laid.cover, peer.translation, 0)
-          return segmentWithLayout({ ...peer, bbox: box, bboxInherited: false }, laid, fontPx)
+          return segmentWithLayout({ ...peer, captionBox: box }, laid, fontPx)
         }
       }
-      return { ...peer, bbox: box, bboxInherited: false, captionLayout: null }
+      return { ...peer, captionBox: box, captionLayout: null }
     })
     void onSegmentsReplace(all)
   }
@@ -752,7 +752,7 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
     const rect = canvas.getBoundingClientRect()
     // Bắt đầu từ khung đang hiện (selectedBox), không nhảy về OCR raw / fitHardsub
     const original = clampCoverBox(
-      bboxDraft ?? selectedBox ?? seg.bbox ?? fallbackBox,
+      bboxDraft ?? selectedBox ?? seg.captionBox ?? seg.bbox ?? fallbackBox,
       sourceWidth,
       sourceHeight,
     )
@@ -832,7 +832,7 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
             sourceWidth,
             sourceHeight,
           )
-          commitCaptionBoxResult(segmentWithLayout({ ...seg, bboxInherited: false }, {
+          commitCaptionBoxResult(segmentWithLayout({ ...seg, captionBox: norm }, {
             cover: norm,
             caption: laid.caption,
             lines: laid.lines,
@@ -845,13 +845,13 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
           const live = getCachedPreviewLayout(seg, norm)
           if (live) {
             const fitFs = live.fontPx ?? autoFontFromBbox(live.cover, seg.translation, 0)
-            commitCaptionBoxResult(segmentWithLayout({ ...seg, bboxInherited: false }, live, fitFs), histGate.current)
+            commitCaptionBoxResult(segmentWithLayout({ ...seg, captionBox: norm }, live, fitFs), histGate.current)
           } else {
-            commitCaptionBoxResult({ ...seg, bbox: norm, bboxInherited: false, captionLayout: seg.captionLayout ?? null }, histGate.current)
+            commitCaptionBoxResult({ ...seg, captionBox: norm, captionLayout: seg.captionLayout ?? null }, histGate.current)
           }
           return
         }
-        commitCaptionBoxResult({ ...seg, bbox: norm, bboxInherited: false, captionLayout: seg.captionLayout ?? null }, histGate.current)
+        commitCaptionBoxResult({ ...seg, captionBox: norm, captionLayout: seg.captionLayout ?? null }, histGate.current)
       }
     }
     window.addEventListener('pointermove', update)

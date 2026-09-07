@@ -71,3 +71,152 @@ def test_burn_cache_tracks_caption_snapshot_and_style():
         changed["captionLayout"][key] = value
         assert before != _burn_cache_key("video", {}, [changed], [], "none", 1)
     assert before != _burn_cache_key("video", {}, [{**seg, "textColor": "#ff0000"}], [], "none", 1)
+
+
+def test_dynamic_blur_band_expansion_when_caption_exceeds_band(monkeypatch, tmp_path):
+    monkeypatch.setattr(burn, "video_size", lambda _: (1080, 1920))
+    monkeypatch.setattr(burn, "ffprobe_duration", lambda _: 10)
+    monkeypatch.setattr(burn, "_rapidocr_labels", lambda *a, **k: [])
+    overlays, rendered = [], {}
+    monkeypatch.setattr(burn, "_caption_overlay", lambda layout: overlays.append(layout) or None)
+    def capture(*args, **kwargs):
+        rendered.update(kwargs)
+        return True
+    monkeypatch.setattr("pipeline.export.burn_parts.ffgraph.try_render_ffmpeg", capture)
+    monkeypatch.setattr(burn, "render_burned_video", capture)
+
+    # 3-line tall caption exceeding the base band (1236 to 1340)
+    tall_seg = {
+        "id": "tall_caption", "start": 8.0, "end": 12.0,
+        "translation": "Chúng tôi đặt mục tiêu vào một hòn đảo nguyên thủy có đường kính khoảng 3.000 mét",
+        "source": "原始岛屿", "layout": "mid",
+        "bbox": {"x": 152, "y": 1236, "w": 776, "h": 82},
+        "captionLayout": {
+            "x": 159, "y": 1200, "w": 762, "h": 176,
+            "lines": ["Line 1", "Line 2", "Line 3"], "fontSize": 48, "previewVersion": 1,
+            # Expanded mask covers 1200 to 1376 full width
+            "mask": {"x": 0, "y": 1200, "w": 1080, "h": 176},
+        },
+    }
+    band_region = {"x": 0.0, "y": 1236 / 1920, "w": 1.0, "h": 104 / 1920}
+    burn.cover_and_burn(
+        tmp_path / "source.mp4", [tall_seg], tmp_path / "output.mp4",
+        cover=True, burn=True, workers=1,
+        blur_band_mode="auto", blur_band_auto_region=band_region,
+    )
+    # Cue 0 is tall_caption: gets expanded full-width mask (0, 1200, 1080, 1376)
+    assert rendered["cue_fits"][0] == [(0, 1200, 1080, 1376)]
+    assert rendered["cue_need_mask"][0] is True
+    # Cue 1 is base band: covers full duration at base height (0, 1236, 1080, 1340)
+    assert rendered["cue_fits"][1] == [(0, 1236, 1080, 1340)]
+
+
+def test_export_independent_bbox_and_caption_box(monkeypatch, tmp_path):
+    """captionBox and bbox/coverBox render independently: cover at bbox, text at captionBox."""
+    monkeypatch.setattr(burn, "video_size", lambda _: (1080, 1920))
+    monkeypatch.setattr(burn, "ffprobe_duration", lambda _: 4)
+    monkeypatch.setattr(burn, "_rapidocr_labels", lambda *a, **k: [])
+    overlays, rendered = [], {}
+    monkeypatch.setattr(burn, "_caption_overlay", lambda layout: overlays.append(layout) or None)
+    def capture(*args, **kwargs):
+        rendered.update(kwargs)
+        return True
+    monkeypatch.setattr("pipeline.export.burn_parts.ffgraph.try_render_ffmpeg", capture)
+    monkeypatch.setattr(burn, "render_burned_video", capture)
+
+    seg = {
+        "id": "decoupled_seg", "start": 1.0, "end": 3.0,
+        "translation": "Tìm một hòn đảo lớn",
+        "source": "寻找一座面积庞大的岛屿", "layout": "mid",
+        "bbox": {"x": 212, "y": 1246, "w": 659, "h": 65},
+        "captionBox": {"x": 286, "y": 1145, "w": 509, "h": 82},
+        "captionLayout": {
+            "x": 286, "y": 1145, "w": 509, "h": 82,
+            "lines": ["Tìm một hòn đảo lớn"], "fontSize": 48, "previewVersion": 1,
+            # No mask inside captionLayout — clean decoupled schema
+        },
+    }
+    burn.cover_and_burn(
+        tmp_path / "source.mp4", [seg], tmp_path / "output.mp4",
+        cover=True, burn=True, workers=1, blur_band_mode="off",
+    )
+    # Caption overlay renders at captionBox (y=1145)
+    assert overlays[0]["box"] == (286, 1145, 795, 1227)
+    assert overlays[0]["lines"] == ["Tìm một hòn đảo lớn"]
+    # Cover mask renders at bbox (y=1246)
+    assert rendered["cue_fits"][0] == [(212, 1246, 871, 1311)]
+    assert rendered["cue_need_mask"][0] is True
+
+
+def test_export_above_mode_with_blur_band_renders_caption_above_not_in_band(monkeypatch, tmp_path):
+    """When placement is 'above', caption is placed above the blur band, never inside it."""
+    monkeypatch.setattr(burn, "video_size", lambda _: (1080, 1920))
+    monkeypatch.setattr(burn, "ffprobe_duration", lambda _: 4)
+    monkeypatch.setattr(burn, "_rapidocr_labels", lambda *a, **k: [])
+    overlays, rendered = [], {}
+    monkeypatch.setattr(burn, "_caption_overlay", lambda layout: overlays.append(layout) or None)
+    def capture(*args, **kwargs):
+        rendered.update(kwargs)
+        return True
+    monkeypatch.setattr("pipeline.export.burn_parts.ffgraph.try_render_ffmpeg", capture)
+    monkeypatch.setattr(burn, "render_burned_video", capture)
+
+    band_box = {"x": 0.0, "y": 1238 / 1920, "w": 1.0, "h": 122 / 1920}
+    seg = {
+        "id": "above_seg", "start": 0.0, "end": 2.08,
+        "translation": "Chúng tôi đang ở trên biển Hamahele ở Papua",
+        "source": "我们正在巴布亚的哈马黑莱海", "layout": "mid",
+        "bbox": {"x": 224, "y": 1238, "w": 632, "h": 122},
+        "captionLayout": {
+            "x": 224, "y": 1145, "w": 632, "h": 82,
+            "lines": ["Chúng tôi đang ở trên", "biển Hamahele ở Papua"],
+            "fontSize": 48, "previewVersion": 1,
+        },
+    }
+    burn.cover_and_burn(
+        tmp_path / "source.mp4", [seg], tmp_path / "output.mp4",
+        cover=False, burn=True, workers=1, blur_band_mode="auto",
+        blur_band_auto_region=band_box,
+    )
+    # Exactly 1 overlay for the caption, placed above the blur band at y=1145
+    assert len(overlays) == 1
+    assert overlays[0]["box"][1] == 1145
+    # The blur band covers the base region (0, 1238, 1080, 1360)
+    assert rendered["cue_fits"][1] == [(0, 1238, 1080, 1360)]
+
+
+def test_export_dragged_caption_box_renders_at_coordinates_and_does_not_expand_blur(monkeypatch, tmp_path):
+    """When a caption has a custom captionBox (dragged by user), export renders at that exact box without expanding the blur band."""
+    monkeypatch.setattr(burn, "video_size", lambda _: (1080, 1920))
+    monkeypatch.setattr(burn, "ffprobe_duration", lambda _: 4)
+    monkeypatch.setattr(burn, "_rapidocr_labels", lambda *a, **k: [])
+    overlays, rendered = [], {}
+    monkeypatch.setattr(burn, "_caption_overlay", lambda layout: overlays.append(layout) or None)
+    def capture(*args, **kwargs):
+        rendered.update(kwargs)
+        return True
+    monkeypatch.setattr("pipeline.export.burn_parts.ffgraph.try_render_ffmpeg", capture)
+    monkeypatch.setattr(burn, "render_burned_video", capture)
+
+    band_box = {"x": 0.0, "y": 1238 / 1920, "w": 1.0, "h": 122 / 1920}
+    seg = {
+        "id": "dragged_seg", "start": 0.0, "end": 2.08,
+        "translation": "Chúng tôi đang ở trên biển Hamahele ở Papua",
+        "source": "我们正在巴布亚的哈马黑莱海", "layout": "mid",
+        "bbox": {"x": 224, "y": 1238, "w": 632, "h": 122},
+        # User dragged caption to top-left (x=20, y=150, w=500, h=100)
+        "captionBox": {"x": 20, "y": 150, "w": 500, "h": 100},
+    }
+    burn.cover_and_burn(
+        tmp_path / "source.mp4", [seg], tmp_path / "output.mp4",
+        cover=False, burn=True, workers=1, blur_band_mode="auto",
+        blur_band_auto_region=band_box,
+    )
+    assert len(overlays) == 1
+    # Caption rendered at dragged coordinates
+    assert overlays[0]["box"][0] == 20
+    assert overlays[0]["box"][1] == 150
+    # Blur band stays at its original coordinates, never expanding to y=150
+    assert rendered["cue_fits"][1] == [(0, 1238, 1080, 1360)]
+
+

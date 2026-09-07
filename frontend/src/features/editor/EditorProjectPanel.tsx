@@ -22,10 +22,11 @@ type Props = {
   onCancel?: () => void
   onDub?: () => void
   onExport: () => void
+  applyCaptionModeAll?: (mode: 'cover' | 'below' | 'above' | 'none') => void
   onUpdateSpeakerProfile: (id: string, patch: { name?: string; color?: string; voice?: string }) => void
 }
 
-export function EditorProjectPanel({ projectId, tab, segments, settings, voices, busy, jobStep, jobProgress, onSettings, onRunPipeline, onCancel, onDub, onExport, onUpdateSpeakerProfile }: Props) {
+export function EditorProjectPanel({ projectId, tab, segments, settings, voices, busy, jobStep, jobProgress, onSettings, onRunPipeline, onCancel, onDub, onExport, applyCaptionModeAll, onUpdateSpeakerProfile }: Props) {
   const { locale } = useLocale()
   const t = (vi: string, en: string) => localize(locale, vi, en)
   const [previewSec, setPreviewSec] = React.useState(() => Math.max(5, Number(settings.previewSec) || 30))
@@ -33,7 +34,7 @@ export function EditorProjectPanel({ projectId, tab, segments, settings, voices,
   const profiles = React.useMemo(() => resolvedSpeakerProfiles(segments, settings, locale), [segments, settings, locale])
   const [resources, setResources] = React.useState<import('@/features/project/project.types').AiResource[]>([])
   const [resourceBusy, setResourceBusy] = React.useState<string | null>(null)
-  const [ocrJob, setOcrJob] = React.useState<{ running: boolean; polling: boolean; progress: number; message: string; error?: string }>({ running: false, polling: false, progress: 0, message: '' })
+  const [ocrJob, setOcrJob] = React.useState<{ running: boolean; polling: boolean; progress: number; message: string; error?: string }>({ running: false, polling: false, progress: 0, message: '', error: undefined })
   const [ocrMinimized, setOcrMinimized] = React.useState(false)
   const ocrRequestLock = React.useRef(false)
   React.useEffect(() => { void api.resources().then((result) => setResources(result.items)).catch(() => setResources([])) }, [])
@@ -84,7 +85,11 @@ export function EditorProjectPanel({ projectId, tab, segments, settings, voices,
             }
             disabled={busy}
             onChange={(e) => {
-              const v = e.target.value
+              const v = e.target.value as 'cover' | 'below' | 'above' | 'none'
+              if (applyCaptionModeAll) {
+                applyCaptionModeAll(v)
+                return
+              }
               if (v === 'cover') {
                 onSettings({ ...settings, coverHardsubs: true, burnSubs: true })
               } else if (v === 'below') {

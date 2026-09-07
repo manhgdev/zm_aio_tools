@@ -62,7 +62,7 @@ def _preview_cover_pad(font_size: int, frame_w: int) -> tuple[int, int, int]:
     """Khớp LivePreviewEditor.coverPad — sát trên, dư đáy che stroke."""
     pad_x = max(3, int(round(frame_w * 0.003)))
     pad_top = max(2, int(round(font_size * 0.04)))
-    pad_bot = max(18, int(round(font_size * 0.55)))
+    pad_bot = max(8, int(round(font_size * 0.55)))
     return pad_x, pad_top, pad_bot
 
 
@@ -269,9 +269,12 @@ def _tight_cover_box(
 
 
 def _auto_subtitle_font_size(width: int, height: int) -> int:
-    """Cỡ mặc định khi auto — khớp AUTO_SUBTITLE_FONT=48 của preview."""
-    _ = width, height  # ponytail: flat default; scale theo bbox ở _layout_caption nếu cần
-    return 48
+    """Cỡ mặc định khi auto — scale theo cạnh ngắn của frame (chuẩn 1080p -> 48px)."""
+    if width <= 0 or height <= 0:
+        return 48
+    ref = min(width, height)
+    scaled = int(round(48 * (ref / 1080)))
+    return max(16, min(120, scaled))
 
 
 def _resolve_segment_font_size(

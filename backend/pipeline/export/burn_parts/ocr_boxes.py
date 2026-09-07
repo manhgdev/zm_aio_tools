@@ -755,12 +755,14 @@ def _bbox_looks_bottom(box: tuple[int, int, int, int], frame_h: int) -> bool:
 def _editor_layout_locked(segment: dict[str, Any]) -> bool:
     """Editor đã bake bbox + captionLayout — xuất đúng WYSIWYG, không relocate/OCR/re-layout."""
     cl = segment.get("captionLayout")
-    # captionLayout is the authoritative preview geometry.  Older payloads
-    # may omit bbox while still carrying the complete caption layout.
-    if not isinstance(cl, dict):
-        return False
-    lines = cl.get("lines")
-    return isinstance(lines, list) and len(lines) > 0
+    if isinstance(cl, dict):
+        lines = cl.get("lines")
+        if isinstance(lines, list) and len(lines) > 0:
+            return True
+    cb = segment.get("captionBox")
+    if isinstance(cb, dict) and cb.get("w", 0) > 0 and cb.get("h", 0) > 0:
+        return True
+    return False
 
 
 def _should_paint_cover_mask(cover: bool, layout: str) -> bool:

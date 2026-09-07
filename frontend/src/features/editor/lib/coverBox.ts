@@ -7,6 +7,16 @@ import type { PixelBox, CropRect } from './previewStyles'
 import { CAP_PAD_X, isCjkHardsubSource, measureSourceInkWidth } from './captionMeasure'
 
 export const AUTO_SUBTITLE_FONT = 48
+
+export function autoSubtitleFontSize(width?: number, height?: number): number {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return AUTO_SUBTITLE_FONT
+  }
+  const ref = Math.min(width, height)
+  const scaled = Math.round(AUTO_SUBTITLE_FONT * (ref / 1080))
+  return Math.max(16, Math.min(120, scaled))
+}
+
 /** Khớp burn._cover_max_h — đủ 1–3 dòng theo font */
 export const COVER_MAX_H_FRAME_RATIO = 0.065
 
@@ -18,7 +28,7 @@ export function coverPad(fontSizePx = AUTO_SUBTITLE_FONT, frameW = 1080) {
     // Chỉ chừa đủ viền/stroke; tránh chữ lọt thỏm giữa bbox.
     top: Math.max(2, Math.round(fontSizePx * 0.04)),
     // Match export: leave enough room for CJK descenders, outline, and shadow.
-    bottom: Math.max(18, Math.round(fontSizePx * 0.55)),
+    bottom: Math.max(8, Math.round(fontSizePx * 0.55)),
   }
 }
 
@@ -112,7 +122,7 @@ export function fitHardsubCover(
   // that was cutting through white/black subtitle outlines in the preview.
   // When seed already spans two rows (h ≥ 1.5× one row), use minimal padding
   // only — extra bleed would push the cover up into the caption area above.
-  const oneRowH = Math.max(fontPx * 0.9, 28)
+  const oneRowH = Math.max(fontPx * 0.9, 16)
   const isTwoRow = seed.h >= oneRowH * 1.5
   const topBleed = isTwoRow
     ? Math.max(pad.top, Math.round(seed.h * 0.04))
@@ -338,13 +348,13 @@ export function autoFontFromBbox(
 export function resolveCaptionFontSize(
   seg: Segment | undefined,
   settings: ProjectSettings,
-  _width: number,
-  _height: number,
+  width?: number,
+  height?: number,
 ) {
   const segFs = seg?.fontSize ?? 0
   if (segFs > 0) return segFs
   if (settings.subtitleFontSize > 0) return settings.subtitleFontSize
-  return AUTO_SUBTITLE_FONT
+  return autoSubtitleFontSize(width, height)
 }
 
 /** Overlay mid/dọc/nhãn: 0 = auto fit khung; >0 = đúng cỡ user set (không lấy cỡ phụ đề đáy dự án). */
@@ -367,8 +377,9 @@ export function overlayTextEnabled(settings: ProjectSettings): boolean {
 }
 
 /** Cover mặc định phụ đề đáy — chỉ khi không phải CJK chờ OCR. */
-export function fallbackCoverBox(frameW: number, frameH: number, fontSizePx = AUTO_SUBTITLE_FONT): PixelBox {
-  const h = coverMaxHeight(frameH, fontSizePx)
+export function fallbackCoverBox(frameW: number, frameH: number, fontSizePx?: number): PixelBox {
+  const fs = fontSizePx ?? autoSubtitleFontSize(frameW, frameH)
+  const h = coverMaxHeight(frameH, fs)
   const w = Math.round(frameW * 0.4)
   return {
     x: Math.round((frameW - w) / 2),

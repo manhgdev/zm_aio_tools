@@ -292,6 +292,9 @@ export function loadSettings(): ProjectSettings {
     if (!okMatch.includes(s.matchDuration as (typeof okMatch)[number])) {
       s.matchDuration = 'preferVideo'
     }
+    if (s.blurBandMode !== 'off' && s.blurBandMode !== 'manual') {
+      s.blurBandMode = 'auto'
+    }
     // Migrate projects saved while SenseVoice existed back to Whisper.
     const eng = s.engine === 'paddleocr' || s.engine === 'subtitle' || s.engine === 'capcut' ? s.engine : 'whisper'
     s.translator = normalizeTranslatorForEngine(eng, s.translator)

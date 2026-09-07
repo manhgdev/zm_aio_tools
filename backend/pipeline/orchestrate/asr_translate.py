@@ -416,6 +416,10 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                             seg["bboxDetected"] = old["bboxDetected"]
                         if old.get("captionLayout"):
                             seg["captionLayout"] = old["captionLayout"]
+                        if old.get("coverBox"):
+                            seg["coverBox"] = old["coverBox"]
+                        if old.get("captionBox"):
+                            seg["captionBox"] = old["captionBox"]
                         if old_lay in ("vertical", "label"):
                             seg["layout"] = old_lay
                         else:
@@ -627,6 +631,8 @@ def run_pipeline(project_id: str, settings: dict[str, Any]) -> None:
                 for seg in segments:
                     if seg.get("bboxInherited") is not False:
                         seg.pop("bbox", None)
+                        seg.pop("coverBox", None)
+                        seg.pop("captionBox", None)
                         seg.pop("bboxInherited", None)
                         seg.pop("bboxDetected", None)
                         seg.pop("captionLayout", None)

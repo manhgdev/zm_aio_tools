@@ -387,14 +387,9 @@ def cover_and_burn(
             burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
         elif layout == "mid":
             # Auto follows each OCR cue so a subtitle that changes rows stays
-            # covered. Only a manually drawn region is full-video persistent.
-            if (blur_band_mode or 'off') != 'manual':
-                cover_start, cover_end = resolve_cover_window(seg)
-                burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
-            else:
-                cover_start = 0.0
-                cover_end = vid_dur if vid_dur > 0 else max(resolve_cover_window(seg)[1], e0 + 0.5)
-                burn_start, burn_end = max(0.0, s0), max(e0, s0 + 0.04)
+            # covered. Any per-cue expanded mask applies only during the cue window.
+            cover_start, cover_end = resolve_cover_window(seg)
+            burn_start, burn_end = cover_start, max(cover_end, cover_start + 0.04)
         else:
             # Cover nới để che hardsub; BURN chữ dịch = clip timeline [start,end)
             cover_start, cover_end = resolve_cover_window(seg)
@@ -522,20 +517,27 @@ def cover_and_burn(
         if cl.get("previewVersion") == 1 and _editor_layout_locked(seg):
             # The snapshot contains display geometry, even when its source
             # OCR box is inherited. Never relocate a committed preview.
-            # mask = cover region (separate from caption display box).
-            snap_mask = cl.get("mask")
-            if isinstance(snap_mask, dict):
-                mb = _segment_bbox_override({"bbox": snap_mask}, w, h)
+            # Mask and caption are separate layers:
+            # 1. Explicit coverBox on segment
+            # 2. Legacy cl.mask (if dict)
+            # 3. Fallback to seg.bbox if cover is enabled and no full blur band is covering it
+            has_band_active = bool(blur_band_mode and blur_band_mode.lower() in ("auto", "manual"))
+            cover_source = (
+                seg.get("coverBox")
+                or (cl.get("mask") if isinstance(cl.get("mask"), dict) else None)
+                or (seg.get("bbox") if (cover and not has_band_active) else None)
+            )
+            if cover_source:
+                mb = _segment_bbox_override({"bbox": cover_source}, w, h, accept_automatic=True)
             else:
                 mb = None
             if mb is not None:
                 unverified_auto_by_idx.append(False)
                 manual_by_idx.append(mb)
                 continue
-            # mask=None: blur-band covers OR no cover needed.
-            # Use sentinel to skip OCR without providing a cover box.
+            # Sentinel: snapshot-locked, no cover needed for this segment
             unverified_auto_by_idx.append(False)
-            manual_by_idx.append((-1, -1, -1, -1))  # sentinel: snapshot-locked, no cover
+            manual_by_idx.append((-1, -1, -1, -1))
             continue
         # Preview places every normal caption inside its nearest fixed auto
         # band.  Export must use that same box, not the cue's old OCR bbox.
@@ -954,7 +956,7 @@ def cover_and_burn(
                 if use_preview:
                     if (
                         place in ("below", "above")
-                        and seg_meta.get("bboxInherited") is not False
+                        and not seg_meta.get("captionBox")
                         and replacement_sources
                     ):
                         pbox = preview_lay["box"]
@@ -1094,11 +1096,12 @@ def cover_and_burn(
                 lay = {**lay, "css_cover_mode": css_mode}
                 if cover and cover_box is not None:
                     lay["box"] = cover_box
-                elif css_mode in ("mid", "label", "vertical") and not seg_meta.get("overlayText"):
-                    # below/above: dọc/nhãn/kéo-tay vẫn vẽ trong cover như preview
-                    ov_box = cover_box or _segment_bbox_override(seg_meta, w, h)
-                    if ov_box is not None:
-                        lay["box"] = ov_box
+                elif not (place in ("below", "above") and not seg_meta.get("captionBox") and not is_vert and not is_label):
+                    if css_mode in ("mid", "label", "vertical") and not seg_meta.get("overlayText"):
+                        # below/above: dọc/nhãn/kéo-tay vẫn vẽ trong cover như preview
+                        ov_box = cover_box or _segment_bbox_override(seg_meta, w, h)
+                        if ov_box is not None:
+                            lay["box"] = ov_box
             lay = {
                 **lay,
                 "fill_hex": str(seg_meta.get("textColor") or cap_fill_hex),
@@ -1224,11 +1227,56 @@ def cover_and_burn(
 
         snapshot = seg_meta.get("captionLayout") or {}
         if snapshot.get("previewVersion") == 1 and _editor_layout_locked(seg_meta):
-            # Mask and caption are separate preview layers. In particular,
-            # a blur lane must not be unioned into the caption's cover box.
-            mask = _segment_bbox_override({"bbox": snapshot.get("mask")}, w, h)
+            # Mask and caption are separate preview layers:
+            # Check seg_meta.coverBox -> snapshot.mask (legacy) -> seg_meta.bbox (if cover and no blur band)
+            has_band_active = bool(blur_band_mode and blur_band_mode.lower() in ("auto", "manual"))
+            cover_src = (
+                seg_meta.get("coverBox")
+                or (snapshot.get("mask") if isinstance(snapshot.get("mask"), dict) else None)
+                or (seg_meta.get("bbox") if (cover and not has_band_active) else None)
+            )
+            mask = _segment_bbox_override({"bbox": cover_src}, w, h, accept_automatic=True) if cover_src else None
             cue_fits[-1] = [mask] if mask else []
             cue_need_mask[-1] = mask is not None and burn
+        elif (
+            not seg_meta.get("maskOnly")
+            and not str(seg_meta.get("id", "")).startswith("__")
+            and (blur_band_mode or "off").lower() in ("auto", "manual")
+            and (persistent_band or auto_band_segments)
+            and lay_mode in ("horizontal", "mid")
+        ):
+            band_box: tuple[int, int, int, int] | None = None
+            if persistent_band:
+                band_box = _segment_bbox_override(persistent_band, w, h, accept_automatic=True)
+            elif auto_band_segments:
+                cue_y = cue_fits[-1][0][1] if cue_fits[-1] else (lay["box"][1] if lay and "box" in lay else int(h * 0.84))
+                is_lower = cue_y >= h // 2
+                for auto_seg in auto_band_segments:
+                    b = _segment_bbox_override(auto_seg, w, h, accept_automatic=True)
+                    if b and (b[1] >= h // 2) == is_lower:
+                        band_box = b
+                        break
+            if band_box:
+                by0, by1 = band_box[1], band_box[3]
+                boxes_to_check = list(cue_fits[-1])
+                # Only expand the blur band when in overCoverMode (cover=True, place='over'),
+                # caption has not been moved to a custom captionBox, has multiple lines,
+                # and actually vertically overlaps the band.
+                if cover and place == "over" and not seg_meta.get("captionBox") and lay and "box" in lay:
+                    lines = lay.get("lines") or []
+                    if len(lines) > 1:
+                        c_box = lay["box"]
+                        overlap = max(0, min(c_box[3], by1) - max(c_box[1], by0))
+                        if overlap >= min(by1 - by0, c_box[3] - c_box[1]) * 0.4:
+                            boxes_to_check.append(c_box)
+                min_y = min((b[1] for b in boxes_to_check), default=by0)
+                max_y = max((b[3] for b in boxes_to_check), default=by1)
+                if min_y < by0 - 2 or max_y > by1 + 2:
+                    cue_fits[-1] = [(0, max(0, min(by0, min_y)), w, min(h, max(by1, max_y)))]
+                    cue_need_mask[-1] = True
+                else:
+                    cue_fits[-1] = []
+                    cue_need_mask[-1] = False
 
     # P1: thử ffmpeg vẽ trực tiếp (nhanh 6-8×, khung không rời GPU);
     # không khả thi / lỗi → đường Python cũ vẫn nguyên.

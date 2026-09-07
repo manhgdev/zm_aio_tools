@@ -57,3 +57,13 @@ def test_css_mode_keeps_baseline_stable_across_diacritics():
     plain = _ink_top(["Ho"], font)
     descender = _ink_top(["Họ"], font)
     assert abs(plain - descender) <= 1, (plain, descender)
+
+
+def test_auto_subtitle_font_size_scales_with_resolution():
+    from pipeline.export.burn_parts.layout_geo import _auto_subtitle_font_size
+
+    assert _auto_subtitle_font_size(1080, 1920) == 48
+    assert _auto_subtitle_font_size(1920, 1080) == 48
+    assert _auto_subtitle_font_size(576, 1024) == 26
+    assert _auto_subtitle_font_size(720, 1280) == 32
+    assert _auto_subtitle_font_size(0, 0) == 48

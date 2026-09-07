@@ -56,18 +56,14 @@ def _ocr_pool_workers(
 
 
 def _ocr_semaphore() -> threading.Semaphore:
-    """Semaphore toàn cục OCR — CUDA/DML pack VRAM, CoreML chạy tuần tự."""
+    """Semaphore toàn cục OCR — CUDA/DML pack VRAM; CPU ≤ budget cores."""
     global _ocr_sem, _ocr_sem_n
     try:
         from pipeline.core.resources import pack_gpu_workers
 
         # _rapidocr_gpu_kwargs định nghĩa bên dưới cùng file
         gpu_kwargs = _rapidocr_gpu_kwargs()
-        if _onnx_provider_available("CoreMLExecutionProvider"):
-            # Metal shared-memory không có VRAM độc lập để pack; nhiều OCR
-            # sessions cùng lúc gây tranh chấp GPU/ANE và chậm hơn một session.
-            n = 1
-        elif gpu_kwargs.get("det_use_cuda") or gpu_kwargs.get("det_use_dml"):
+        if gpu_kwargs.get("det_use_cuda") or gpu_kwargs.get("det_use_dml"):
             n = pack_gpu_workers(per_job_mb=450, reserve_mb=350, hard_max=20)
         else:
             n = _cpu_budget(0.92)
@@ -303,7 +299,8 @@ def _reset_cuda_dlls() -> None:
 
 
 def _patch_rapidocr_onnxruntime_ep() -> None:
-    """Use CoreML on Apple and stable CUDA options in RapidOCR's limited adapter."""
+    """Stable CUDA options in RapidOCR's limited adapter (CoreML is excluded because
+    PaddleOCR text_cls and text_rec fail under CoreMLExecutionProvider in onnxruntime)."""
     try:
         from rapidocr_onnxruntime.utils.infer_engine import OrtInferSession
         if hasattr(OrtInferSession, "_patched_ep_list"):
@@ -312,14 +309,6 @@ def _patch_rapidocr_onnxruntime_ep() -> None:
 
         def patched_get_ep_list(self) -> list:
             ep_list = list(orig_get_ep_list(self))
-            providers = set(getattr(self, "had_providers", ()) or ())
-            if (
-                "CoreMLExecutionProvider" in providers
-                and not any(name == "CoreMLExecutionProvider" for name, _opts in ep_list)
-            ):
-                # rapidocr-onnxruntime exposes CUDA/DML flags only. ONNX Runtime
-                # already has CoreML in this runtime, so add it directly before CPU.
-                ep_list.insert(0, ("CoreMLExecutionProvider", {}))
             for idx, (ep_name, ep_opts) in enumerate(ep_list):
                 if ep_name == "CUDAExecutionProvider" and isinstance(ep_opts, dict):
                     ep_opts["cudnn_conv_algo_search"] = "HEURISTIC"
@@ -362,7 +351,6 @@ def _rapidocr_labels(*, use_cuda: bool | None = None) -> Any:
         **gpu_kwargs,
         **_ort_threads(
             bool(gpu_kwargs.get("det_use_cuda") or gpu_kwargs.get("det_use_dml"))
-            or _onnx_provider_available("CoreMLExecutionProvider")
         ),
         box_thresh=0.3,
         thresh=0.2,

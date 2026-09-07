@@ -202,18 +202,20 @@ def _preview_caption_layout(
 ) -> dict[str, Any] | None:
     """Layout caption gửi từ preview — không tính lại trên server (WYSIWYG)."""
     cl = segment.get("captionLayout")
-    if not isinstance(cl, dict):
+    cb = segment.get("captionBox")
+    box_src = cb if isinstance(cb, dict) else (cl if isinstance(cl, dict) else None)
+    if not isinstance(box_src, dict):
         return None
-    lines_raw = cl.get("lines")
+    lines_raw = (cl.get("lines") if isinstance(cl, dict) else None) or [segment.get("translation") or ""]
     if not isinstance(lines_raw, list) or not lines_raw:
         return None
     try:
-        x = int(round(float(cl["x"])))
-        y = int(round(float(cl["y"])))
-        bw = int(round(float(cl["w"])))
-        bh = int(round(float(cl["h"])))
+        x = int(round(float(box_src["x"])))
+        y = int(round(float(box_src["y"])))
+        bw = int(round(float(box_src["w"])))
+        bh = int(round(float(box_src["h"])))
         # mid preview có thể <16 — khớp font đã bake, không sàn 16
-        fs = max(8, min(120, int(cl.get("fontSize") or default_fs)))
+        fs = max(8, min(120, int((cl.get("fontSize") if isinstance(cl, dict) else None) or default_fs)))
     except (KeyError, TypeError, ValueError):
         return None
     if bw <= 0 or bh <= 0:

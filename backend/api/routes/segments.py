@@ -205,6 +205,10 @@ def api_update_segment(project_id: str, seg_id: str, body: SegmentIn):
                 merged = {**s, **{k: v for k, v in incoming.items() if v is not None}}
                 if "bbox" in body.model_fields_set and body.bbox is None:
                     merged.pop("bbox", None)
+                if "coverBox" in body.model_fields_set and body.coverBox is None:
+                    merged.pop("coverBox", None)
+                if "captionBox" in body.model_fields_set and body.captionBox is None:
+                    merged.pop("captionBox", None)
                 if "captionLayout" in body.model_fields_set and body.captionLayout is None:
                     merged.pop("captionLayout", None)
                 if incoming.get("layout") is None and s.get("layout"):
@@ -239,7 +243,7 @@ def api_replace_segments(project_id: str, body: list[SegmentIn]):
         ordered = sorted(body, key=lambda s: (s.start, s.end, s.id))
         out: list[dict] = []
         # Reset OCR gửi bbox/captionLayout=null — không restore từ prev
-        _clearable = ("bbox", "captionLayout", "bboxInherited", "bboxDetected")
+        _clearable = ("bbox", "coverBox", "captionBox", "captionLayout", "bboxInherited", "bboxDetected")
         for i, item in enumerate(ordered):
             raw = item.model_dump(exclude_none=False)
             dumped = {k: v for k, v in raw.items() if v is not None}
