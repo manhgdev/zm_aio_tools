@@ -29,8 +29,9 @@ type AutomationSettings = {
   textModel: string
   chatModel: string
   systemPrompt?: string
+  promptEngine?: 'vi' | 'en' | 'custom'
   tts: { voice: string; speed: number; volume: number; pitch: number; style: string }
-  flow: { accountId: string; model: string; ratio: string; resolution: string; concurrency: string; promptEngine: 'vi' | 'en'; count?: string }
+  flow: { accountId: string; model: string; ratio: string; resolution: string; concurrency: string; promptEngine: 'vi' | 'en' | 'custom'; count?: string }
   compose: {
     resolution: string; targetPlatform: string; fps: number; crf: number; encoder: 'auto' | 'gpu' | 'cpu'
     effect: string; transitionDuration: number; zoom: string; speed: number; volume: number; previewSeconds: number
@@ -72,6 +73,7 @@ const AUTOMATION_PANEL_WIDTH_KEY = 'videoclone.automation-panel-width.v1'
 const AUTOMATION_SETTINGS_TAB_KEY = 'videoclone.automation-settings-tab.v1'
 const DEFAULT_SETTINGS: AutomationSettings = {
   language: 'vi', textProvider: 'openrouter', textModel: 'openrouter/free', chatModel: 'GPT-5.6 Sol',
+  promptEngine: 'vi',
   tts: { voice: 'system', speed: 1, volume: 1, pitch: 0, style: 'tu_nhien' },
   flow: { accountId: '', model: 'Nano Banana 2', ratio: '16:9', resolution: '1K', concurrency: '3', promptEngine: 'vi', count: '1' },
   compose: { resolution: 'auto', targetPlatform: 'auto', fps: 30, crf: 20, encoder: 'auto', effect: 'none', transitionDuration: .28, zoom: 'off', speed: 100, volume: 100, previewSeconds: 0, allowMissingMedia: false, subtitleEnabled: true, removeMetadata: false, subtitleFontFamily: 'system', subtitleSize: 8, subtitleOffset: 0, subtitleMargin: 34, subtitleBackground: 'solid', subtitleColor: '#ffffff', subtitleBgColor: '#000000', subtitleOpacity: 55, drawingEnabled: false, drawingMode: 'hand', drawingTool: 'pencil', drawingDetail: 72, drawingThickness: 2, drawingStrokeOrder: 'natural', delogoEnabled: false, delogoAuto: true, delogoX: 80, delogoY: 82, delogoW: 18, delogoH: 12, logoEnabled: false, logoSource: 'text', logoText: 'ZM AIO TOOL', logoIcon: '★', logoFontSize: 32, logoColor: '#ffffff', logoSize: 8, logoOpacity: 85, logoX: 88, logoY: 88, logoMotion: 'fixed', logoScope: 'full', logoStart: 0, logoEnd: 10, logoVisibleSec: 4, logoHiddenSec: 2, logoFadeSec: .5, logoSafeMargin: 4 }, outputDir: '',
@@ -102,6 +104,11 @@ function mergeSettings(value: Partial<AutomationSettings>): AutomationSettings {
     tts: { ...DEFAULT_SETTINGS.tts, ...(value.tts || {}) },
     flow: { ...DEFAULT_SETTINGS.flow, ...(value.flow || {}) },
     compose: { ...DEFAULT_SETTINGS.compose, ...(value.compose || {}) },
+  }
+  if (value.flow?.promptEngine && !value.promptEngine) {
+    merged.promptEngine = value.flow.promptEngine
+  } else if (value.promptEngine) {
+    merged.flow.promptEngine = value.promptEngine
   }
   if (!value.textProvider && value.chatModel) {
     merged.textProvider = 'chatgpt_web'
@@ -466,6 +473,33 @@ export default function AutomationPage() {
     const next = { ...settings[group], [key]: value } as AutomationSettings[K]
     void saveSettings({ ...settings, [group]: next })
   }
+  const promptFileInputRef = useRef<HTMLInputElement>(null)
+  const currentPromptEngine = settings.promptEngine || settings.flow?.promptEngine || 'vi'
+  const onSelectPromptEngine = (engine: 'vi' | 'en' | 'custom') => {
+    void saveSettings({
+      ...settings,
+      promptEngine: engine,
+      flow: { ...settings.flow, promptEngine: engine },
+    })
+  }
+  const handlePromptFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      void saveSettings({
+        ...settings,
+        promptEngine: 'custom',
+        flow: { ...settings.flow, promptEngine: 'custom' },
+        systemPrompt: text,
+      })
+      setNotice(t(`Đã nạp file "${file.name}" vào prompt tuỳ chỉnh.`, `Loaded file "${file.name}" into custom prompt.`))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('Không đọc được file prompt.', 'Could not read prompt file.'))
+    } finally {
+      if (event.target) event.target.value = ''
+    }
+  }
   const selectedTextProvider = chatProviders.find(item => item.id === settings.textProvider)
   const voiceDisplay = (voice: TtsVoiceOption) => [voice.name || voice.label || voice.id, voice.engine, voice.language].filter(Boolean).join(' · ')
   const selectedVoice = ttsVoices.find(voice => voice.id === settings.tts.voice)
@@ -497,14 +531,34 @@ export default function AutomationPage() {
         <label><span>{t('Ngôn ngữ đầu ra', 'Output language')}</span><select value={settings.language} onChange={event => update('language', event.target.value as AutomationSettings['language'])}><option value="vi">{t('Tiếng Việt', 'Vietnamese')}</option><option value="en">{t('Tiếng Anh', 'English')}</option></select></label>
         <label><span>{t('Provider AI text', 'Text AI provider')}</span><select value={settings.textProvider} onChange={event => { const next = chatProviders.find(item => item.id === event.target.value); const nextModel = next?.models[0]?.id || ''; void saveSettings({ ...settings, textProvider: event.target.value, textModel: nextModel, chatModel: event.target.value === 'chatgpt_web' ? nextModel : settings.chatModel }) }} disabled={chatModelsLoading && !chatProviders.length} aria-busy={chatModelsLoading}>{!chatProviders.length ? <option value="">{chatModelsLoading ? t('Đang tải provider…', 'Loading providers…') : t('Chưa có provider khả dụng', 'No available provider')}</option> : null}{chatProviders.map(item => <option key={item.id} value={item.id} disabled={item.status !== 'ready' && !(item.id === 'chatgpt_web' && item.configured)}>{providerName(item.id)}{item.status === 'free_unavailable' ? ` · ${t('không có model khả dụng', 'no available model')}` : ''}</option>)}</select></label>
         <label><span>{t('Model AI text', 'Text AI model')}</span><select value={settings.textModel} onChange={event => update('textModel', event.target.value)} disabled={chatModelsLoading || !chatProviders.length} aria-busy={chatModelsLoading}>{!selectedTextProvider?.models.length ? <option value="">{chatModelsLoading ? t('Đang tải model…', 'Loading models…') : t('Chưa có model khả dụng', 'No available model')}</option> : null}{(selectedTextProvider?.models || []).map(item => <option key={item.id} value={item.id}>{item.label || item.id}</option>)}</select></label>
-        <label className="automation-field-full"><span>{t('System prompt (tuỳ chỉnh)', 'System prompt (optional)')}</span><textarea rows={3} value={settings.systemPrompt || ''} onChange={event => update('systemPrompt', event.target.value)} placeholder={t('Bỏ trống để dùng mặc định của Audio-First 2D engine.', 'Leave empty to use the default Audio-First 2D engine prompt.')} /></label>
+        <label><span>{t('System prompt (Bộ prompt 2D)', 'System prompt (2D prompt engine)')}</span><select value={currentPromptEngine} onChange={event => onSelectPromptEngine(event.target.value as 'vi' | 'en' | 'custom')}><option value="vi">v1.0-base-vietnam-2D-image.txt ({t('Mặc định · Tiếng Việt', 'Default · Vietnamese')})</option><option value="en">v1.0-base-english-2D-image.txt ({t('Bản Tiếng Anh', 'English version')})</option><option value="custom">{t('Tự nhập text / tải file bằng tay (Tuỳ chỉnh)', 'Custom text / upload file manually (Custom)')}</option></select></label>
+        {currentPromptEngine === 'custom' ? (
+          <div className="automation-field-full automation-prompt-box">
+            <div className="automation-prompt-header">
+              <span>{t('Nội dung System prompt tuỳ chỉnh', 'Custom system prompt content')}</span>
+              <div className="automation-prompt-actions">
+                <input ref={promptFileInputRef} type="file" accept=".txt,text/plain" style={{ display: 'none' }} onChange={handlePromptFileUpload} />
+                <button type="button" className="automation-prompt-btn" onClick={() => promptFileInputRef.current?.click()} title={t('Chọn file .txt từ máy tính để nạp vào prompt', 'Choose a .txt file from your computer to load into prompt')}>📄 {t('Tải file .txt', 'Upload .txt')}</button>
+                {settings.systemPrompt ? <button type="button" className="automation-prompt-btn danger" onClick={() => update('systemPrompt', '')} title={t('Xoá nội dung prompt', 'Clear prompt content')}>✕ {t('Xoá', 'Clear')}</button> : null}
+              </div>
+            </div>
+            <textarea
+              rows={6}
+              value={settings.systemPrompt || ''}
+              onChange={event => update('systemPrompt', event.target.value)}
+              placeholder={t('Nhập nội dung System prompt tuỳ chỉnh hoặc bấm "Tải file .txt" ở trên để nạp file…', 'Enter custom system prompt text or click "Upload .txt" above to load a file…')}
+            />
+            <small className="automation-setting-hint">
+              {t('Đang ở chế độ prompt tuỳ chỉnh. Nội dung text bên trên được dùng trực tiếp làm System prompt thay cho template mặc định.', 'Custom prompt mode active. The text above is used directly as the System prompt instead of the default template.')}
+            </small>
+          </div>
+        ) : null}
       </div> : settingsTab === 'tts' ? <div id="automation-settings-tts" className="automation-setting-grid" role="tabpanel">
         <label className="automation-field-full"><span>{t('Giọng TTS', 'TTS voice')}</span><input type="search" list="automation-tts-voices" value={voiceSearch} disabled={optionsLoading && !ttsVoices.length} placeholder={selectedVoice ? voiceDisplay(selectedVoice) : (optionsLoading ? t('Đang tải giọng…', 'Loading voices…') : t('Gõ tên, engine hoặc ngôn ngữ để tìm giọng…', 'Type a name, engine, or language to find a voice…'))} onChange={event => { const query = event.target.value; setVoiceSearch(query); const match = ttsVoices.find(voice => voice.id === query || voiceDisplay(voice) === query); if (match) void updateNested('tts', 'voice', match.id) }} /><datalist id="automation-tts-voices">{ttsVoices.filter(voice => !voiceSearch.trim() || voiceDisplay(voice).toLowerCase().includes(voiceSearch.trim().toLowerCase())).map(voice => <option key={voice.id} value={voiceDisplay(voice)} />)}</datalist><small className="automation-setting-hint">{selectedVoice ? `${t('Đang chọn', 'Selected')}: ${voiceDisplay(selectedVoice)}` : t('Chọn một gợi ý để dùng cho job.', 'Choose a suggestion to use for the job.')}</small></label>
         <label><span>{t('Tốc độ (%)', 'Speed (%)')}</span><div className="automation-range-control"><input id="auto-tts-speed" type="range" min="50" max="200" step="5" value={Math.round((settings.tts.speed || 1) * 100)} onChange={event => updateNested('tts', 'speed', Number(event.target.value) / 100)} /><output htmlFor="auto-tts-speed">{Math.round((settings.tts.speed || 1) * 100)}%</output></div></label>
       </div> : settingsTab === 'flow' ? <div id="automation-settings-flow" className="automation-setting-grid" role="tabpanel">
+        <label className="automation-field-full"><span>{t('Tài khoản Flow', 'Flow account')}</span><select value={settings.flow.accountId} onChange={event => updateNested('flow', 'accountId', event.target.value)} disabled={optionsLoading && !flowAccounts.length}><option value="">{optionsLoading ? t('Đang tải tài khoản…', 'Loading accounts…') : t('Chọn tài khoản Flow', 'Select a Flow account')}</option>{flowAccounts.filter(account => account.status === 'online').map(account => <option key={account.id} value={account.id}>{account.label}{account.plan ? ` · ${account.plan}` : ''}</option>)}</select></label>
         <label><span>{t('Model Flow ảnh', 'Flow image model')}</span><select value={settings.flow.model} onChange={event => updateNested('flow', 'model', event.target.value)}>{FLOW_IMAGE_MODELS.map(model => <option key={model} value={model}>{model}</option>)}</select></label>
-        <label><span>{t('Bộ prompt Audio-First 2D', 'Audio-First 2D prompt engine')}</span><select value={settings.flow.promptEngine} onChange={event => updateNested('flow', 'promptEngine', event.target.value as 'vi' | 'en')}><option value="vi">ZMTOOL Audio-First 2D Engine V1.0 (Tiếng Việt)</option><option value="en">ZMTOOL Audio-First 2D Engine V1.0 (Bản Tiếng Anh)</option></select></label>
-        <label><span>{t('Tài khoản Flow', 'Flow account')}</span><select value={settings.flow.accountId} onChange={event => updateNested('flow', 'accountId', event.target.value)} disabled={optionsLoading && !flowAccounts.length}><option value="">{optionsLoading ? t('Đang tải tài khoản…', 'Loading accounts…') : t('Chọn tài khoản Flow', 'Select a Flow account')}</option>{flowAccounts.filter(account => account.status === 'online').map(account => <option key={account.id} value={account.id}>{account.label}{account.plan ? ` · ${account.plan}` : ''}</option>)}</select></label>
         <label><span>{t('Tỷ lệ khung hình', 'Aspect ratio')}</span><select value={settings.flow.ratio} onChange={event => updateNested('flow', 'ratio', event.target.value)}><option>16:9</option><option>9:16</option><option>1:1</option></select></label>
         <label><span>{t('Số ảnh mỗi prompt', 'Images per prompt')}</span><select value={settings.flow.count ?? '1'} onChange={event => updateNested('flow', 'count', event.target.value)}><option value="1">1</option><option value="2">2</option><option value="4">4</option></select></label>
         <label><span>{t('Số luồng Flow', 'Flow concurrency')}</span><input type="number" min="1" max="8" value={settings.flow.concurrency} onChange={event => updateNested('flow', 'concurrency', event.target.value)} /></label>

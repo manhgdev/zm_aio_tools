@@ -55,3 +55,10 @@
 .automation-video-dialog{width:min(100%,1080px);max-height:calc(100vh - 48px);padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 18px 60px rgba(0,0,0,.35)}
 .automation-video-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.automation-video-heading button{width:32px;height:32px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--foreground);font-size:20px;line-height:1;cursor:pointer}.automation-video-dialog video{display:block;width:100%;max-height:calc(100vh - 130px);background:#000}
 @media(max-width:560px){.automation-settings-tabs button{min-width:0;padding-inline:3px;font-size:.69rem}.automation-settings-panel-title{grid-column:1}}
+.automation-prompt-box{display:flex;flex-direction:column;gap:5px}
+.automation-prompt-header{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px}
+.automation-prompt-header>span{font-size:.73rem;font-weight:650;line-height:1.25;color:var(--muted-foreground)}
+.automation-prompt-actions{display:flex;align-items:center;gap:6px}
+.automation-prompt-btn{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--foreground);font:500 .68rem/22px var(--font);cursor:pointer;white-space:nowrap;transition:border-color .15s ease,color .15s ease,background .15s ease}
+.automation-prompt-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--accent-soft)}
+.automation-prompt-btn.danger:hover{border-color:var(--destructive);color:var(--destructive);background:color-mix(in srgb,var(--destructive) 10%,transparent)}

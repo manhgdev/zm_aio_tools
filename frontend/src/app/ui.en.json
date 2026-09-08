@@ -1644,5 +1644,9 @@
   "Giọng nói (CapCut cloud)": "Speech (CapCut cloud)",
   "CapCut cloud (không dùng Whisper)": "CapCut cloud (no Whisper)",
   "CapCut cloud — không dùng Whisper": "CapCut cloud — no Whisper",
-  "CapCut nhận dạng cloud — chạy Dịch toàn bộ": "CapCut cloud recognition — run Full Translation"
+  "CapCut nhận dạng cloud — chạy Dịch toàn bộ": "CapCut cloud recognition — run Full Translation",
+  "System prompt (Bộ prompt 2D)": "System prompt (2D prompt engine)",
+  "Tải file .txt": "Upload .txt",
+  "Nội dung System prompt tuỳ chỉnh": "Custom system prompt content",
+  "Tự nhập text / tải file bằng tay (Tuỳ chỉnh)": "Custom text / upload file manually (Custom)"
 }

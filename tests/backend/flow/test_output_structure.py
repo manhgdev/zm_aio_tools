@@ -1,5 +1,6 @@
 import importlib
 import asyncio
+import inspect
 import threading
 import time
 from pathlib import Path
@@ -153,6 +154,24 @@ def test_flow_desktop_browser_uses_installed_chrome_not_playwright_download():
     assert "Google Chrome.app/Contents/MacOS/Google Chrome" in source
     assert "FLOW_CHROME_REQUIRED" in source
     assert "from flow._browser" not in Path(service_module.__file__).read_text(encoding="utf-8")
+
+
+def test_flow_does_not_auto_open_chrome_when_a_job_session_expires():
+    source = inspect.getsource(service_module.FlowService._run)
+
+    assert "self.connect(" not in source
+
+
+def test_flow_restarts_stale_connecting_accounts_without_deleting_profiles(monkeypatch):
+    row = {"id": "account-1", "status": "connecting"}
+    patched = []
+    monkeypatch.setattr(service_module.store, "list_rows", lambda name: [row] if name == "accounts" else [])
+    monkeypatch.setattr(service_module.store, "patch_row", lambda _table, _id, patch: patched.append(patch) or row.update(patch) or dict(row))
+
+    accounts = service_module.FlowService().accounts()
+
+    assert accounts[0]["status"] == "reconnect"
+    assert patched and patched[0]["status"] == "reconnect"
 
 
 def test_flow_jobs_keep_first_created_prompt_at_top(monkeypatch):

@@ -329,6 +329,29 @@ def test_audio_first_prompt_loads_future_languages_by_filename(monkeypatch, tmp_
     prompts.audio_first_prompt.cache_clear()
 
 
+def test_audio_first_prompt_falls_back_to_builtin_when_files_missing_in_packaged_app(monkeypatch, tmp_path):
+    from pipeline.automation import prompts
+
+    # Simulate packaged APP environment where template files are not on disk
+    monkeypatch.setattr(prompts, "_PREVIEW_ROOT", tmp_path / "non_existent")
+    monkeypatch.setattr(prompts, "_candidate_prompt_paths", lambda filename: [tmp_path / filename])
+    prompts.audio_first_prompt.cache_clear()
+
+    vi_prompt = prompts.audio_first_prompt("vi")
+    en_prompt = prompts.audio_first_prompt("en")
+    assert "ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE V1.0" in vi_prompt
+    assert "Base mặc định: Tiếng Việt" in vi_prompt
+    assert "Default language: English" in en_prompt
+
+    # Unknown engine still raises ValueError with filename
+    import pytest
+    with pytest.raises(ValueError, match="Missing prompt template: v1.0-base-japanese-2D-image.txt"):
+        prompts.audio_first_prompt("japanese")
+
+    prompts.audio_first_prompt.cache_clear()
+
+
+
 def test_audio_first_topic_candidates_accept_markdown_table_without_headers():
     content = """# Chủ đề video
 | # | Chủ đề video |
@@ -576,3 +599,28 @@ def test_audio_first_engine_rules_are_included_for_script_and_image_prompts(tmp_
     assert "đúng 5 ý tưởng video YouTube giáo dục" in service._topic_prompt("", settings)
     assert "lời thuyết minh thuần văn bản" in script
     assert "chia visual beat theo ý nghĩa" in image
+
+
+def test_audio_first_engine_supports_custom_prompt(tmp_path):
+    service = AutomationService(store=AutomationStore(tmp_path / 'automation.sqlite3', tmp_path / 'jobs'), runner=lambda _job_id: None)
+    settings = {
+        "language": "vi",
+        "promptEngine": "custom",
+        "systemPrompt": "MY CUSTOM SYSTEM PROMPT FOR VIDEO GENERATION",
+    }
+    script = service._script_prompt("Chủ đề thử nghiệm", settings)
+    image = service._image_prompt_request(settings)
+    topic = service._topic_prompt("Lịch sử Trái Đất", settings)
+    for prompt in (script, image, topic):
+        assert "MY CUSTOM SYSTEM PROMPT FOR VIDEO GENERATION" in prompt
+        assert "ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE" not in prompt
+
+    # When promptEngine is vi, template is used directly and custom systemPrompt is ignored (mutually exclusive)
+    settings_template = {
+        "language": "vi",
+        "promptEngine": "vi",
+        "systemPrompt": "EXTRA SYSTEM INSTRUCTION",
+    }
+    script_template = service._script_prompt("Chủ đề thử nghiệm", settings_template)
+    assert "ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE V1.0" in script_template
+    assert "EXTRA SYSTEM INSTRUCTION" not in script_template

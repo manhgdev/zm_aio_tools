@@ -212,6 +212,8 @@ const args = [
   '--add-data', `${path.join(root, 'backend', 'pipeline', 'drawing', 'assets', 'scripts', 'stream_render.py')}${dataSep}references/whiteboard-stream-animation/scripts`,
   '--add-data', `${path.join(root, 'backend', 'pipeline', 'drawing', 'assets', 'images', 'drawing-hand.png')}${dataSep}references/whiteboard-stream-animation/assets`,
   '--add-data', `${path.join(root, 'backend', 'resources', 'voice-ref')}${dataSep}resources/voice-ref`,
+  '--add-data', `${path.join(root, 'previews', 'v1.0-base-vietnam-2D-image.txt')}${dataSep}previews`,
+  '--add-data', `${path.join(root, 'previews', 'v1.0-base-english-2D-image.txt')}${dataSep}previews`,
   '--add-data', `${versionFilePath}${dataSep}.`,
   '--collect-all', 'webview',
   '--collect-all', 'yt_dlp',

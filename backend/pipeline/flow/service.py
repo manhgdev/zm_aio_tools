@@ -259,6 +259,7 @@ async def _open_flow_settings_panel(page, pill, tabs, ui=None) -> bool:
 class FlowService:
     def __init__(self) -> None:
         self._account_active: dict[str, int] = {}
+        self._connecting_accounts: set[str] = set()
         self._claimed_media_ids: set[str] = set()
         self._cancelled: set[str] = set()
         self._guard = threading.RLock()
@@ -281,7 +282,16 @@ class FlowService:
             return []
 
     def accounts(self) -> list[dict[str, Any]]:
-        return store.list_rows("accounts")
+        rows = store.list_rows("accounts")
+        # A visible login is process-local. Do not leave a stale connecting
+        # badge after an app restart; the saved profile remains untouched.
+        for row in rows:
+            account_id = str(row.get("id") or "")
+            if row.get("status") == "connecting" and account_id not in self._connecting_accounts:
+                patch = {"status": "reconnect", "error": None, "updatedAt": time.time()}
+                store.patch_row("accounts", account_id, patch)
+                row.update(patch)
+        return rows
 
     def jobs(self) -> list[dict[str, Any]]:
         # Queue order is FIFO: the first prompt stays at the top and is the
@@ -506,7 +516,11 @@ class FlowService:
         account = store.get_row("accounts", account_id)
         if not account:
             raise KeyError(account_id)
-        store.patch_row("accounts", account_id, {"status": "connecting", "error": None, "updatedAt": time.time()})
+        with self._guard:
+            if account_id in self._connecting_accounts:
+                return account
+            self._connecting_accounts.add(account_id)
+            store.patch_row("accounts", account_id, {"status": "connecting", "error": None, "updatedAt": time.time()})
         self._log("info", "account_connecting", account_id=account_id)
         threading.Thread(target=lambda: asyncio.run(self._login(account_id)), daemon=True, name=f"flow-login-{account_id}").start()
         return store.get_row("accounts", account_id) or account
@@ -567,6 +581,7 @@ class FlowService:
 
 
     async def _login(self, account_id: str) -> None:
+        browser = None
         try:
             from .browser import BrowserManager, FLOW_BASE_URL
             browser = BrowserManager(headless=False, profile_dir=store.profile_dir(account_id))
@@ -591,7 +606,6 @@ class FlowService:
                             break
                 await asyncio.sleep(2)
             if not project_id:
-                await browser.stop()
                 raise RuntimeError("Login timed out or no Google Flow project was opened")
             email = await page.evaluate("() => window.__NEXT_DATA__?.props?.pageProps?.session?.user?.email || ''")
             credits = None
@@ -607,7 +621,6 @@ class FlowService:
                           detected_plan, getattr(credit_info, 'tier', ''), getattr(credit_info, 'sku', ''))
             except Exception:
                 pass
-            await browser.stop()
             patch: dict[str, Any] = {
                 "status": "online", "projectId": project_id,
                 "email": email or (store.get_row("accounts", account_id) or {}).get("email", ""),
@@ -621,6 +634,14 @@ class FlowService:
         except Exception as exc:
             store.patch_row("accounts", account_id, {"status": "reconnect", "error": str(exc), "updatedAt": time.time()})
             self._log("error", "account_connect_failed", account_id=account_id, message=str(exc))
+        finally:
+            if browser is not None:
+                try:
+                    await browser.stop()
+                except Exception:
+                    pass
+            with self._guard:
+                self._connecting_accounts.discard(account_id)
 
     def enqueue(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         prompts = [str(value).strip() for value in payload.get("prompts", []) if str(value).strip()]
@@ -1536,10 +1557,9 @@ class FlowService:
             store.patch_row("jobs", job_id, {"status": action, "stage": action, "error": str(exc), "updatedAt": time.time()})
             if needs_login:
                 # The queued job used a cloned headless profile.  Its saved Google
-                # session cannot be repaired headlessly, so open the account's
-                # persistent profile for the user to authenticate again.
+                # session cannot be repaired headlessly. Keep the stable account
+                # profile and wait for an explicit user reconnect action.
                 store.patch_row("accounts", account["id"], {"status": "reconnect", "error": str(exc), "updatedAt": time.time()})
-                self.connect(account["id"])
             if job.get("seriesContext"):
                 from . import series
                 series.mark_job_error(job, str(exc))

@@ -47,6 +47,8 @@ class AutomationService:
             "textProvider": "openrouter",
             "textModel": "openrouter/free",
             "chatModel": "GPT-5.6 Sol",
+            "systemPrompt": "",
+            "promptEngine": "vi",
             "tts": {"voice": "system", "speed": 1.0, "volume": 1.0, "pitch": 0.0, "style": "tu_nhien"},
             "flow": {"accountId": "", "model": "Nano Banana 2", "ratio": "16:9", "resolution": "1K", "concurrency": "3", "promptEngine": "vi"},
             "compose": {
@@ -532,18 +534,22 @@ class AutomationService:
             instruction = f"STAGE 1 — TOPIC SELECTION. When the user only says start or provides no specific topic, generate exactly 5 potentially engaging educational YouTube video ideas in English that fit this Audio-First 2D engine. Return this compact table and nothing else:\n| # | Video Topic |\n|---|---|\n| 1 | ... |\n| 2 | ... |\n| 3 | ... |\n| 4 | ... |\n| 5 | ... |\nThen write exactly: Choose 1-5 to begin. Starting hint: {topic or 'suggest a strong educational topic.'}"
         else:
             instruction = f"GIAI ĐOẠN 1 — CHỌN CHỦ ĐỀ. Khi người dùng chỉ nói bắt đầu hoặc chưa đưa chủ đề cụ thể, hãy tạo đúng 5 ý tưởng video YouTube giáo dục có khả năng thu hút bằng tiếng Việt, phù hợp với engine Audio-First 2D. Chỉ trả về bảng ngắn này và không thêm nội dung khác:\n| # | Chủ đề video |\n|---|---|\n| 1 | ... |\n| 2 | ... |\n| 3 | ... |\n| 4 | ... |\n| 5 | ... |\nSau đó viết đúng: Chọn số 1-5 để bắt đầu. Gợi ý ban đầu: {topic or 'hãy tự đề xuất chủ đề giáo dục có khả năng thu hút cao.'}"
-        prefix = str(settings.get("systemPrompt") or "").strip()
         base = self._audio_first_engine_prompt(settings)
-        return (prefix + "\n\n" if prefix else "") + base + "\n\n" + instruction
+        return base + "\n\n" + instruction
 
     @staticmethod
     def _audio_first_engine_prompt(settings: dict[str, Any]) -> str:
-        """Return the same complete Audio-First engine used in the Flow prompt library."""
-        engine = str((settings.get("flow") or {}).get("promptEngine") or settings.get("language") or "vi")
+        """Return the Audio-First engine template or custom system prompt."""
+        engine = str(settings.get("promptEngine") or (settings.get("flow") or {}).get("promptEngine") or settings.get("language") or "vi")
+        if engine == "custom":
+            custom = str(settings.get("systemPrompt") or "").strip()
+            if custom:
+                return custom
+            return audio_first_prompt("vi")
         return audio_first_prompt(engine)
 
     def _script_prompt(self, topic: str, settings: dict[str, Any]) -> str:
-        prefix = str(settings.get("systemPrompt") or "").strip()
+        base = self._audio_first_engine_prompt(settings)
         language = "English" if str(settings.get("language") or "vi").lower() == "en" else "Vietnamese"
         instruction = (
             f"Final topic: {topic}\n"
@@ -554,11 +560,10 @@ class AutomationService:
             "Chỉ trả về đúng nội dung lời thuyết minh thuần văn bản — không mở đầu, không nhắc tên file, không giải thích, không markdown. "
             "Bắt đầu ngay bằng từ đầu tiên của lời thuyết minh."
         )
-        engine = self._audio_first_engine_prompt(settings)
-        return (prefix + "\n\n" if prefix else "") + engine + "\n" + instruction
+        return base + "\n\n" + instruction
 
     def _image_prompt_request(self, settings: dict[str, Any]) -> str:
-        prefix = str(settings.get("systemPrompt") or "").strip()
+        base = self._audio_first_engine_prompt(settings)
         language = "English" if str(settings.get("language") or "vi").lower() == "en" else "Vietnamese"
         instruction = (
             "Read the attached SRT with timecodes (or script), split visual beats by meaning, then output ONLY the image prompt lines. "
@@ -571,8 +576,7 @@ class AutomationService:
             "QUAN TRỌNG: phải phủ kín toàn bộ thời lượng video — không được dừng sớm, không được bỏ sót đoạn nào. "
             "Không mở đầu, không giải thích, không nhắc tên file — bắt đầu ngay bằng dòng 001."
         )
-        instruction = self._audio_first_engine_prompt(settings) + "\n" + instruction
-        return (prefix + "\n\n" if prefix else "") + instruction
+        return base + "\n\n" + instruction
 
     @staticmethod
     def _topic_candidates(content: str) -> list[str]:
