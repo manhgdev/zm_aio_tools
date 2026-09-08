@@ -22,17 +22,28 @@ export type EditorSnap = {
 
 export const HISTORY_MAX = 40
 
+function deepClone<T>(val: T): T {
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(val)
+    } catch {
+      /* fallback below */
+    }
+  }
+  return JSON.parse(JSON.stringify(val))
+}
+
 export function cloneSnap(s: EditorSnap): EditorSnap {
   return {
-    segments: s.segments.map((x) => ({ ...x, compoundChildren: x.compoundChildren?.map((c) => ({ ...c })) })),
-    overlays: s.overlays.map((x) => ({ ...x })),
-    settings: { ...s.settings },
+    segments: deepClone(s.segments),
+    overlays: deepClone(s.overlays),
+    settings: deepClone(s.settings),
     bookmarks: [...s.bookmarks],
     selectedId: s.selectedId,
     selectedOverlayId: s.selectedOverlayId,
     trackFocus: s.trackFocus,
-    videoClips: s.videoClips.map((x) => ({ ...x })),
-    bgClips: s.bgClips.map((x) => ({ ...x })),
+    videoClips: deepClone(s.videoClips),
+    bgClips: deepClone(s.bgClips),
     selectedMediaId: s.selectedMediaId,
     bakedSpeed: s.bakedSpeed,
     workClipSec: s.workClipSec,

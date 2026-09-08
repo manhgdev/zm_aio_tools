@@ -740,8 +740,8 @@ export default function LivePreviewEditor({
     return onOverlayChange(overlay, isNew)
   }
 
-  function editSettings(next: ProjectSettings) {
-    if (!historyQuietRef.current) {
+  function editSettings(next: ProjectSettings, opts?: { skipHistory?: boolean }) {
+    if (!historyQuietRef.current && !opts?.skipHistory) {
       pushHistory()
       textHistRef.current = { key: '', t: 0 }
     }
@@ -750,6 +750,15 @@ export default function LivePreviewEditor({
 
   function applySnap(snap: EditorSnap) {
     historyQuietRef.current = true
+    layoutCacheRef.current = {}
+    overlayDragDraftRef.current = null
+    bboxDraftRef.current = null
+    groupDraftRef.current = null
+    setDraft(null)
+    setGroupDraft(null)
+    setActiveBboxId(null)
+    setBboxDraft(null)
+    setBlurBandDraft(null)
     const curBake = effectiveBakedSpeed()
     const wantBake = snap.bakedSpeed > 0.2 ? snap.bakedSpeed : 1
     const bakeChanges = Math.abs(curBake - wantBake) > 0.008 && Boolean(onRestoreBakedSpeed)
@@ -2424,6 +2433,7 @@ export default function LivePreviewEditor({
     const ids = new Set(selectionCaptionIds(anchorId, menuIds))
     if (!ids.size) return
     pushHistory()
+    layoutCacheRef.current = {}
     void onSegmentsReplace(segments.map((s) => (ids.has(s.id) ? patch(s) : s)))
   }
 
@@ -2876,6 +2886,7 @@ export default function LivePreviewEditor({
 
   function applyCaptionModeAll(mode: 'cover' | 'below' | 'above' | 'none') {
     pushHistory()
+    layoutCacheRef.current = {}
     setActiveBboxId(null)
     setBboxDraft(null)
     if (mode === 'cover') {
@@ -2958,7 +2969,7 @@ export default function LivePreviewEditor({
     setTool('select')
     setPropTab('overlay')
     pushHistory()
-    editOverlay(overlay, true)
+    editOverlay(overlay, true, { skipHistory: true })
   }
 
   function fitTextLogo(logo: TextOverlay, text = logo.text, fontSize = logo.fontSize) {
@@ -3043,7 +3054,7 @@ export default function LivePreviewEditor({
       next.positionKeyframes = generateLogoKeyframes(next, timelineDuration, sourceWidth, sourceHeight, segments, next.positionSeed)
       const exists = overlays.some((o) => o.id === next.id)
       pushHistory()
-      await editOverlay(next, !exists)
+      await editOverlay(next, !exists, { skipHistory: true })
       setLogoDraft(next)
       setLogoDraftBase({ ...next })
       setLogoDraftFile(null)
@@ -3110,7 +3121,7 @@ export default function LivePreviewEditor({
     setPropTab('overlay')
     setAssetsTab('add')
     pushHistory()
-    editOverlay(overlay, true)
+    editOverlay(overlay, true, { skipHistory: true })
   }
 
   function beginOverlayResize(
@@ -3447,10 +3458,11 @@ export default function LivePreviewEditor({
     const t = time
     if (editTarget.kind === 'ov') {
       const ov = editTarget.ov
-      editOverlay({ ...ov, end: t })
+      editOverlay({ ...ov, end: t }, false, { skipHistory: true })
       editOverlay(
         { ...ov, id: crypto.randomUUID(), start: t, end: ov.end },
         true,
+        { skipHistory: true },
       )
       return
     }
@@ -4197,7 +4209,12 @@ export default function LivePreviewEditor({
         sourceWidth,
         sourceHeight,
       )
-      editSegment(segmentWithLayout({ ...selected, bboxInherited: false }, {
+      editSegment(segmentWithLayout({
+        ...selected,
+        bbox: norm,
+        ...(selected.coverBox ? { coverBox: norm } : {}),
+        bboxInherited: false,
+      }, {
         cover: norm,
         caption: laid.caption,
         lines: laid.lines,
@@ -4215,13 +4232,24 @@ export default function LivePreviewEditor({
       )
       const fitFs = layout.fontPx ?? autoFontFromBbox(norm, selected.translation, 0)
       editSegment(segmentWithLayout(
-        { ...selected, bboxInherited: false },
+        {
+          ...selected,
+          bbox: norm,
+          ...(selected.coverBox ? { coverBox: norm } : {}),
+          bboxInherited: false,
+        },
         { ...layout, cover: norm },
         fitFs,
       ))
       return
     }
-    editSegment({ ...selected, bbox: norm, bboxInherited: false, captionLayout: null })
+    editSegment({
+      ...selected,
+      bbox: norm,
+      ...(selected.coverBox ? { coverBox: norm } : {}),
+      bboxInherited: false,
+      captionLayout: null,
+    })
   }
 
   /** Kéo vùng che full ngang (~96% khung), giữ Y/Cao hiện tại. */
@@ -4319,6 +4347,8 @@ export default function LivePreviewEditor({
     const clearBbox = (seg: Segment): Segment => ({
       ...seg,
       bbox: null,
+      coverBox: null,
+      captionBox: null,
       captionLayout: null,
       bboxInherited: undefined,
     })
@@ -4334,7 +4364,7 @@ export default function LivePreviewEditor({
     pushHistory()
     layoutCacheRef.current = {}
     const next = segments.map((seg) =>
-      seg.bbox || seg.captionLayout ? clearBbox(seg) : seg,
+      seg.bbox || seg.coverBox || seg.captionBox || seg.captionLayout ? clearBbox(seg) : seg,
     )
     void onSegmentsReplace(next)
   }
@@ -4738,7 +4768,7 @@ export default function LivePreviewEditor({
                         busy={busy}
                         jobStep={jobStep}
                         jobProgress={jobProgress}
-                        onSettings={onSettings}
+                        onSettings={editSettings}
                         onRunPipeline={onRunPipeline}
                         onCancel={onCancel}
                         onDub={onDub}
@@ -4873,7 +4903,7 @@ export default function LivePreviewEditor({
                         busy={busy}
                         jobStep={jobStep}
                         jobProgress={jobProgress}
-                        onSettings={onSettings}
+                        onSettings={editSettings}
                         onRunPipeline={onRunPipeline}
                         onCancel={onCancel}
                         onDub={onDub}
@@ -5309,6 +5339,7 @@ export default function LivePreviewEditor({
                             const rect = canvas.getBoundingClientRect()
                             const original = { ...editableBlurBandBox }
                             let latest = original
+                            const histGate = { current: false }
                             const update = (move: PointerEvent) => {
                               const dx = ((move.clientX - e.clientX) / rect.width) * crop.w
                               const dy = ((move.clientY - e.clientY) / rect.height) * crop.h
@@ -5318,6 +5349,9 @@ export default function LivePreviewEditor({
                                 w: original.w, h: original.h,
                               }, sourceWidth, sourceHeight)
                               latest = next
+                              if (Math.abs(next.x - original.x) > 1 || Math.abs(next.y - original.y) > 1) {
+                                pushHistoryOnce(histGate)
+                              }
                               setBlurBandDraft(next)
                             }
                             const cleanup = () => {
@@ -5325,7 +5359,18 @@ export default function LivePreviewEditor({
                               window.removeEventListener('pointerup', cleanup)
                               window.removeEventListener('pointercancel', cleanup)
                               setBlurBandDraft(null)
-                              onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: latest.x / sourceWidth, y: latest.y / sourceHeight, w: latest.w / sourceWidth, h: latest.h / sourceHeight } })
+                              if (histGate.current) {
+                                editSettings({
+                                  ...settings,
+                                  blurBandMode: 'manual',
+                                  blurBandRegion: {
+                                    x: latest.x / sourceWidth,
+                                    y: latest.y / sourceHeight,
+                                    w: latest.w / sourceWidth,
+                                    h: latest.h / sourceHeight,
+                                  },
+                                }, { skipHistory: true })
+                              }
                             }
                             window.addEventListener('pointermove', update)
                             window.addEventListener('pointerup', cleanup, { once: true })
@@ -5356,6 +5401,7 @@ export default function LivePreviewEditor({
                                 const original = { ...editableBlurBandBox }
                                 let latest = original
                                 const minSize = 12
+                                const histGate = { current: false }
                                 const update = (move: PointerEvent) => {
                                   const dx = ((move.clientX - e.clientX) / rect.width) * crop.w
                                   const dy = ((move.clientY - e.clientY) / rect.height) * crop.h
@@ -5367,6 +5413,14 @@ export default function LivePreviewEditor({
                                   if (handle.includes('s')) bottom = Math.min(sourceHeight, Math.max(top + minSize, bottom + dy))
                                   const next = clampCoverBox({ x: Math.round(left), y: Math.round(top), w: Math.round(right - left), h: Math.round(bottom - top) }, sourceWidth, sourceHeight)
                                   latest = next
+                                  if (
+                                    Math.abs(next.x - original.x) > 1
+                                    || Math.abs(next.y - original.y) > 1
+                                    || Math.abs(next.w - original.w) > 1
+                                    || Math.abs(next.h - original.h) > 1
+                                  ) {
+                                    pushHistoryOnce(histGate)
+                                  }
                                   setBlurBandDraft(next)
                                 }
                                 const cleanup = () => {
@@ -5374,7 +5428,18 @@ export default function LivePreviewEditor({
                                   window.removeEventListener('pointerup', cleanup)
                                   window.removeEventListener('pointercancel', cleanup)
                                   setBlurBandDraft(null)
-                                  onSettings({ ...settings, blurBandMode: 'manual', blurBandRegion: { x: latest.x / sourceWidth, y: latest.y / sourceHeight, w: latest.w / sourceWidth, h: latest.h / sourceHeight } })
+                                  if (histGate.current) {
+                                    editSettings({
+                                      ...settings,
+                                      blurBandMode: 'manual',
+                                      blurBandRegion: {
+                                        x: latest.x / sourceWidth,
+                                        y: latest.y / sourceHeight,
+                                        w: latest.w / sourceWidth,
+                                        h: latest.h / sourceHeight,
+                                      },
+                                    }, { skipHistory: true })
+                                  }
                                 }
                                 window.addEventListener('pointermove', update)
                                 window.addEventListener('pointerup', cleanup, { once: true })
@@ -6016,7 +6081,7 @@ export default function LivePreviewEditor({
                         busy={busy}
                         segments={segments}
                         settings={settings}
-                        onSettings={onSettings}
+                        onSettings={editSettings}
                         applyCaptionToAll={applyCaptionToAll}
                         setApplyCaptionToAll={setApplyCaptionToAll}
                         onEditManualBlurBand={editManualBlurBand}
@@ -7251,7 +7316,7 @@ export default function LivePreviewEditor({
               : [seg]
             const allDubOn = targets.every((s) => segmentHasDub(s))
             const anyTrans = targets.some((s) => Boolean(s.translation?.trim()))
-            const anyLayout = targets.some((s) => s.bbox || s.captionLayout)
+            const anyLayout = targets.some((s) => s.bbox || s.coverBox || s.captionBox || s.captionLayout)
             return (
               <>
                 {multi && (
@@ -7384,12 +7449,14 @@ export default function LivePreviewEditor({
                         patchSelectedCaptions(seg.id, (s) => ({
                           ...s,
                           bbox: null,
+                          coverBox: null,
+                          captionBox: null,
                           captionLayout: null,
                         }), multiIds)
                         setCtxMenu(null)
                       }}
                     >
-                      {multi ? `Reset layout ${groupN} clip` : 'Reset layout caption'}
+                      {multi ? t(`Reset layout ${groupN} clip`, `Reset layout for ${groupN} clips`) : t('Reset layout caption', 'Reset caption layout')}
                     </CtxItem>
                   </>
                 )}

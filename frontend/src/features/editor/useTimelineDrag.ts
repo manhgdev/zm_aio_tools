@@ -183,6 +183,9 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
       editSegment(next, { skipHistory })
       return
     }
+    if (!skipHistory) {
+      pushHistory()
+    }
     const box = next.captionBox ?? next.bbox!
     const lane = captionLaneOf(next, sourceHeight, sourceWidth)
     const all = segments.map((peer) => {
@@ -247,7 +250,6 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
       setSelectedId(segment.id)
       setSelectedIds(moveIds)
     }
-    pushHistory()
     const original = { start: segment.start, end: segment.end }
     const minDuration = 0.12
     const maxT = Math.max(timelineDuration, segment.end, 1)
@@ -291,6 +293,7 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
             return Math.abs(cur[id].start - o.start) > 0.001
           })
           if (!changed) return
+          pushHistory()
           const nextSegs = segments.map((s) => {
             const d = cur[s.id]
             return d ? { ...s, start: d.start, end: d.end } : s
@@ -385,7 +388,6 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
     event.stopPropagation()
     if (track === 'video') focusVideo(clip.id)
     else focusBg(clip.id)
-    pushHistory()
     const original = { start: clip.start, end: clip.end }
     const minDuration = MIN_CLIP_SEC
     const maxT = Math.max(timelineDuration, clip.end, 1)
@@ -425,6 +427,12 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
         groupDraftRef.current = null
         setGroupDraft(null)
         if (!cur) return
+        const changed = Object.keys(cur).some((id) => {
+          const o = origins[id]
+          return Math.abs(cur[id].start - o.start) > 0.001 || Math.abs(cur[id].end - o.end) > 0.001
+        })
+        if (!changed) return
+        pushHistory()
         setList((prev) =>
           prev
             .map((c) => (cur[c.id] ? { ...c, start: cur[c.id].start, end: cur[c.id].end } : c))
@@ -467,6 +475,7 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
         && (Math.abs(current.start - original.start) > 0.001
           || Math.abs(current.end - original.end) > 0.001)
       ) {
+        pushHistory()
         setList((prev) =>
           prev
             .map((c) => (c.id === clip.id ? { ...c, start: current.start, end: current.end } : c))
@@ -498,7 +507,6 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
     event.preventDefault()
     event.stopPropagation()
     focusText(overlay.id)
-    pushHistory()
     const moveIds = selectedOverlayIds.includes(overlay.id)
       ? selectedOverlayIds.filter((id) => overlays.some((item) => item.id === id && item.track === overlay.track))
       : [overlay.id]
@@ -529,6 +537,12 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
         groupDraftRef.current = null
         setGroupDraft(null)
         if (!current) return
+        const changed = Object.keys(current).some((id) => {
+          const o = origins[id]
+          return Math.abs(current[id].start - o.start) > 0.001 || Math.abs(current[id].end - o.end) > 0.001
+        })
+        if (!changed) return
+        pushHistory()
         void onOverlaysReplace(overlays.map((item) => current[item.id] ? { ...item, ...current[item.id] } : item))
       }
       window.addEventListener('pointermove', updateGroup)
@@ -811,7 +825,7 @@ export function useTimelineDrag(deps: TimelineDragDeps) {
       setSnapGuides({ h: false, v: false })
       const next = bboxDraftRef.current
       bboxDraftRef.current = null; setBboxDraft(null)
-      if (next) {
+      if (next && histGate.current) {
         const norm = clampCoverBox(next, sourceWidth, sourceHeight)
         const sizeChanged =
           Math.abs(norm.w - original.w) > 2 || Math.abs(norm.h - original.h) > 2

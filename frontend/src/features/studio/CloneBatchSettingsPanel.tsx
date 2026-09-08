@@ -134,37 +134,23 @@ export function CloneBatchSettingsPanel({ settings, voices, onChange }: Props) {
 
         <label className="blur-band-label">
           <span>{t('Vùng làm mờ cố định', 'Persistent blur zone')}</span>
-          <div className="blur-band-controls">
-            <label className="inline-check">
-              <input
-                type="checkbox"
-                id="blurBandEnabled"
-                checked={(settings.blurBandMode ?? 'auto') !== 'off'}
-                onChange={(e) =>
-                  set('blurBandMode', e.target.checked ? 'auto' : 'off')
-                }
-              />
-              {t('Bật vùng làm mờ (chạy suốt video)', 'Enable blur band (full video)')}
-            </label>
-            {(settings.blurBandMode ?? 'auto') !== 'off' && (
-              <select
-                id="blurBandMode"
-                value={settings.blurBandMode ?? 'auto'}
-                onChange={(e) => set('blurBandMode', e.target.value as 'auto' | 'manual')}
-              >
-                <option value="auto">{t('Tự động (phát hiện qua OCR)', 'Auto (OCR-detected)')}</option>
-                <option value="manual">{t('Thủ công (kéo chọn trong preview)', 'Manual (drag in preview)')}</option>
-              </select>
-            )}
-            {settings.blurBandMode === 'manual' && (
-              <small className="blur-band-hint">
-                {t(
-                  'Vào trình chỉnh sửa → kéo khung "Vùng làm mờ" để định vị.',
-                  'Go to the editor → drag the "Blur zone" frame to position it.',
-                )}
-              </small>
-            )}
-          </div>
+          <select
+            id="blurBandMode"
+            value={settings.blurBandMode ?? 'auto'}
+            onChange={(e) => set('blurBandMode', e.target.value as 'off' | 'auto' | 'manual')}
+          >
+            <option value="off">{t('Tắt', 'Off')}</option>
+            <option value="auto">{t('Tự động (phát hiện qua OCR)', 'Auto (OCR-detected)')}</option>
+            <option value="manual">{t('Thủ công (kéo chọn trong preview)', 'Manual (drag in preview)')}</option>
+          </select>
+          {settings.blurBandMode === 'manual' && (
+            <small className="blur-band-hint">
+              {t(
+                'Vào trình chỉnh sửa → kéo khung "Vùng làm mờ" để định vị.',
+                'Go to the editor → drag the "Blur zone" frame to position it.',
+              )}
+            </small>
+          )}
         </label>
 
         <label>

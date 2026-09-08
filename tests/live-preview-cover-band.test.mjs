@@ -73,7 +73,7 @@ test('Live Preview renders inherited bbox while reserving verified bbox for row 
   assert.match(source, /const hasPreviewCoverBbox = .*Boolean\(segment\?\.bbox\)/)
   assert.match(source, /const hasVerifiedCoverBbox = .*hasPreviewCoverBbox\(segment\)/)
   assert.match(source, /return hasPreviewCoverBbox\(s\)/)
-  assert.match(source, /getCachedPreviewLayout\(s, s\.id === selected\?\.id/)
+  assert.match(source, /getCachedPreviewLayout\(s, liveDragBox\)/)
   assert.doesNotMatch(source, /layoutSegment = overCoverMode/)
 })
 
@@ -81,7 +81,7 @@ test('manual blur and caption keep independent drag geometry', async () => {
   const source = await readFile(new URL('../frontend/src/features/editor/LivePreviewEditor.tsx', import.meta.url), 'utf8')
 
   assert.doesNotMatch(source, /blurBandForSegment/)
-  assert.match(source, /const captionBand = overCoverMode/)
+  assert.match(source, /const captionBand = .*overCoverMode/)
   assert.match(source, /bbox:\s*captionBand/)
   assert.doesNotMatch(source, /const captionBand = .*persistentBlurBandBox/)
 })

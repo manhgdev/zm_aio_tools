@@ -30,6 +30,20 @@
 .studio-page button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); font-weight: 700; }
 .studio-page button:disabled { opacity: .45; cursor: default; }
 .studio-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.studio-page label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  white-space: nowrap;
+}
+.studio-page label.check input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 18px;
+  accent-color: var(--primary);
+}
 .studio-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .studio-tabs button.active { border-color: var(--primary); color: var(--primary); font-weight: 700; }
 .batch-page {
@@ -111,7 +125,7 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
 }
-.clone-settings-grid label,
+.clone-settings-grid > label,
 .clone-settings-inline label {
   display: grid;
   min-width: 0;
@@ -121,11 +135,38 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
   font-size: .82rem;
   font-weight: 650;
 }
-.clone-settings-grid select,
+.clone-settings-grid > label > select,
 .clone-settings-inline select {
   width: 100%;
   min-width: 0;
   max-width: 100%;
+}
+.clone-settings-toggles input[type='checkbox'] {
+  appearance: none;
+  position: relative;
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, var(--line));
+  border-radius: 4px;
+  background: var(--background);
+  cursor: pointer;
+}
+.clone-settings-toggles input[type='checkbox']:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.clone-settings-toggles input[type='checkbox']:checked::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+.clone-settings-toggles input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 .clone-settings-grid small {
   color: var(--muted-foreground);
@@ -147,8 +188,18 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
   background: var(--background);
 }
 .clone-settings-toggles .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-height: 34px;
   font-weight: 600;
+}
+.clone-settings-toggles .check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 16px;
+  accent-color: var(--primary);
 }
 .clone-settings-inline {
   display: grid;
@@ -156,6 +207,8 @@ html.dark .batch-page .studio-tabs .batch-tab.active { color: #fff; }
   gap: 12px;
 }
 .clone-settings-inline input[type='range'] { width: 100%; }
+@media (max-width: 900px) {
+}
 .studio-files { margin: 0; padding-left: 18px; font-size: .8rem; max-height: 140px; overflow: auto; }
 .studio-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
 .studio-queue-scroll { max-height: min(62vh, 620px); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
