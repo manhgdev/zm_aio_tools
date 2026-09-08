@@ -699,7 +699,7 @@ class AutomationService:
         settings = dict(current_job.get("settings") or {})
         selected_provider = str(settings.get("textProvider") or "").strip().lower()
         selected_model = str(settings.get("textModel") or settings.get("chatModel") or "").strip()
-        # Jobs created before the provider selector used ChatGPT Web implicitly.
+        # Jobs created before the provider selector used ChatGPT Codex implicitly.
         if not selected_provider:
             selected_provider = "chatgpt_web" if settings.get("chatModel") else chat_service.DEFAULT_API_PROVIDER
         if selected_provider == "chatgpt_web":

@@ -28,7 +28,7 @@ PROVIDER_LABELS = {
     "grok": "Grok (xAI)",
     "groq": "Groq",
     "nvidia": "NVIDIA NIM",
-    "chatgpt_web": "ChatGPT Web",
+    "chatgpt_web": "ChatGPT Codex",
 }
 _STREAM_TIMEOUT_SECONDS = 45.0
 
@@ -471,31 +471,36 @@ class ChatGPTAccountProvider:
 
     @staticmethod
     def _models(raw) -> list[str]:
-        lists = raw if isinstance(raw, list) else next((raw.get(k) for k in ("models", "data", "items", "available_models") if isinstance(raw.get(k), list)), []) if isinstance(raw, dict) else []
+        lists = raw if isinstance(raw, list) else next((raw.get(key) for key in ("models", "data", "items", "available_models") if isinstance(raw.get(key), list)), []) if isinstance(raw, dict) else []
         found = []
         for item in lists:
-            value = item if isinstance(item, str) else next((item.get(k) for k in ("slug", "id", "model", "name") if item.get(k)), None) if isinstance(item, dict) else None
+            value = item if isinstance(item, str) else next((item.get(key) for key in ("slug", "id", "model", "name") if item.get(key)), None) if isinstance(item, dict) else None
             if isinstance(value, str) and value not in found:
                 found.append(value)
         return found
 
     def models(self):
         import httpx
+
         response = httpx.get(f"{self.BASE_URL}/models?client_version={self.CLIENT_VERSION}", headers=self._headers(), timeout=30)
         response.raise_for_status()
         return self._models(response.json())
 
     def stream(self, model: str, messages: list[dict], cancel, attachments=None) -> Iterator[str]:
         import httpx
-        inputs = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("status") == "completed"]
+
+        inputs = [{"role": message["role"], "content": message["content"]} for message in messages if message.get("status") == "completed"]
         payload = {"model": model, "instructions": "You are a helpful assistant. Answer directly and helpfully.", "input": inputs, "stream": True, "store": False, "reasoning": {"effort": "medium", "summary": "auto"}, "text": {"verbosity": "medium"}, "include": ["reasoning.encrypted_content"]}
         with httpx.stream("POST", f"{self.BASE_URL}/responses?client_version={self.CLIENT_VERSION}", headers=self._headers(), json=payload, timeout=180) as response:
             response.raise_for_status()
             for line in response.iter_lines():
-                if cancel.is_set(): return
-                if not line.startswith("data:"): continue
+                if cancel.is_set():
+                    return
+                if not line.startswith("data:"):
+                    continue
                 raw = line[5:].strip()
-                if raw == "[DONE]": return
+                if raw == "[DONE]":
+                    return
                 try:
                     event = json.loads(raw)
                     if event.get("type") in {"response.output_text.delta", "content.delta"} and isinstance(event.get("delta"), str):

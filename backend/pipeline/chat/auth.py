@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import secrets
 import threading
 import time
+import urllib.parse
 import uuid
 import webbrowser
-import hashlib
-import secrets
-import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
+
 from pipeline.core.config import sanitize_httpx_no_proxy
+
 
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 ISSUER = "https://auth.openai.com"
@@ -51,6 +53,7 @@ class SystemTokenStore:
     def load(self) -> dict | None:
         try:
             import keyring
+
             raw = keyring.get_password(KEYRING_SERVICE, f"{KEYRING_USER}:{self.account_id}")
             value = json.loads(raw) if raw else None
             return value if isinstance(value, dict) else None
@@ -59,11 +62,13 @@ class SystemTokenStore:
 
     def save(self, tokens: dict) -> None:
         import keyring
+
         keyring.set_password(KEYRING_SERVICE, f"{KEYRING_USER}:{self.account_id}", json.dumps(tokens))
 
     def delete(self) -> None:
         try:
             import keyring
+
             keyring.delete_password(KEYRING_SERVICE, f"{KEYRING_USER}:{self.account_id}")
         except Exception:
             pass
@@ -89,6 +94,21 @@ class ChatGPTAuth:
         self.client = client or httpx.Client(timeout=30, follow_redirects=True)
         self._pending: dict[str, OAuthLogin] = {}
         self._refresh_lock = threading.Lock()
+        self._login_complete = threading.Event()
+
+    @property
+    def login_complete(self) -> threading.Event:
+        """Signals that the single managed OAuth window may close."""
+        return self._login_complete
+
+    @property
+    def login_pending(self) -> bool:
+        return bool(self._pending)
+
+    def fail_pending(self, error: str) -> None:
+        for login in self._pending.values():
+            login.error = error
+        self._login_complete.set()
 
     def status(self) -> dict:
         tokens = self.store.load()
@@ -98,11 +118,12 @@ class ChatGPTAuth:
         return {"status": "connected", "configured": True, "email": claims.get("email", ""), "expiresAt": tokens.get("expires_at")}
 
     def start_login(self, open_browser: bool = True) -> dict:
+        self._login_complete.clear()
         state = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(64)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         login = OAuthLogin(uuid.uuid4().hex, state, verifier, time.time() + 900)
-        login.server = self._callback_server(login)
+        login.server = self._callback_server(login, self._login_complete)
         self._pending[login.id] = login
         params = {
             "client_id": CLIENT_ID,
@@ -121,7 +142,7 @@ class ChatGPTAuth:
         return {"loginId": login.id, "authorizationUrl": authorize_url, "expiresAt": login.expires_at}
 
     @staticmethod
-    def _callback_server(login: OAuthLogin) -> HTTPServer:
+    def _callback_server(login: OAuthLogin, login_complete: threading.Event) -> HTTPServer:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -139,9 +160,12 @@ class ChatGPTAuth:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+                login_complete.set()
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
+
             def log_message(self, *_args):
                 return
+
         try:
             server = HTTPServer(("127.0.0.1", 1455), Handler)
         except OSError as exc:
@@ -155,16 +179,32 @@ class ChatGPTAuth:
             raise KeyError(login_id)
         if time.time() >= login.expires_at:
             self._pending.pop(login_id, None)
+            self._login_complete.set()
+            if login.server:
+                login.server.shutdown()
+                login.server.server_close()
             return {"status": "expired"}
         if login.error:
             self._pending.pop(login_id, None)
+            self._login_complete.set()
+            if login.server:
+                login.server.shutdown()
+                login.server.server_close()
             return {"status": "failed", "error": login.error}
         if not login.code:
             return {"status": "pending"}
-        token_response = self.client.post(f"{ISSUER}/oauth/token", data={"grant_type": "authorization_code", "client_id": CLIENT_ID, "code": login.code, "code_verifier": login.code_verifier, "redirect_uri": REDIRECT_URI}, headers={"Accept": "application/json"})
-        token_response.raise_for_status()
-        tokens = self._normalize_tokens(token_response.json())
-        self.store.save(tokens)
+        try:
+            token_response = self.client.post(f"{ISSUER}/oauth/token", data={"grant_type": "authorization_code", "client_id": CLIENT_ID, "code": login.code, "code_verifier": login.code_verifier, "redirect_uri": REDIRECT_URI}, headers={"Accept": "application/json"})
+            token_response.raise_for_status()
+            tokens = self._normalize_tokens(token_response.json())
+            self.store.save(tokens)
+        except Exception:
+            self._pending.pop(login_id, None)
+            self._login_complete.set()
+            if login.server:
+                login.server.shutdown()
+                login.server.server_close()
+            raise
         self._pending.pop(login_id, None)
         if login.server:
             login.server.server_close()
@@ -190,7 +230,7 @@ class ChatGPTAuth:
                 self.store.delete()
                 raise RuntimeError("ChatGPT session expired; sign in again")
             response = self.client.post(f"{ISSUER}/oauth/token", json={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": CLIENT_ID, "scope": SCOPE}, headers={"Accept": "application/json"})
-            if response.status_code == 400:
+            if response.status_code in {400, 401, 403}:
                 self.store.delete()
                 raise RuntimeError("ChatGPT session expired; sign in again")
             response.raise_for_status()

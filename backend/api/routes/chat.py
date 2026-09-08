@@ -51,10 +51,7 @@ def providers(refresh: bool = False):
 def create_account(body: dict[str, Any] = Body(...)):
     provider = body.get("provider")
     if provider == "chatgpt_account":
-        try:
-            return service.create_account(str(body.get("label") or "ChatGPT"), body.get("browserFamily"))
-        except Exception as exc:
-            raise HTTPException(400, detail={"code": "browser_unavailable", "message": _t("Không tìm thấy Chrome, Edge hoặc Brave.", "Chrome, Edge or Brave was not found."), "reason": str(exc)}) from exc
+        return service.create_account(str(body.get("label") or "ChatGPT"))
     raise HTTPException(400, _t("Nhà cung cấp tài khoản không được hỗ trợ", "Unsupported account provider"))
 
 
@@ -65,19 +62,18 @@ def oauth_login(account_id: str):
     except KeyError as exc:
         raise HTTPException(404, _t("Không tìm thấy tài khoản.", "Account not found.")) from exc
     except Exception as exc:
-        raise HTTPException(502, detail={"code": "chatgpt_login_failed", "message": _t("Không bắt đầu được đăng nhập ChatGPT.", "Could not start ChatGPT sign-in."), "reason": str(exc)}) from exc
+        chrome_required = "CHAT_CHROME_REQUIRED" in str(exc)
+        raise HTTPException(502, detail={"code": "chatgpt_chrome_required" if chrome_required else "chatgpt_login_failed", "message": _t("Không tìm thấy Google Chrome. Hãy cài Google Chrome rồi đăng nhập lại.", "Google Chrome was not found. Install Google Chrome, then sign in again.") if chrome_required else _t("Không bắt đầu được đăng nhập ChatGPT Codex.", "Could not start ChatGPT Codex sign-in."), "reason": str(exc)}) from exc
 
 
 @router.post("/accounts/{account_id}/login/{login_id}/poll")
 def oauth_poll(account_id: str, login_id: str):
     try:
-        result = service.auth_for(account_id).poll(login_id)
-        if result.get("status") == "connected": service.store.update_account(account_id, status="connected", email=result.get("email", ""))
-        return result
+        return service.poll_login(account_id, login_id)
     except KeyError as exc:
         raise HTTPException(404, _t("Phiên đăng nhập không tồn tại hoặc đã hết hạn.", "The sign-in session does not exist or has expired.")) from exc
     except Exception as exc:
-        raise HTTPException(502, detail={"code": "oauth_poll_failed", "message": _t("Đăng nhập ChatGPT thất bại.", "ChatGPT sign-in failed."), "reason": str(exc)}) from exc
+        raise HTTPException(502, detail={"code": "oauth_poll_failed", "message": _t("Đăng nhập ChatGPT Codex thất bại.", "ChatGPT Codex sign-in failed."), "reason": str(exc)}) from exc
 
 
 @router.post("/accounts/{account_id}/logout")

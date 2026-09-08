@@ -1214,10 +1214,10 @@ test('Chat tab is bilingual and keeps provider secrets behind the backend', asyn
   assert.match(page, /renameConversation/)
   assert.match(page, /PromptDialog/)
   assert.doesNotMatch(page, /window\.prompt/)
-  assert.match(page, /ChatGPT API/)
-  assert.match(page, /Đăng nhập ChatGPT API/)
-  assert.match(page, /Cài đặt tài khoản ChatGPT API/)
-  assert.match(page, /ChatGPT API đang hoạt động/)
+  assert.match(page, /ChatGPT Codex/)
+  assert.match(page, /Đăng nhập ChatGPT Codex/)
+  assert.match(page, /Cài đặt tài khoản ChatGPT Codex/)
+  assert.match(page, /Phiên Codex đang hoạt động/)
   assert.match(page, /activeAccount\.configured \? <button type="button" onClick=\{\(\) => void signOut\(activeAccount\.id\)\}/)
   assert.match(page, /t\('model khả dụng', 'available model\(s\)'\)/)
   assert.doesNotMatch(page, /t\('model miễn phí', 'free model\(s\)'\)/)
@@ -1232,23 +1232,22 @@ test('Chat tab is bilingual and keeps provider secrets behind the backend', asyn
   assert.match(service, /Tool execution is disabled in Chat V1/)
 })
 
-test('Chat API providers do not require the ChatGPT Web window', async () => {
-  const page = await readFile(new URL('../frontend/src/pages/ChatPage.tsx', import.meta.url), 'utf8')
-  assert.match(page, /if \(provider !== 'chatgpt_web' \|\| !account\) return/) // health polling is Web-only
-  assert.match(page, /provider === 'chatgpt_web' \? \(/)
-  assert.match(page, /groq: 'Groq'/)
+test('ChatGPT Codex uses OAuth tokens after one managed Chrome login', async () => {
+  const [route, service, provider] = await Promise.all([
+    readFile(new URL('../backend/api/routes/chat.py', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/chat/service.py', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/pipeline/chat/providers.py', import.meta.url), 'utf8'),
+  ])
+  assert.match(route, /login\/\{login_id\}\/poll/)
+  assert.match(service, /BrowserManager\(headless=False/)
+  assert.match(service, /ChatGPTAccountProvider\(self\.auth_for/)
+  assert.doesNotMatch(service, /ChatBrowserManager/)
+  assert.match(provider, /backend-api\/codex/)
 })
 
 test('Chat menu is labeled Chat AI in both locales', async () => {
   const i18n = await readFile(new URL('../frontend/src/app/i18n.tsx', import.meta.url), 'utf8')
   assert.match(i18n, /'nav\.chat': \{ vi: 'Chat AI', en: 'AI Chat' \}/)
-})
-
-test('Chat browser activates a requested tool or returns an explicit availability error', async () => {
-  const browser = await readFile(new URL('../backend/pipeline/chat/browser.py', import.meta.url), 'utf8')
-  assert.match(browser, /async def _activate_mode/)
-  assert.match(browser, /CHAT_BROWSER_MODE_\{mode\.upper\(\)\}_UNAVAILABLE/)
-  assert.doesNotMatch(browser, /if await choice\.count\(\): await choice\.click\(\)/)
 })
 
 test('Configuration Cloud AI model selector provides bilingual presets and custom option', async () => {
@@ -1290,4 +1289,3 @@ test('Configuration setup check items use full-width body to prevent text squish
   assert.match(config, /cfg-check-action/)
   assert.match(config, /cfg-check-body/)
 })
-

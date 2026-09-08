@@ -44,7 +44,8 @@ class ChatStore:
             id TEXT PRIMARY KEY, label TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
             browser_family TEXT NOT NULL, profile_path TEXT NOT NULL,
             status TEXT NOT NULL, last_model TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            error TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT ''
           );
         """)
         columns = {row[1] for row in self._db.execute("PRAGMA table_info(attachments)")}
@@ -56,6 +57,14 @@ class ChatStore:
             self._db.execute("UPDATE conversations SET provider_id=account_id WHERE provider_id='' OR provider_id IS NULL")
         if "provider_thread_url" not in conversation_columns:
             self._db.execute("ALTER TABLE conversations ADD COLUMN provider_thread_url TEXT NOT NULL DEFAULT ''")
+        account_columns = {row[1] for row in self._db.execute("PRAGMA table_info(chat_accounts)")}
+        if "error" not in account_columns:
+            self._db.execute("ALTER TABLE chat_accounts ADD COLUMN error TEXT NOT NULL DEFAULT ''")
+        if "error_code" not in account_columns:
+            self._db.execute("ALTER TABLE chat_accounts ADD COLUMN error_code TEXT NOT NULL DEFAULT ''")
+        # Legacy Edge/Brave rows keep their profile and history, but all new
+        # browser work follows Flow's single Google Chrome runtime.
+        self._db.execute("UPDATE chat_accounts SET browser_family='chrome' WHERE browser_family!='chrome'")
         self._db.execute("UPDATE messages SET status='interrupted', updated_at=? WHERE status='streaming'", (_now(),))
         self._db.commit()
 
@@ -66,14 +75,17 @@ class ChatStore:
     def close(self):
         self._db.close()
 
-    def create_account(self, label, browser_family, profile_path, account_id=None):
+    def create_account(self, label, profile_path, account_id=None):
         item = {"id": account_id or uuid.uuid4().hex, "label": str(label).strip()[:80] or "ChatGPT",
-                "email": "", "browser_family": browser_family, "profile_path": str(Path(profile_path)),
-                "status": "unavailable", "last_model": "", "created_at": _now(), "updated_at": _now()}
-        if browser_family not in {"chrome", "edge", "brave"}:
-            raise ValueError("Unsupported browser family")
+                "email": "", "browser_family": "chrome", "profile_path": str(Path(profile_path)),
+                "status": "signed_out", "last_model": "", "created_at": _now(), "updated_at": _now(),
+                "error": "", "error_code": ""}
         with self._lock:
-            self._db.execute("INSERT INTO chat_accounts VALUES (:id,:label,:email,:browser_family,:profile_path,:status,:last_model,:created_at,:updated_at)", item)
+            self._db.execute(
+                "INSERT INTO chat_accounts (id,label,email,browser_family,profile_path,status,last_model,created_at,updated_at,error,error_code) "
+                "VALUES (:id,:label,:email,:browser_family,:profile_path,:status,:last_model,:created_at,:updated_at,:error,:error_code)",
+                item,
+            )
             self._db.commit()
         return item
 
@@ -83,6 +95,8 @@ class ChatStore:
         if public:
             for row in rows:
                 row.pop("profile_path", None)
+                row.pop("browser_family", None)
+                row["errorCode"] = row.pop("error_code", "")
                 if row.get("email") and "@" in row["email"]:
                     name, domain = row["email"].split("@", 1)
                     row["email"] = f"{name[:2]}***@{domain}"
@@ -93,7 +107,7 @@ class ChatStore:
             return self._row(self._db.execute("SELECT * FROM chat_accounts WHERE id=?", (account_id,)).fetchone())
 
     def update_account(self, account_id, **values):
-        allowed = {k: v for k, v in values.items() if k in {"label", "email", "browser_family", "status", "last_model"} and v is not None}
+        allowed = {k: v for k, v in values.items() if k in {"label", "email", "status", "last_model", "error", "error_code"} and v is not None}
         if not allowed or not self.get_account(account_id): return self.get_account(account_id)
         allowed["updated_at"] = _now()
         with self._lock:
@@ -140,7 +154,7 @@ class ChatStore:
     def update_conversation(self, conversation_id, **values):
         allowed = {k: v for k, v in values.items() if k in {"title", "account_id", "model", "provider_id", "provider_thread_url"} and v is not None}
         # Older callers only know account_id. Keep the new provider field in
-        # sync for API conversations while allowing Web account IDs to remain
+        # sync for API conversations while allowing Codex account IDs to remain
         # stored separately when both values are supplied.
         if "account_id" in allowed and "provider_id" not in allowed:
             allowed["provider_id"] = allowed["account_id"]
@@ -202,8 +216,7 @@ class ChatStore:
             raise ValueError("Attachment is too large")
         if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename or "\0" in filename:
             raise ValueError("Unsafe attachment filename")
-        # ChatGPT Web accepts the audio/SRT inputs used by the Automation
-        # pipeline in addition to the files supported by the Chat tab.
+        # Keep the shared Chat/Automation attachment contract explicit here.
         allowed = {
             "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf",
             "text/plain", "text/markdown", "text/vtt", "application/x-subrip",
