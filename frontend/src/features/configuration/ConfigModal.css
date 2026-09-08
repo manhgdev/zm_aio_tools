@@ -247,8 +247,8 @@
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 8px;
   align-content: start;
 }
 
@@ -288,13 +288,14 @@
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1fr);
+  margin-top: 4px;
 }
 
 .cfg-cloud-panel {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 14px;
-  padding: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--line, #d7dbe6);
   border-radius: 10px;
   background: var(--panel, rgba(127, 127, 127, .04));
@@ -303,15 +304,20 @@
 .cfg-cloud-panel h3 {
   grid-column: 1 / -1;
   margin: 0;
-  font-size: 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .cfg-cloud-panel label {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   width: 100%;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--muted-foreground);
 }
 
 .cfg-cloud-panel label:first-of-type {
@@ -323,15 +329,15 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  height: 40px;
-  min-height: 40px;
-  padding: 8px 11px;
+  height: 36px;
+  min-height: 36px;
+  padding: 6px 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--input);
+  border-radius: 7px;
+  background-color: var(--input);
   color: var(--ink);
   font-family: inherit;
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   font-weight: 500;
   line-height: 1.4;
 }
@@ -342,18 +348,20 @@
   gap: 5px;
 }
 
+.cfg-cloud-panel select.cfg-cloud-model-select,
 .cfg-cloud-model-select {
   -webkit-appearance: none;
   appearance: none;
-  padding-right: 30px !important;
+  padding-right: 32px !important;
   cursor: pointer;
+  background-color: var(--input);
   background-image:
     linear-gradient(45deg, transparent 50%, currentColor 50%),
     linear-gradient(135deg, currentColor 50%, transparent 50%);
   background-position:
-    calc(100% - 17px) 50%,
+    calc(100% - 16px) 50%,
     calc(100% - 12px) 50%;
-  background-size: 5px 5px, 5px 5px;
+  background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
 }
 
@@ -364,12 +372,13 @@
 
 .cfg-el-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px 12px;
+  width: 100%;
 }
 
 .cfg-el-grid .cfg-el-row {
-  align-items: end;
+  align-items: flex-end;
 }
 
 @media (max-width: 720px) {
@@ -394,7 +403,10 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
-  padding: 6px 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .cfg-check-item.ok {
@@ -413,27 +425,48 @@
 }
 
 .cfg-check-top {
-  display: grid;
-  grid-template-columns: 18px 1fr auto;
-  gap: 6px 8px;
-  align-items: start;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.cfg-check-main {
+.cfg-check-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cfg-check-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.cfg-check-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 22px;
 }
 
 .cfg-check-status {
   width: 16px;
   height: 16px;
+  min-width: 16px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   font-size: 0.62rem;
   font-weight: 800;
-  margin-top: 1px;
   background: var(--muted);
   color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 
 .cfg-check-item.ok .cfg-check-status {
@@ -447,7 +480,7 @@
 }
 
 .cfg-check-name {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 750;
   color: var(--foreground);
   display: flex;
@@ -466,6 +499,7 @@
   text-transform: uppercase;
   padding: 1px 5px;
   border-radius: 999px;
+  flex-shrink: 0;
 }
 
 .cfg-req {
@@ -479,26 +513,26 @@
 }
 
 .cfg-check-detail {
-  margin-top: 1px;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--muted-foreground);
-  word-break: break-all;
-  line-height: 1.3;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 .cfg-check-hint {
-  margin-top: 2px;
-  font-size: 0.68rem;
+  font-size: 0.71rem;
   color: var(--caution);
-  line-height: 1.3;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 .cfg-check-link {
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--primary);
   white-space: nowrap;
-  padding-top: 2px;
 }
 
 .cfg-check-install {
@@ -509,8 +543,9 @@
   cursor: pointer;
   font-size: 0.68rem;
   font-weight: 750;
-  padding: 5px 8px;
+  padding: 5px 9px;
   white-space: nowrap;
+  max-width: 100%;
 }
 
 .cfg-check-install-sm {
@@ -525,9 +560,9 @@
 
 .cfg-check-installed {
   color: var(--ok, #22a06b);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 750;
-  padding: 4px 2px;
+  padding: 3px 2px;
   white-space: nowrap;
 }
 
@@ -535,12 +570,15 @@
   display: block;
   max-width: 100%;
   font-size: 0.68rem;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--foreground) 5%, var(--surface));
+  border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 5px 8px;
   color: var(--foreground);
-  word-break: break-all;
-  line-height: 1.3;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  margin-top: 2px;
 }
 
 .cfg-msg-err {
@@ -630,25 +668,121 @@
 
 .cfg-el-row {
   display: grid;
-  grid-template-columns: 1fr 36px;
+  grid-template-columns: minmax(0, 1fr) 34px;
   gap: 8px;
-  align-items: end;
+  align-items: flex-end;
+  min-width: 0;
+  width: 100%;
 }
 
 .cfg-el-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--muted-foreground);
+}
+
+.cfg-el-row label span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cfg-el-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
   min-width: 0;
 }
 
-.cfg-el-remove {
-  width: 36px;
-  height: 38px;
+.cfg-el-row input,
+.cfg-el-input-wrap input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 34px 0 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
+  background: var(--input);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 500;
+  line-height: 36px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.cfg-el-row input:focus,
+.cfg-el-input-wrap input:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--secondary);
+}
+
+.cfg-el-eye,
+.cfg-el-visibility {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-foreground);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.cfg-el-eye:hover,
+.cfg-el-visibility:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.cfg-el-eye:focus-visible,
+.cfg-el-visibility:focus-visible {
+  outline: none;
+  color: var(--primary);
+}
+
+.cfg-el-eye svg,
+.cfg-el-visibility svg {
+  display: block;
+}
+
+.cfg-el-remove {
+  box-sizing: border-box;
+  width: 34px;
+  height: 36px;
+  min-width: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
   background: var(--surface);
   color: var(--muted-foreground);
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   line-height: 1;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
 }
 
 .cfg-el-remove:hover:not(:disabled) {
@@ -658,18 +792,25 @@
 }
 
 .cfg-el-remove:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .cfg-el-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   align-self: flex-start;
   border: 1px dashed var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--surface);
   color: var(--primary);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 650;
-  padding: 8px 12px;
+  padding: 6px 12px;
+  height: 30px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .cfg-el-add:hover {

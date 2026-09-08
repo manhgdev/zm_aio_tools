@@ -8,13 +8,21 @@ import type { LicenseStatus } from '@/features/license/license.api'
 import { localize, useLocale } from '@/app/i18n'
 import { copyText } from '@/shared/lib/clipboard'
 import { toast } from 'sonner'
+import { IconEye, IconEyeOff } from '@/shared/components/Icons'
 import './ConfigModal.css'
 
 import {
   type InstallKind, type Section, type CloudTab, type UpdateDialog, type CloudDraft,
   PROVIDERS, PROVIDER_PRESET_MODELS,
-  installLabel, nextAutoInstall, emptyCloud, savedKeyPlaceholder,
+  installLabel, nextAutoInstall, emptyCloud, providerKeyPlaceholder,
 } from './configModal.helpers'
+
+interface ElKeySlot {
+  savedIndex: number | null
+  value: string
+  visible?: boolean
+  edited?: boolean
+}
 
 type Props = {
   open: boolean
@@ -51,13 +59,20 @@ export default function ConfigModal({
   }
   const [section, setSection] = useState<Section>(initialSection)
   const [draft, setDraft] = useState<CloudDraft>(emptyCloud)
-  /** Mỗi ô 1 key; '' = ô trống mới / placeholder đã lưu */
-  const [elSlots, setElSlots] = useState<string[]>([''])
+  /** Mỗi ô 1 key; savedIndex tham chiếu key cũ trên server, value là key mới người dùng nhập */
+  const [elSlots, setElSlots] = useState<ElKeySlot[]>([{ savedIndex: null, value: '', visible: false, edited: false }])
+  const [rawElKeys, setRawElKeys] = useState<string[]>([])
   const [elSavedCount, setElSavedCount] = useState(0)
-  const [cloudKeySlots, setCloudKeySlots] = useState<Record<CloudProviderId, string[]>>(() => Object.fromEntries(PROVIDERS.map((id) => [id, ['']])) as Record<CloudProviderId, string[]>)
-  /** Empty slots normally mean "keep saved keys"; track explicit edits so the
-   * remove button can clear the first/only saved key on the next save. */
-  const [cloudKeysDirty, setCloudKeysDirty] = useState<Record<CloudProviderId, boolean>>(() => Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>)
+  const [elDirty, setElDirty] = useState(false)
+  const [cloudKeySlots, setCloudKeySlots] = useState<Record<CloudProviderId, ElKeySlot[]>>(() =>
+    Object.fromEntries(PROVIDERS.map((id) => [id, [{ savedIndex: null, value: '', visible: false, edited: false }]])) as Record<CloudProviderId, ElKeySlot[]>
+  )
+  const [rawCloudKeys, setRawCloudKeys] = useState<Record<CloudProviderId, string[]>>(() =>
+    Object.fromEntries(PROVIDERS.map((id) => [id, [] as string[]])) as unknown as Record<CloudProviderId, string[]>
+  )
+  const [cloudKeysDirty, setCloudKeysDirty] = useState<Record<CloudProviderId, boolean>>(() =>
+    Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>
+  )
   const [customModelTabs, setCustomModelTabs] = useState<Record<CloudProviderId, boolean>>(() =>
     Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>
   )
@@ -232,13 +247,45 @@ export default function ConfigModal({
           }
         }
         setDraft(next)
-        setCloudKeySlots(Object.fromEntries(PROVIDERS.map((id) => [id, Array.from({ length: Math.max(1, Number(cfg.cloud?.[id]?.keyCount || 0) || (cfg.cloud?.[id]?.apiKeySet ? 1 : 0)) }, () => '')])) as Record<CloudProviderId, string[]>)
+        setRawCloudKeys(
+          Object.fromEntries(
+            PROVIDERS.map((id) => {
+              const c = cfg.cloud?.[id]
+              const keys = c?.rawKeys?.length
+                ? c.rawKeys
+                : (c?.apiKeys ? c.apiKeys.split(',').map((k) => k.trim()).filter(Boolean) : (c?.apiKey ? [c.apiKey] : []))
+              return [id, keys]
+            })
+          ) as unknown as Record<CloudProviderId, string[]>
+        )
+        setCloudKeySlots(
+          Object.fromEntries(
+            PROVIDERS.map((id) => {
+              const c = cfg.cloud?.[id]
+              const count = c?.apiKeySet ? Math.max(1, Number(c.keyCount || 0)) : 0
+              return [
+                id,
+                count > 0
+                  ? Array.from({ length: count }, (_, i) => ({ savedIndex: i, value: '', visible: false, edited: false }))
+                  : [{ savedIndex: null, value: '', visible: false, edited: false }],
+              ]
+            })
+          ) as Record<CloudProviderId, ElKeySlot[]>
+        )
         setCloudKeysDirty(Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>)
         const el = cfg.tts?.elevenlabs
-        const n = Math.max(1, Number(el?.keyCount || 0) || (el?.apiKeySet ? 1 : 0))
-        setElSavedCount(el?.apiKeySet ? n : 0)
-        // Ô trống = giữ key đã lưu; user gõ = thay / thêm
-        setElSlots(Array.from({ length: Math.max(1, n) }, () => ''))
+        const n = el?.apiKeySet ? Math.max(1, Number(el?.keyCount || 0)) : 0
+        setElSavedCount(n)
+        const elKeys = el?.rawKeys?.length
+          ? el.rawKeys
+          : (el?.apiKeys ? el.apiKeys.split(',').map((k) => k.trim()).filter(Boolean) : [])
+        setRawElKeys(elKeys)
+        if (n > 0) {
+          setElSlots(Array.from({ length: n }, (_, i) => ({ savedIndex: i, value: '', visible: false, edited: false })))
+        } else {
+          setElSlots([{ savedIndex: null, value: '', visible: false, edited: false }])
+        }
+        setElDirty(false)
       })
       .catch((e: Error) => setMsg(e.message || 'Không tải được cấu hình'))
       .finally(() => setLoading(false))
@@ -394,44 +441,65 @@ export default function ConfigModal({
     onClose()
   }
 
-  function setElSlot(i: number, value: string) {
-    setElSlots((prev) => {
-      const next = [...prev]
-      next[i] = value
-      return next
-    })
+  function toggleElSlotVisibility(index: number) {
+    setElSlots((prev) =>
+      prev.map((slot, i) => (i === index ? { ...slot, visible: !slot.visible } : slot))
+    )
+  }
+
+  function setElSlot(index: number, value: string) {
+    setElSlots((prev) =>
+      prev.map((slot, i) => (i === index ? { ...slot, value, edited: true } : slot))
+    )
+    setElDirty(true)
   }
 
   function addElSlot() {
-    setElSlots((prev) => [...prev, ''])
+    setElSlots((prev) => [...prev, { savedIndex: null, value: '', visible: false, edited: false }])
+    setElDirty(true)
   }
 
-  function removeElSlot(i: number) {
+  function removeElSlot(index: number) {
     setElSlots((prev) => {
-      if (prev.length <= 1) return ['']
-      return prev.filter((_, idx) => idx !== i)
+      const next = prev.filter((_, i) => i !== index)
+      return next.length > 0 ? next : [{ savedIndex: null, value: '', visible: false, edited: false }]
     })
-    // Xóa ô đã lưu (placeholder) → giảm đếm hiển thị; lưu mới sẽ ghi đè list
-    if (i < elSavedCount) {
-      setElSavedCount((c) => Math.max(0, c - 1))
-    }
+    setElDirty(true)
+  }
+
+  function toggleCloudKeyVisibility(index: number) {
+    setCloudKeySlots((all) => ({
+      ...all,
+      [tab]: all[tab].map((slot, i) =>
+        i === index ? { ...slot, visible: !slot.visible } : slot
+      ),
+    }))
   }
 
   function setCloudKeySlot(index: number, value: string) {
     setCloudKeySlots((all) => ({
       ...all,
-      [tab]: all[tab].map((key, i) => (i === index ? value : key)),
+      [tab]: all[tab].map((slot, i) => (i === index ? { ...slot, value, edited: true } : slot)),
     }))
     setCloudKeysDirty((all) => ({ ...all, [tab]: true }))
   }
 
   function addCloudKeySlot() {
-    setCloudKeySlots((all) => ({ ...all, [tab]: [...all[tab], ''] }))
+    setCloudKeySlots((all) => ({
+      ...all,
+      [tab]: [...all[tab], { savedIndex: null, value: '', visible: false, edited: false }],
+    }))
     setCloudKeysDirty((all) => ({ ...all, [tab]: true }))
   }
 
   function removeCloudKeySlot(index: number) {
-    setCloudKeySlots((all) => ({ ...all, [tab]: all[tab].filter((_, i) => i !== index) }))
+    setCloudKeySlots((all) => {
+      const next = all[tab].filter((_, i) => i !== index)
+      return {
+        ...all,
+        [tab]: next.length > 0 ? next : [{ savedIndex: null, value: '', visible: false, edited: false }],
+      }
+    })
     setCloudKeysDirty((all) => ({ ...all, [tab]: true }))
   }
 
@@ -439,25 +507,54 @@ export default function ConfigModal({
     setSaving(true)
     setMsg('')
     try {
-      const cloud: Record<string, { apiKeys?: string; baseUrl?: string; model?: string }> =
+      const cloud: Record<string, { apiKey?: string; apiKeys?: string; keys?: string[]; baseUrl?: string; model?: string }> =
         {}
       for (const id of PROVIDERS) {
         const d = draft[id]
-        const keys = cloudKeySlots[id].map((key) => key.trim()).filter(Boolean).join(',')
+        let keysPayload: { keys?: string[]; apiKeys?: string } = {}
+        if (cloudKeysDirty[id]) {
+          const keysToSend: string[] = []
+          for (const slot of cloudKeySlots[id]) {
+            const val = slot.value.trim()
+            if (val) {
+              keysToSend.push(val)
+            } else if (slot.savedIndex !== null && !slot.edited) {
+              keysToSend.push(`__keep:${slot.savedIndex}__`)
+            }
+          }
+          keysPayload = {
+            keys: keysToSend,
+            apiKeys: keysToSend.join(','),
+          }
+        }
         cloud[id] = {
           baseUrl: d.baseUrl,
           model: d.model,
-          ...(cloudKeysDirty[id] ? { apiKeys: keys } : {}),
+          ...keysPayload,
         }
       }
       const body: {
         cloud: typeof cloud
-        tts?: { elevenlabs: { apiKeys?: string } }
+        tts?: { elevenlabs: { apiKeys?: string; keys?: string[] } }
       } = { cloud }
 
-      // Chỉ gửi TTS khi user gõ key mới / thay — ô trống = giữ nguyên server
-      const typed = elSlots.map((s) => s.trim()).filter(Boolean)
-      if (typed.length > 0) body.tts = { elevenlabs: { apiKeys: typed.join(',') } }
+      if (elDirty) {
+        const keysToSend: string[] = []
+        for (const slot of elSlots) {
+          const val = slot.value.trim()
+          if (val) {
+            keysToSend.push(val)
+          } else if (slot.savedIndex !== null && !slot.edited) {
+            keysToSend.push(`__keep:${slot.savedIndex}__`)
+          }
+        }
+        body.tts = {
+          elevenlabs: {
+            keys: keysToSend,
+            apiKeys: keysToSend.join(','),
+          },
+        }
+      }
 
       const cfg = await api.saveConfig(body)
       const next = emptyCloud()
@@ -475,13 +572,51 @@ export default function ConfigModal({
         }
       }
       setDraft(next)
-      setCloudKeySlots(Object.fromEntries(PROVIDERS.map((id) => [id, Array.from({ length: Math.max(1, Number(cfg.cloud?.[id]?.keyCount || 0) || (cfg.cloud?.[id]?.apiKeySet ? 1 : 0)) }, () => '')])) as Record<CloudProviderId, string[]>)
+      setRawCloudKeys(
+        Object.fromEntries(
+          PROVIDERS.map((id) => {
+            const c = cfg.cloud?.[id]
+            const keys = c?.rawKeys?.length
+              ? c.rawKeys
+              : (c?.apiKeys ? c.apiKeys.split(',').map((k) => k.trim()).filter(Boolean) : (c?.apiKey ? [c.apiKey] : []))
+            return [id, keys]
+          })
+        ) as unknown as Record<CloudProviderId, string[]>
+      )
+      setCloudKeySlots(
+        Object.fromEntries(
+          PROVIDERS.map((id) => {
+            const c = cfg.cloud?.[id]
+            const count = c?.apiKeySet ? Math.max(1, Number(c.keyCount || 0)) : 0
+            return [
+              id,
+              count > 0
+                ? Array.from({ length: count }, (_, i) => ({ savedIndex: i, value: '', visible: false, edited: false }))
+                : [{ savedIndex: null, value: '', visible: false, edited: false }],
+            ]
+          })
+        ) as Record<CloudProviderId, ElKeySlot[]>
+      )
       setCloudKeysDirty(Object.fromEntries(PROVIDERS.map((id) => [id, false])) as Record<CloudProviderId, boolean>)
       const el = cfg.tts?.elevenlabs
-      const n = Math.max(1, Number(el?.keyCount || 0) || (el?.apiKeySet ? 1 : 0))
-      setElSavedCount(el?.apiKeySet ? n : 0)
-      setElSlots(Array.from({ length: Math.max(1, n) }, () => ''))
-      setMsg(typed.length > 0 ? t('Đã lưu. Đang tải lại danh sách giọng…', 'Saved. Reloading voices…') : t('Đã lưu.', 'Saved.'))
+      const n = el?.apiKeySet ? Math.max(1, Number(el?.keyCount || 0)) : 0
+      setElSavedCount(n)
+      const elKeys = el?.rawKeys?.length
+        ? el.rawKeys
+        : (el?.apiKeys ? el.apiKeys.split(',').map((k) => k.trim()).filter(Boolean) : [])
+      setRawElKeys(elKeys)
+      if (n > 0) {
+        setElSlots(Array.from({ length: n }, (_, i) => ({ savedIndex: i, value: '', visible: false, edited: false })))
+      } else {
+        setElSlots([{ savedIndex: null, value: '', visible: false, edited: false }])
+      }
+      setElDirty(false)
+      const hasSavedKeys = Boolean(el?.apiKeySet)
+      setMsg(
+        elDirty && hasSavedKeys
+          ? t('Đã lưu. Đang tải lại danh sách giọng…', 'Saved. Reloading voices…')
+          : t('Đã lưu.', 'Saved.')
+      )
       toast.success(t('Đã lưu cấu hình.', 'Settings saved.'))
       onSaved?.()
     } catch (e) {
@@ -674,10 +809,10 @@ export default function ConfigModal({
                   className={`cfg-check-item ${it.ok ? 'ok' : it.required ? 'bad' : 'warn'}`}
                 >
                   <div className="cfg-check-top">
-                    <span className="cfg-check-status" aria-hidden>
-                      {it.ok ? '✓' : it.required ? '!' : '·'}
-                    </span>
-                    <div className="cfg-check-main">
+                    <div className="cfg-check-title-group">
+                      <span className="cfg-check-status" aria-hidden>
+                        {it.ok ? '✓' : it.required ? '!' : '·'}
+                      </span>
                       <div className="cfg-check-name">
                         {it.id === 'ai_runtime_diarization'
                           ? t('Sherpa-ONNX (Tách người nói)', 'Sherpa-ONNX (Speaker diarization)')
@@ -688,39 +823,37 @@ export default function ConfigModal({
                           <em className="cfg-opt">{t('tuỳ chọn', 'optional')}</em>
                         )}
                       </div>
-                      <div className="cfg-check-detail">{systemCheckText(it.id, it.detail, 'detail')}</div>
-                      {!it.ok ? <div className="cfg-check-hint">{systemCheckText(it.id, it.hint, 'hint')}</div> : null}
                     </div>
-                    {it.ok ? (
-                      ['ai_runtime', 'ai_runtime_ocr', 'ai_runtime_vieneu', 'ocr_cuda', 'demucs_cuda', 'nvm'].includes(it.install) ? (
-                        <span className="cfg-check-installed">{t('Đã cài', 'Installed')}</span>
-                      ) : null
-                    ) : ['ai_runtime', 'ai_runtime_ocr', 'ai_runtime_vieneu', 'ocr_cuda', 'demucs_cuda', 'nvm'].includes(it.install) ? (
-                      <button
-                        type="button"
-                        className="cfg-check-install"
-                        disabled={!!installing}
-                        onClick={() => {
-                          autoSetupLock.current = false
-                          autoAttempted.current.clear()
-                          // ai_runtime_ocr / ai_runtime_vieneu → cùng endpoint ai_runtime
-                          const kind = it.install.startsWith('ai_runtime')
-                            ? 'ai_runtime'
-                            : it.install as 'ocr_cuda' | 'demucs_cuda' | 'nvm'
-                          void installAction(kind)
-                        }}
-                      >
-                        {installing === it.install || (it.install.startsWith('ai_runtime') && installing === 'ai_runtime')
-                          ? 'Đang cài…'
-                          : it.installLabel ||
-                            (it.install.startsWith('ai_runtime')
-                              ? t('Cài gói AI', 'Install AI packages')
-                              : it.install === 'demucs_cuda'
-                              ? checks?.device?.install?.demucsLabel || t('Cài Demucs GPU', 'Install Demucs (GPU)')
-                              : checks?.device?.install?.ocrLabel || t('Cài OCR CUDA', 'Install OCR (CUDA)'))}
-                      </button>
-                    ) : it.install ? (
-                      it.install.startsWith('http') ? (
+                    <div className="cfg-check-action">
+                      {it.ok ? (
+                        ['ai_runtime', 'ai_runtime_ocr', 'ai_runtime_vieneu', 'ocr_cuda', 'demucs_cuda', 'nvm'].includes(it.install) ? (
+                          <span className="cfg-check-installed">{t('Đã cài', 'Installed')}</span>
+                        ) : null
+                      ) : ['ai_runtime', 'ai_runtime_ocr', 'ai_runtime_vieneu', 'ocr_cuda', 'demucs_cuda', 'nvm'].includes(it.install) ? (
+                        <button
+                          type="button"
+                          className="cfg-check-install"
+                          disabled={!!installing}
+                          onClick={() => {
+                            autoSetupLock.current = false
+                            autoAttempted.current.clear()
+                            // ai_runtime_ocr / ai_runtime_vieneu → cùng endpoint ai_runtime
+                            const kind = it.install.startsWith('ai_runtime')
+                              ? 'ai_runtime'
+                              : it.install as 'ocr_cuda' | 'demucs_cuda' | 'nvm'
+                            void installAction(kind)
+                          }}
+                        >
+                          {installing === it.install || (it.install.startsWith('ai_runtime') && installing === 'ai_runtime')
+                            ? 'Đang cài…'
+                            : it.installLabel ||
+                              (it.install.startsWith('ai_runtime')
+                                ? t('Cài gói AI', 'Install AI packages')
+                                : it.install === 'demucs_cuda'
+                                ? checks?.device?.install?.demucsLabel || t('Cài Demucs GPU', 'Install Demucs (GPU)')
+                                : checks?.device?.install?.ocrLabel || t('Cài OCR CUDA', 'Install OCR (CUDA)'))}
+                        </button>
+                      ) : it.install && it.install.startsWith('http') ? (
                         <a
                           className="cfg-check-link"
                           href={it.install}
@@ -730,11 +863,16 @@ export default function ConfigModal({
                         >
                           {systemCheckText(it.id, it.installLabel, 'installLabel') || t('Tải', 'Download')}
                         </a>
-                      ) : (
-                        <code className="cfg-check-cmd" title={it.installLabel || 'Chạy trong terminal'}>
-                          {it.install}
-                        </code>
-                      )
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="cfg-check-body">
+                    {it.detail ? <div className="cfg-check-detail">{systemCheckText(it.id, it.detail, 'detail')}</div> : null}
+                    {!it.ok && it.hint ? <div className="cfg-check-hint">{systemCheckText(it.id, it.hint, 'hint')}</div> : null}
+                    {!it.ok && it.install && !it.install.startsWith('http') && !['ai_runtime', 'ai_runtime_ocr', 'ai_runtime_vieneu', 'ocr_cuda', 'demucs_cuda', 'nvm'].includes(it.install) ? (
+                      <code className="cfg-check-cmd" title={it.installLabel || 'Chạy trong terminal'}>
+                        {it.install}
+                      </code>
                     ) : null}
                   </div>
                 </li>
@@ -748,24 +886,78 @@ export default function ConfigModal({
             </details>
           </div>
         ) : section === 'cloud' ? (
-          <div className="cfg-body cfg-body-grid">
-            <div className="cfg-el-keys">
-              <span>{t('API key', 'API keys')}{cur.apiKeySet ? t(' (đã lưu — nhập để thay/thêm)', ' (saved — enter to replace/add)') : ''}</span>
-              {cloudKeySlots[tab].map((value, index) => (
-                <div className="cfg-el-key-row" key={`${tab}-${index}`}>
-                  <input type="text" autoComplete="off" placeholder={savedKeyPlaceholder(cur, index)} value={value} onChange={(e) => setCloudKeySlot(index, e.target.value)} />
-                  <button type="button" className="cfg-el-remove" aria-label={t(`Xóa API key ${index + 1}`, `Remove API key ${index + 1}`)} onClick={() => removeCloudKeySlot(index)}>×</button>
-                </div>
-              ))}
-              <button type="button" className="cfg-el-add" onClick={addCloudKeySlot}>+ {t('Thêm key', 'Add key')}</button>
-              <p className="cfg-hint">{t('Nhiều key được luân phiên cho batch dịch. Khi sửa/xóa ô, hãy nhập lại các key muốn giữ trước khi Lưu; để trống toàn bộ rồi Lưu sẽ xóa key đã lưu.', 'Multiple keys rotate for translation batches. When editing/removing a slot, re-enter any keys you want to keep before Save; leaving every slot empty and saving clears the saved keys.')}</p>
+          <div className="cfg-body">
+            <div className="cfg-el-grid">
+              {cloudKeySlots[tab].map((slot, index) => {
+                const isSaved = slot.savedIndex !== null && !slot.edited
+                const rawKey = slot.savedIndex !== null ? (rawCloudKeys[tab]?.[slot.savedIndex] || '') : ''
+                const displayValue = slot.edited
+                  ? slot.value
+                  : slot.visible && isSaved
+                  ? rawKey
+                  : slot.value
+                const placeholder = isSaved && !slot.visible
+                  ? t('••••••••  — nhập để thay', '•••••••• — enter to replace')
+                  : providerKeyPlaceholder(tab)
+
+                return (
+                  <div className="cfg-el-row" key={`${tab}-${index}`}>
+                    <label>
+                      <span>
+                        {t('Key', 'Key')} {index + 1}
+                        {isSaved ? t(' (đã lưu)', ' (saved)') : ''}
+                      </span>
+                      <div className="cfg-el-input-wrap">
+                        <input
+                          type={slot.visible ? 'text' : 'password'}
+                          autoComplete="off"
+                          placeholder={placeholder}
+                          value={displayValue}
+                          onChange={(e) => setCloudKeySlot(index, e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="cfg-el-eye cfg-el-visibility"
+                          onClick={() => toggleCloudKeyVisibility(index)}
+                          title={slot.visible ? t('Ẩn key', 'Hide key') : t('Xem full key', 'Show full key')}
+                          aria-label={
+                            slot.visible
+                              ? t(`Ẩn API key ${index + 1}`, `Hide API key ${index + 1}`)
+                              : t(`Xem full API key ${index + 1}`, `Show full API key ${index + 1}`)
+                          }
+                        >
+                          {slot.visible ? <IconEyeOff size={15} /> : <IconEye size={15} />}
+                        </button>
+                      </div>
+                    </label>
+                    <button
+                      type="button"
+                      className="cfg-el-remove"
+                      disabled={cloudKeySlots[tab].length <= 1 && !slot.value && slot.savedIndex === null}
+                      aria-label={t(`Xóa API key ${index + 1}`, `Remove API key ${index + 1}`)}
+                      title={t('Xóa ô', 'Remove slot')}
+                      onClick={() => removeCloudKeySlot(index)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })}
             </div>
+            <button type="button" className="cfg-el-add" onClick={addCloudKeySlot}>
+              {t('+ Thêm key', '+ Add key')}
+            </button>
+
             <div className="cfg-cloud-panels">
               <section className="cfg-cloud-panel">
                 <h3>{t('API Dịch', 'Translation API')}</h3>
                 <label>
                   <span>{t('Base URL', 'Base URL')}</span>
-                  <input type="text" value={cur.baseUrl} onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], baseUrl: e.target.value } }))} />
+                  <input
+                    type="text"
+                    value={cur.baseUrl}
+                    onChange={(e) => setDraft((d) => ({ ...d, [tab]: { ...d[tab], baseUrl: e.target.value } }))}
+                  />
                 </label>
                 <label className="cfg-cloud-model">
                   <span>Model</span>
@@ -819,6 +1011,12 @@ export default function ConfigModal({
               </section>
             </div>
             <p className="cfg-hint">
+              {t(
+                'Nhiều key sẽ tự động luân phiên khi dịch. Để trống ô đã lưu = giữ nguyên; gõ key mới = thay / thêm.',
+                'Multiple keys rotate automatically during translation. Leave a saved field empty to keep it; enter a new key to replace or add one.',
+              )}
+            </p>
+            <p className="cfg-hint">
               {t('API key, Base URL và model dịch được lưu tại ', 'The API key, base URL, and translation model are stored in ')}
               <code>backend/data/app_config.json</code>.
             </p>
@@ -826,30 +1024,55 @@ export default function ConfigModal({
         ) : section === 'tts' ? (
           <div className="cfg-body">
             <div className="cfg-el-grid">
-              {elSlots.map((val, i) => {
-                const saved = i < elSavedCount && !val
+              {elSlots.map((slot, i) => {
+                const isSaved = slot.savedIndex !== null && !slot.edited
+                const rawKey = slot.savedIndex !== null ? (rawElKeys[slot.savedIndex] || '') : ''
+                const displayValue = slot.edited
+                  ? slot.value
+                  : slot.visible && isSaved
+                  ? rawKey
+                  : slot.value
+                const placeholder = isSaved && !slot.visible
+                  ? t('••••••••  — nhập để thay', '•••••••• — enter to replace')
+                  : 'sk_…'
+
                 return (
                   <div key={i} className="cfg-el-row">
                     <label>
                       <span>
-                        Key {i + 1}
-                        {saved ? ' (đã lưu)' : ''}
+                        {t('Key', 'Key')} {i + 1}
+                        {isSaved ? t(' (đã lưu)', ' (saved)') : ''}
                       </span>
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        placeholder={saved ? '••••••••  — nhập để thay' : 'sk_…'}
-                        value={val}
-                        onChange={(e) => setElSlot(i, e.target.value)}
-                      />
+                      <div className="cfg-el-input-wrap">
+                        <input
+                          type={slot.visible ? 'text' : 'password'}
+                          autoComplete="off"
+                          placeholder={placeholder}
+                          value={displayValue}
+                          onChange={(e) => setElSlot(i, e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="cfg-el-eye cfg-el-visibility"
+                          onClick={() => toggleElSlotVisibility(i)}
+                          title={slot.visible ? t('Ẩn key', 'Hide key') : t('Xem full key', 'Show full key')}
+                          aria-label={
+                            slot.visible
+                              ? t(`Ẩn key ${i + 1}`, `Hide key ${i + 1}`)
+                              : t(`Xem full key ${i + 1}`, `Show full key ${i + 1}`)
+                          }
+                        >
+                          {slot.visible ? <IconEyeOff size={15} /> : <IconEye size={15} />}
+                        </button>
+                      </div>
                     </label>
                     <button
                       type="button"
                       className="cfg-el-remove"
                       onClick={() => removeElSlot(i)}
-                      disabled={elSlots.length <= 1 && !val && elSavedCount === 0}
-                      title="Xóa ô"
-                      aria-label={`Xóa key ${i + 1}`}
+                      disabled={elSlots.length <= 1 && !slot.value && slot.savedIndex === null}
+                      title={t('Xóa ô', 'Remove slot')}
+                      aria-label={t(`Xóa key ${i + 1}`, `Remove key ${i + 1}`)}
                     >
                       ×
                     </button>
@@ -858,7 +1081,7 @@ export default function ConfigModal({
               })}
             </div>
             <button type="button" className="cfg-el-add" onClick={addElSlot}>
-              + Thêm key
+              {t('+ Thêm key', '+ Add key')}
             </button>
             <p className="cfg-hint">
               {t(

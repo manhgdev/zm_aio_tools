@@ -47,6 +47,23 @@ export function emptyCloud(): CloudDraft {
   }
 }
 
+export function providerKeyPlaceholder(provider: CloudProviderId): string {
+  switch (provider) {
+    case 'gemini':
+      return 'AQ.…'
+    case 'groq':
+      return 'gsk_…'
+    case 'nvidia':
+      return 'nvapi-…'
+    case 'openrouter':
+      return 'sk-or-…'
+    case 'grok':
+      return 'xai-…'
+    default:
+      return 'sk-…'
+  }
+}
+
 export function savedKeyPlaceholder(config: CloudDraft[CloudProviderId], index: number): string {
   const masked = (config.apiKeys || '').split(',')[index]?.trim()
   return masked || (index < (config.keyCount || 0) ? '••••••••' : 'sk-…')

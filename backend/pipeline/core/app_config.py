@@ -104,7 +104,7 @@ def load_app_config() -> dict[str, Any]:
         block = saved.get(pid) if isinstance(saved.get(pid), dict) else {}
         file_keys = _clean_keys(block.get("apiKeys") or block.get("apiKey"))
         env_keys = _clean_keys(os.environ.get(meta["env"]))
-        keys = file_keys or env_keys
+        keys = file_keys if ("apiKeys" in block or "apiKey" in block) else (file_keys or env_keys)
         saved_model = str(block.get("model") or "").strip()
         if pid == "nvidia" and saved_model == "meta/llama-3.1-8b-instruct":
             saved_model = meta["model"]
@@ -122,7 +122,7 @@ def load_app_config() -> dict[str, Any]:
     el_block = saved_tts.get("elevenlabs") if isinstance(saved_tts.get("elevenlabs"), dict) else {}
     file_keys = str(el_block.get("apiKeys") or "").strip()
     env_keys = (os.environ.get("ELEVENLABS_API_KEYS") or "").strip()
-    tts["elevenlabs"]["apiKeys"] = file_keys or env_keys
+    tts["elevenlabs"]["apiKeys"] = file_keys if "apiKeys" in el_block else (file_keys or env_keys)
 
     return {"cloud": cloud, "tts": tts}
 
@@ -136,15 +136,34 @@ def save_app_config(patch: dict[str, Any]) -> dict[str, Any]:
             continue
         b = cloud_in[pid]
         prev = cur["cloud"][pid]
-        if b.get("apiKeys") is not None:
+        prev_raw = str(prev.get("apiKeys") or prev.get("apiKey") or "")
+        prev_keys = [k.strip() for k in prev_raw.split(",") if k.strip()]
+        if b.get("keys") is not None:
+            resolved_keys: list[str] = []
+            for item in b["keys"]:
+                item_str = str(item or "").strip()
+                if not item_str:
+                    continue
+                if item_str.startswith("__keep:") and item_str.endswith("__"):
+                    try:
+                        idx = int(item_str[7:-2])
+                        if 0 <= idx < len(prev_keys):
+                            resolved_keys.append(prev_keys[idx])
+                    except ValueError:
+                        pass
+                elif not (item_str.startswith("•") or item_str == "(đã lưu)"):
+                    resolved_keys.append(item_str)
+            key = ", ".join(resolved_keys)
+        elif b.get("apiKeys") is not None:
             key = _clean_keys(b["apiKeys"])
+            if key.startswith("•") or key == "(đã lưu)":
+                key = prev["apiKey"]
         elif b.get("apiKey") is not None:
             key = _clean_keys(b["apiKey"])
+            if key.startswith("•") or key == "(đã lưu)":
+                key = prev["apiKey"]
         else:
             key = _clean_keys(prev.get("apiKeys") or prev["apiKey"])
-        # UI may send masked "••••xx" — ignore
-        if key.startswith("•") or key == "(đã lưu)":
-            key = prev["apiKey"]
         base = str(b.get("baseUrl") or prev["baseUrl"]).strip() or prev["baseUrl"]
         model = str(b.get("model") or prev["model"]).strip() or prev["model"]
         cur["cloud"][pid] = {"apiKey": next((x.strip() for x in key.split(",") if x.strip()), ""), "apiKeys": key, "baseUrl": base, "model": model}
@@ -152,11 +171,29 @@ def save_app_config(patch: dict[str, Any]) -> dict[str, Any]:
     tts_in = patch.get("tts") if isinstance(patch.get("tts"), dict) else {}
     el_in = tts_in.get("elevenlabs") if isinstance(tts_in.get("elevenlabs"), dict) else None
     if el_in is not None:
-        prev_keys = str(cur["tts"]["elevenlabs"].get("apiKeys") or "")
-        keys = str(el_in.get("apiKeys") if "apiKeys" in el_in else prev_keys).strip()
-        if keys.startswith("•") or keys == "(đã lưu)":
-            keys = prev_keys
-        cur["tts"]["elevenlabs"]["apiKeys"] = keys
+        prev_raw = str(cur["tts"]["elevenlabs"].get("apiKeys") or "")
+        prev_keys = [k.strip() for k in prev_raw.split(",") if k.strip()]
+        if el_in.get("keys") is not None:
+            resolved_keys: list[str] = []
+            for item in el_in["keys"]:
+                item_str = str(item or "").strip()
+                if not item_str:
+                    continue
+                if item_str.startswith("__keep:") and item_str.endswith("__"):
+                    try:
+                        idx = int(item_str[7:-2])
+                        if 0 <= idx < len(prev_keys):
+                            resolved_keys.append(prev_keys[idx])
+                    except ValueError:
+                        pass
+                elif not (item_str.startswith("•") or item_str == "(đã lưu)"):
+                    resolved_keys.append(item_str)
+            cur["tts"]["elevenlabs"]["apiKeys"] = ", ".join(resolved_keys)
+        else:
+            keys = str(el_in.get("apiKeys") if "apiKeys" in el_in else prev_raw).strip()
+            if keys.startswith("•") or keys == "(đã lưu)":
+                keys = prev_raw
+            cur["tts"]["elevenlabs"]["apiKeys"] = keys
 
     _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     to_write = {
@@ -194,6 +231,7 @@ def public_app_config() -> dict[str, Any]:
             "apiKey": _mask_key(key),
             "apiKeySet": bool(key),
             "apiKeys": ", ".join(_mask_key(x) for x in parts),
+            "rawKeys": parts,
             "keyCount": len(parts),
             "baseUrl": b["baseUrl"],
             "model": b["model"],
@@ -210,6 +248,7 @@ def public_app_config() -> dict[str, Any]:
             "elevenlabs": {
                 "apiKeys": ", ".join(masked_parts),
                 "apiKeySet": bool(parts),
+                "rawKeys": parts,
                 "keyCount": len(parts),
                 "label": "ElevenLabs",
                 "env": "ELEVENLABS_API_KEYS",

@@ -178,12 +178,14 @@ class TextOverlayIn(BaseModel):
 class CloudBlock(BaseModel):
     apiKey: str | None = None
     apiKeys: str | None = None
+    keys: list[str] | None = None
     baseUrl: str | None = None
     model: str | None = None
 
 
 class ElevenLabsBlock(BaseModel):
     apiKeys: str | None = None
+    keys: list[str] | None = None
 
 
 class TtsBlock(BaseModel):

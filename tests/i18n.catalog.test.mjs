@@ -1270,3 +1270,24 @@ test('Configuration Cloud AI model selector provides bilingual presets and custo
   assert.match(helpers, /openai\/gpt-oss-20b/)
   assert.match(helpers, /nvidia\/riva-translate-4b-instruct-v2/)
 })
+
+test('Configuration ElevenLabs key slots support bilingual deletion and slot actions', async () => {
+  const config = await readFile(new URL('../frontend/src/features/configuration/ConfigModal.tsx', import.meta.url), 'utf8')
+  assert.match(config, /cfg-el-remove/)
+  assert.match(config, /cfg-el-visibility/)
+  assert.match(config, /t\('Xem full key', 'Show full key'\)/)
+  assert.match(config, /t\('Ẩn key', 'Hide key'\)/)
+  assert.match(config, /t\('Xóa ô', 'Remove slot'\)/)
+  assert.match(config, /t\(`Xóa key \$\{i \+ 1\}`, `Remove key \$\{i \+ 1\}`\)/)
+  assert.match(config, /t\(' \(đã lưu\)', ' \(saved\)'\)/)
+  assert.match(config, /t\('\+ Thêm key', '\+ Add key'\)/)
+  assert.match(config, /__keep:\$\{slot\.savedIndex\}__/)
+})
+
+test('Configuration setup check items use full-width body to prevent text squishing', async () => {
+  const config = await readFile(new URL('../frontend/src/features/configuration/ConfigModal.tsx', import.meta.url), 'utf8')
+  assert.match(config, /cfg-check-title-group/)
+  assert.match(config, /cfg-check-action/)
+  assert.match(config, /cfg-check-body/)
+})
+

@@ -613,6 +613,8 @@ def api_save_config(body: AppConfigIn):
                 "baseUrl": v.baseUrl or "",
                 "model": v.model or "",
             }
+            if v.keys is not None:
+                block["keys"] = v.keys
             if v.apiKeys is not None:
                 block["apiKeys"] = v.apiKeys
             elif v.apiKey is not None:
@@ -624,6 +626,7 @@ def api_save_config(body: AppConfigIn):
                 "apiKeys": body.tts.elevenlabs.apiKeys
                 if body.tts.elevenlabs.apiKeys is not None
                 else "",
+                "keys": body.tts.elevenlabs.keys,
             }
         }
     save_app_config(patch)

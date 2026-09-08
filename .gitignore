@@ -8,6 +8,7 @@ backend/data/
 backend/public/
 backend/.venv/
 backend/.venv-demucs/
+backend/game/
 ex_video/
 references/
 package-lock.json

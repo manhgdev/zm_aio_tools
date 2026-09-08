@@ -219,10 +219,10 @@ export const api = {
   saveConfig: (body: {
     cloud?: Record<
       string,
-      { apiKey?: string; baseUrl?: string; model?: string }
+      { apiKey?: string; apiKeys?: string; keys?: string[]; baseUrl?: string; model?: string }
     >
     tts?: {
-      elevenlabs?: { apiKeys?: string }
+      elevenlabs?: { apiKeys?: string; keys?: string[] }
     }
   }) =>
     fetchJson<AppConfig>(`${base}/config`, {

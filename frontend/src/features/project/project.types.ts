@@ -304,6 +304,7 @@ export type CloudProviderId = 'openai' | 'gemini' | 'deepseek' | 'openrouter' | 
 export type CloudProviderConfig = {
   apiKey: string
   apiKeys?: string
+  rawKeys?: string[]
   apiKeySet: boolean
   keyCount?: number
   baseUrl: string
@@ -314,6 +315,7 @@ export type CloudProviderConfig = {
 
 export type ElevenLabsConfig = {
   apiKeys: string
+  rawKeys?: string[]
   apiKeySet: boolean
   keyCount: number
   label: string
