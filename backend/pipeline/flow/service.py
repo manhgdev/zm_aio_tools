@@ -603,31 +603,56 @@ class FlowService:
 
         # Slow path: open a visible Chrome window for interactive Google sign-in.
         browser = None
+        captured_project_id = ""  # track outside try so a mid-session close can still sync
         try:
             from .browser import BrowserManager, FLOW_BASE_URL
             browser = BrowserManager(headless=False, profile_dir=store.profile_dir(account_id))
             await browser.start()
             page = await browser.page()
             await page.goto(FLOW_BASE_URL, wait_until="domcontentloaded")
-            deadline = time.monotonic() + 600
+
+            # Fast-detect: if already logged in, Google redirects to the project URL
+            # within a few seconds. Grab it immediately so we can sync and close
+            # Chrome ourselves — the user does NOT need to close it manually.
             project_id = ""
-            while time.monotonic() < deadline:
+            try:
+                await page.wait_for_url(
+                    lambda url: bool(_PROJECT_RE.search(url)),
+                    timeout=10_000,
+                )
                 match = _PROJECT_RE.search(page.url)
-                signed_in = "accounts.google.com" not in page.url
                 if match:
                     project_id = match.group(1)
-                    break
-                if signed_in and "labs.google" in page.url:
-                    links = await page.locator('a[href*="/flow/project/"]').all()
-                    if links:
-                        href = await links[0].get_attribute("href") or ""
-                        match = _PROJECT_RE.search(href)
-                        if match:
-                            project_id = match.group(1)
-                            break
-                await asyncio.sleep(2)
+            except Exception:
+                pass  # Redirect didn't happen quickly — fall into the interactive polling loop
+
+            if not project_id:
+                # Interactive loop: user must navigate / sign in manually.
+                # Check lobby links too (Flow hub page without direct project URL).
+                deadline = time.monotonic() + 600
+                while time.monotonic() < deadline:
+                    match = _PROJECT_RE.search(page.url)
+                    if match:
+                        project_id = match.group(1)
+                        break
+                    signed_in = "accounts.google.com" not in page.url
+                    if signed_in and "labs.google" in page.url:
+                        links = await page.locator('a[href*="/flow/project/"]').all()
+                        if links:
+                            href = await links[0].get_attribute("href") or ""
+                            match = _PROJECT_RE.search(href)
+                            if match:
+                                project_id = match.group(1)
+                                break
+                    await asyncio.sleep(2)
+
             if not project_id:
                 raise RuntimeError("Login timed out or no Google Flow project was opened")
+
+            # Persist project_id immediately so a browser crash/close below
+            # doesn't lose it.
+            captured_project_id = project_id
+
             email = await page.evaluate("() => window.__NEXT_DATA__?.props?.pageProps?.session?.user?.email || ''")
             credits = None
             credits_synced_at = None
@@ -653,8 +678,24 @@ class FlowService:
             store.patch_row("accounts", account_id, patch)
             self._log("success", "account_connected", account_id=account_id, details={"projectId": project_id, "credits": credits, "plan": detected_plan})
         except Exception as exc:
-            store.patch_row("accounts", account_id, {"status": "reconnect", "error": str(exc), "updatedAt": time.time()})
-            self._log("error", "account_connect_failed", account_id=account_id, message=str(exc))
+            # If the browser was closed by the user AFTER we had already captured
+            # the project_id, treat this as a successful reconnect (credits may be
+            # missing but the account is usable).  Only fall to "reconnect" when
+            # we never got a project_id.
+            if captured_project_id:
+                existing = store.get_row("accounts", account_id) or {}
+                if existing.get("status") != "online":
+                    store.patch_row("accounts", account_id, {
+                        "status": "online",
+                        "projectId": captured_project_id,
+                        "error": None,
+                        "updatedAt": time.time(),
+                    })
+                    self._log("success", "account_connected", account_id=account_id,
+                              details={"projectId": captured_project_id, "note": "browser closed early"})
+            else:
+                store.patch_row("accounts", account_id, {"status": "reconnect", "error": str(exc), "updatedAt": time.time()})
+                self._log("error", "account_connect_failed", account_id=account_id, message=str(exc))
         finally:
             if browser is not None:
                 try:
@@ -663,6 +704,7 @@ class FlowService:
                     pass
             with self._guard:
                 self._connecting_accounts.discard(account_id)
+
 
     async def _try_headless_reconnect(self, account_id: str, project_id: str) -> bool:
         """Attempt a quick headless session to verify the saved cookie is still valid.
@@ -680,12 +722,26 @@ class FlowService:
             await browser.start()
             page = await browser.page()
             await page.goto(FLOW_BASE_URL, wait_until="domcontentloaded", timeout=20_000)
-            # Give Google a moment to redirect; check the URL once.
-            await asyncio.sleep(3)
+
+            # Try wait_for_url first (most reliable when session is valid).
             confirmed_id = ""
-            match = _PROJECT_RE.search(page.url)
-            if match:
-                confirmed_id = match.group(1)
+            try:
+                await page.wait_for_url(
+                    lambda url: bool(_PROJECT_RE.search(url)),
+                    timeout=12_000,
+                )
+                match = _PROJECT_RE.search(page.url)
+                if match:
+                    confirmed_id = match.group(1)
+            except Exception:
+                pass
+
+            if not confirmed_id:
+                # Fallback: give Google a few more seconds then try the lobby link.
+                await asyncio.sleep(6)
+                match = _PROJECT_RE.search(page.url)
+                if match:
+                    confirmed_id = match.group(1)
             if not confirmed_id:
                 # Try following a project link from the lobby.
                 if "accounts.google.com" not in page.url and "labs.google" in page.url:
@@ -695,6 +751,7 @@ class FlowService:
                         m = _PROJECT_RE.search(href)
                         if m:
                             confirmed_id = m.group(1)
+
             if not confirmed_id:
                 return False
             email = await page.evaluate("() => window.__NEXT_DATA__?.props?.pageProps?.session?.user?.email || ''")
