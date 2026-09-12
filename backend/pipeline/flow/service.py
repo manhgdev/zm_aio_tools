@@ -581,6 +581,27 @@ class FlowService:
 
 
     async def _login(self, account_id: str) -> None:
+        """Try to reconnect using the saved Chrome profile (headless), falling back to
+        interactive visible Chrome only when the saved session is no longer valid.
+
+        ponytail: headless probe has a short 30-s deadline so the UI doesn't
+        wait long before deciding a visible window is needed.
+        """
+        account = store.get_row("accounts", account_id) or {}
+        existing_project_id = str(account.get("projectId") or "")
+        profile_exists = store.profile_dir(account_id).exists()
+
+        # Fast path: if there is a saved profile with a known project, try a
+        # short headless probe to confirm the session is still valid.  This
+        # covers the "closed Chrome manually" case without prompting the user.
+        if profile_exists and existing_project_id:
+            recovered = await self._try_headless_reconnect(account_id, existing_project_id)
+            if recovered:
+                with self._guard:
+                    self._connecting_accounts.discard(account_id)
+                return
+
+        # Slow path: open a visible Chrome window for interactive Google sign-in.
         browser = None
         try:
             from .browser import BrowserManager, FLOW_BASE_URL
@@ -642,6 +663,78 @@ class FlowService:
                     pass
             with self._guard:
                 self._connecting_accounts.discard(account_id)
+
+    async def _try_headless_reconnect(self, account_id: str, project_id: str) -> bool:
+        """Attempt a quick headless session to verify the saved cookie is still valid.
+
+        Returns True and patches the account to 'online' on success.
+        Returns False silently on any failure so the caller falls back to
+        the visible interactive flow.
+
+        ponytail: short 30-s timeout; failure is expected and safe.
+        """
+        from .browser import BrowserManager, FLOW_BASE_URL
+        browser = None
+        try:
+            browser = BrowserManager(headless=True, profile_dir=store.profile_dir(account_id))
+            await browser.start()
+            page = await browser.page()
+            await page.goto(FLOW_BASE_URL, wait_until="domcontentloaded", timeout=20_000)
+            # Give Google a moment to redirect; check the URL once.
+            await asyncio.sleep(3)
+            confirmed_id = ""
+            match = _PROJECT_RE.search(page.url)
+            if match:
+                confirmed_id = match.group(1)
+            if not confirmed_id:
+                # Try following a project link from the lobby.
+                if "accounts.google.com" not in page.url and "labs.google" in page.url:
+                    links = await page.locator('a[href*="/flow/project/"]').all()
+                    if links:
+                        href = await links[0].get_attribute("href") or ""
+                        m = _PROJECT_RE.search(href)
+                        if m:
+                            confirmed_id = m.group(1)
+            if not confirmed_id:
+                return False
+            email = await page.evaluate("() => window.__NEXT_DATA__?.props?.pageProps?.session?.user?.email || ''")
+            credits = None
+            credits_synced_at = None
+            detected_plan = None
+            try:
+                from flow._api import FlowAPI
+                credit_info = await FlowAPI(browser, project_id=confirmed_id).get_credits()
+                credits = int(credit_info.credits)
+                credits_synced_at = time.time()
+                detected_plan = _detect_plan(credit_info)
+            except Exception:
+                pass
+            account = store.get_row("accounts", account_id) or {}
+            patch: dict[str, Any] = {
+                "status": "online",
+                "projectId": confirmed_id,
+                "email": email or account.get("email", ""),
+                "credits": credits,
+                "creditsSyncedAt": credits_synced_at,
+                "updatedAt": time.time(),
+                "error": None,
+            }
+            if detected_plan:
+                patch["plan"] = detected_plan
+            store.patch_row("accounts", account_id, patch)
+            self._log("success", "account_connected", account_id=account_id, details={"projectId": confirmed_id, "credits": credits, "plan": detected_plan, "headless": True})
+            return True
+        except Exception as exc:
+            _log.debug("Headless reconnect probe failed for %s: %s", account_id, exc)
+            return False
+        finally:
+            if browser is not None:
+                try:
+                    await browser.stop()
+                except Exception:
+                    pass
+
+
 
     def enqueue(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         prompts = [str(value).strip() for value in payload.get("prompts", []) if str(value).strip()]
