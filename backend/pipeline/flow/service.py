@@ -598,21 +598,32 @@ class FlowService:
             browser = BrowserManager(headless=False, profile_dir=store.profile_dir(account_id))
             await browser.start()
             page = await browser.page()
-            await page.goto(FLOW_BASE_URL, wait_until="domcontentloaded")
+            # If we already know the project, go there directly — Flow no longer
+            # auto-redirects from the lobby, so waiting for a redirect is unreliable.
+            start_url = (
+                f"https://labs.google/fx/tools/flow/project/{existing_project_id}"
+                if existing_project_id
+                else FLOW_BASE_URL
+            )
+            await page.goto(start_url, wait_until="domcontentloaded", timeout=30_000)
 
-            # Fast-detect: if session is valid, Flow redirects to project URL quickly.
-            # 30s gives slow connections enough time before falling to the interactive loop.
+            # Fast-detect: already on project URL or redirected there.
             project_id = ""
-            try:
-                await page.wait_for_url(
-                    lambda url: bool(_PROJECT_RE.search(url)),
-                    timeout=30_000,
-                )
-                match = _PROJECT_RE.search(page.url)
-                if match:
-                    project_id = match.group(1)
-            except Exception:
-                pass  # Redirect didn't happen quickly — fall into the interactive polling loop
+            match = _PROJECT_RE.search(page.url)
+            if match:
+                project_id = match.group(1)
+            else:
+                # Wait briefly for a redirect (e.g. session validation bounce).
+                try:
+                    await page.wait_for_url(
+                        lambda url: bool(_PROJECT_RE.search(url)),
+                        timeout=10_000,
+                    )
+                    match = _PROJECT_RE.search(page.url)
+                    if match:
+                        project_id = match.group(1)
+                except Exception:
+                    pass
 
             if not project_id:
                 # Interactive loop: user must navigate / sign in manually.
