@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
@@ -11,6 +12,7 @@ import uuid
 import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import httpx
 
@@ -22,8 +24,10 @@ ISSUER = "https://auth.openai.com"
 SCOPE = "openid profile email offline_access"
 AUTHORIZE_URL = f"{ISSUER}/oauth/authorize"
 REDIRECT_URI = "http://localhost:1455/auth/callback"
-KEYRING_SERVICE = "ZM AIO TOOL ChatGPT"
-KEYRING_USER = "chatgpt-account"
+# Legacy constants kept only for one-time Keychain migration (can be removed
+# once all existing installs have migrated).
+_LEGACY_KEYRING_SERVICE = "ZM AIO TOOL ChatGPT"
+_LEGACY_KEYRING_USER = "chatgpt-account"
 
 
 def _jwt_claims(token: str | None) -> dict:
@@ -44,34 +48,58 @@ def _account_id(tokens: dict) -> str:
     return ""
 
 
-class SystemTokenStore:
-    """Tokens live in macOS Keychain / Windows Credential Manager, never app data."""
+class FileTokenStore:
+    """Tokens stored as a plain JSON file inside the account's profile directory.
 
-    def __init__(self, account_id: str = "default"):
-        self.account_id = account_id
+    Matches how Flow persists Chrome session cookies — no OS keychain needed,
+    works cross-platform without elevation, and survives app reinstalls as long
+    as the data directory is kept.
+    """
+
+    TOKEN_FILE = "chatgpt_tokens.json"
+
+    def __init__(self, profile_dir: Path | str) -> None:
+        self._path = Path(profile_dir) / self.TOKEN_FILE
 
     def load(self) -> dict | None:
         try:
-            import keyring
-
-            raw = keyring.get_password(KEYRING_SERVICE, f"{KEYRING_USER}:{self.account_id}")
-            value = json.loads(raw) if raw else None
+            text = self._path.read_text(encoding="utf-8")
+            value = json.loads(text)
             return value if isinstance(value, dict) else None
         except Exception:
             return None
 
     def save(self, tokens: dict) -> None:
-        import keyring
-
-        keyring.set_password(KEYRING_SERVICE, f"{KEYRING_USER}:{self.account_id}", json.dumps(tokens))
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # Write atomically: write to a temp file then rename.
+        tmp = self._path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(tokens), encoding="utf-8")
+        tmp.replace(self._path)
 
     def delete(self) -> None:
         try:
-            import keyring
-
-            keyring.delete_password(KEYRING_SERVICE, f"{KEYRING_USER}:{self.account_id}")
+            self._path.unlink(missing_ok=True)
         except Exception:
             pass
+
+    def migrate_from_keyring(self, account_id: str) -> None:
+        """One-time silent migration from Keychain to file store."""
+        if self._path.exists():
+            return  # Already migrated.
+        try:
+            import keyring
+            raw = keyring.get_password(_LEGACY_KEYRING_SERVICE, f"{_LEGACY_KEYRING_USER}:{account_id}")
+            if raw:
+                value = json.loads(raw)
+                if isinstance(value, dict):
+                    self.save(value)
+                    keyring.delete_password(_LEGACY_KEYRING_SERVICE, f"{_LEGACY_KEYRING_USER}:{account_id}")
+        except Exception:
+            pass
+
+
+# Backwards-compatible alias so tests that still reference SystemTokenStore work.
+SystemTokenStore = FileTokenStore
 
 
 @dataclass
@@ -86,8 +114,21 @@ class OAuthLogin:
 
 
 class ChatGPTAuth:
-    def __init__(self, token_store=None, client=None, account_id="default", browser_opener=None):
-        self.store = token_store or SystemTokenStore(account_id)
+    def __init__(self, token_store=None, client=None, account_id="default", browser_opener=None,
+                 profile_dir: Path | str | None = None):
+        if token_store is not None:
+            self.store = token_store
+        elif profile_dir is not None:
+            store = FileTokenStore(profile_dir)
+            store.migrate_from_keyring(account_id)
+            self.store = store
+        else:
+            # Fallback: use a sibling file next to the module (should not happen
+            # in production; always pass profile_dir via auth_for()).
+            from pipeline.core.config import DATA
+            store = FileTokenStore(DATA / "chat" / "profiles" / account_id)
+            store.migrate_from_keyring(account_id)
+            self.store = store
         self.account_id = account_id
         self.browser_opener = browser_opener
         sanitize_httpx_no_proxy()

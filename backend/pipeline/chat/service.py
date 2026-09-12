@@ -320,7 +320,7 @@ class ChatService:
         account = self.store.get_account(account_id)
         if not account:
             raise KeyError(account_id)
-        auth = ChatGPTAuth(account_id=account_id)
+        auth = ChatGPTAuth(account_id=account_id, profile_dir=Path(account["profile_path"]))
 
         def opener(url: str) -> None:
             def show() -> None:
@@ -370,6 +370,22 @@ class ChatService:
             raise KeyError(account_id)
         if chrome_executable() is None:
             raise RuntimeError("CHAT_CHROME_REQUIRED: Google Chrome was not found. Install Google Chrome, then sign in again.")
+
+        # Fast path: if a valid (or refreshable) token is already saved in the
+        # system Keychain, just re-sync the status without opening any browser.
+        # This covers the common case where the user clicks "Connect" after an
+        # app restart while their ChatGPT session is still alive.
+        try:
+            auth = self.auth_for(account_id)
+            auth.tokens()  # raises if token is missing or expired and cannot refresh
+            token_status = auth.status()
+            if token_status.get("status") == "connected":
+                email = str(token_status.get("email") or "")
+                self.store.update_account(account_id, status="connected", email=email, error="", error_code="")
+                return next(item for item in self.list_accounts() if item["id"] == account_id)
+        except Exception:
+            pass  # Token gone/expired — fall through to full OAuth browser flow
+
         lock = self._browser_locks.setdefault(account_id, threading.Lock())
         if not lock.acquire(blocking=False):
             raise RuntimeError("CHATGPT_LOGIN_IN_PROGRESS")
@@ -388,6 +404,7 @@ class ChatService:
             raise
         finally:
             lock.release()
+
 
     def poll_login(self, account_id: str, login_id: str) -> dict:
         try:
