@@ -218,7 +218,6 @@ const args = [
   '--collect-all', 'webview',
   '--collect-all', 'yt_dlp',
   '--collect-all', 'flow',
-  '--collect-all', 'keyring',
   // Hidden imports: stdlib + third-party hay bị PyInstaller miss
   '--hidden-import', 'timeit',
   '--hidden-import', 'pickletools',
@@ -229,19 +228,8 @@ const args = [
   '--hidden-import', 'email.mime.multipart',
   '--hidden-import', 'email.mime.base',
   '--hidden-import', 'email.encoders',
-  // Transformers is loaded from the external runtime venv at app runtime;
-  // it still imports this stdlib debugger module from the frozen parent.
-  '--hidden-import', 'pdb',
-  '--hidden-import', 'bdb',
-  '--hidden-import', 'cmd',
-  '--hidden-import', 'code',
-  '--hidden-import', 'codeop',
-  '--hidden-import', 'profile',
-  '--hidden-import', 'cProfile',
-  '--hidden-import', 'unittest.mock',
   '--hidden-import', 'httpx',
   '--hidden-import', 'setuptools',
-  '--hidden-import', 'pkg_resources',
 ]
 
 // Các gói AI được cài vào %LOCALAPPDATA%/VideoClone/.venv-runtime ở lần mở đầu tiên.
@@ -256,6 +244,8 @@ for (const mod of [
   'vieneu', 'perth', 'sea_g2p', 'soxr',
   'webview.platforms.android', 'pycparser.lextab', 'pycparser.yacctab',
   'IPython', 'ipykernel', 'notebook', 'jupyterlab',
+  'tzdata',  // zoneinfo hook requests this; Windows uses OS timezone data natively
+  'secretstorage',  // Linux-only keyring backend pulled by yt_dlp on non-Linux
 ]) args.push('--exclude-module', mod)
 
 // ── Icon ──────────────────────────────────────────────────────────────────────
