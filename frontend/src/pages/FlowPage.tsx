@@ -402,8 +402,10 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
     let active = true;
     const refreshAccounts = () =>
       void flowRequest<{ accounts: FlowAccount[] }>("/api/flow/accounts")
-        .then((data) => { if (active) setAccounts(data.accounts); })
+        .then((data) => { if (active) setAccounts(normalizeFlowAccounts(data.accounts)); })
         .catch(() => undefined);
+    // Call immediately so the UI updates as soon as Chrome closes (no 10-s dead wait).
+    refreshAccounts();
     const timer = window.setInterval(refreshAccounts, 10000);
     return () => {
       active = false;
@@ -974,7 +976,7 @@ export default function FlowPage({ onBack, onOpenSrtImage }: { onBack: () => voi
   const connectAccount = (account: FlowAccount) =>
     void flowRequest<FlowAccount>(`/api/flow/accounts/${account.id}/connect`, {
       method: "POST",
-    }).then((connected) => setAccounts((current) => current.map((item) => item.id === connected.id ? connected : item)))
+    }).then((connected) => setAccounts((current) => current.map((item) => item.id === connected.id ? normalizeFlowAccounts([connected])[0] : item)))
       .catch((error) => setApiError(error instanceof Error ? error.message : String(error)));
   const syncAccount = (account: FlowAccount) => {
     if (syncingAccountIds.has(account.id)) return;
