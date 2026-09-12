@@ -82,6 +82,7 @@ async def create_job(
     inputMode: str = Form("topic"),
     title: str = Form(""),
     topic: str = Form(""),
+    youtubeUrl: str = Form(""),
     settings: str = Form(""),
     script: UploadFile | None = File(None),
     audio: UploadFile | None = File(None),
@@ -97,14 +98,21 @@ async def create_job(
     # ideas for the user to choose. URLs are not fetched by this workflow.
     if mode == "topic" and not topic.strip():
         mode = "ai_topic"
-    if len(topic.strip()) > 2_000:
-        raise HTTPException(422, detail={"code": "AUTOMATION_TOPIC_TOO_LARGE", "message": _t("Chủ đề vượt quá 2.000 ký tự", "Topic exceeds 2,000 characters")})
+    clean_yt_url = (youtubeUrl or topic).strip()
+    if mode == "youtube":
+        if not clean_yt_url:
+            raise HTTPException(422, detail={"code": "AUTOMATION_YOUTUBE_URL_REQUIRED", "message": _t("Vui lòng nhập link YouTube", "Please enter a YouTube URL")})
+        topic = clean_yt_url
+    if len(topic.strip()) > 20_000:
+        raise HTTPException(422, detail={"code": "AUTOMATION_TOPIC_TOO_LARGE", "message": _t("Chủ đề vượt quá 20.000 ký tự", "Topic exceeds 20,000 characters")})
     if mode == "script" and script is None:
         raise HTTPException(422, detail={"code": "AUTOMATION_SCRIPT_REQUIRED", "message": _t("Cần chọn file script", "A script file is required")})
     if mode == "bundle" and not any((audio, srt, prompts, script)):
         raise HTTPException(422, detail={"code": "AUTOMATION_FILES_REQUIRED", "message": _t("Cần ít nhất một file đầu vào", "At least one input file is required")})
     chosen = _settings(settings)
-    job = service.create_job(mode, title.strip()[:160] or topic[:80] or "Automation", chosen, {"topic": topic.strip()})
+    job_title = title.strip()[:160] or (clean_yt_url if mode == "youtube" else topic[:80]) or "Automation"
+    job_input = {"topic": topic.strip(), "youtubeUrl": clean_yt_url} if mode == "youtube" else {"topic": topic.strip()}
+    job = service.create_job(mode, job_title, chosen, job_input)
     for upload, kind in ((script, "script"), (audio, "audio"), (srt, "srt"), (prompts, "prompts"), (watermark, "watermark")):
         path = await _save_upload(job["id"], upload, kind)
         if path:
@@ -304,9 +312,21 @@ def events(job_id: str):
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-def _mutate(job_id: str, action: str):
+def _mutate(job_id: str, action: str, body: dict[str, Any] | None = None):
     try:
-        method = {"resume": service.resume_job, "pause": service.pause_job, "cancel": service.cancel_job, "retry": service.retry_job}[action]
+        if action == "retry":
+            from_stage = None
+            preview_seconds = None
+            if body and isinstance(body, dict):
+                from_stage = body.get("from_stage") or body.get("stage") or body.get("fromStage")
+                raw_preview = body.get("preview_seconds") if "preview_seconds" in body else body.get("previewSeconds")
+                if raw_preview is not None:
+                    try:
+                        preview_seconds = float(raw_preview)
+                    except (ValueError, TypeError):
+                        preview_seconds = None
+            return service.retry_job(job_id, from_stage=from_stage, preview_seconds=preview_seconds)
+        method = {"resume": service.resume_job, "pause": service.pause_job, "cancel": service.cancel_job}[action]
         return method(job_id)
     except KeyError as exc:
         raise HTTPException(404, detail={"code": "AUTOMATION_JOB_NOT_FOUND", "message": _t("Không tìm thấy job", "Automation job not found")}) from exc
@@ -338,5 +358,30 @@ def cancel(job_id: str):
 
 
 @router.post("/jobs/{job_id}/retry")
-def retry(job_id: str):
-    return _mutate(job_id, "retry")
+def retry(job_id: str, body: dict[str, Any] | None = Body(None)):
+    return _mutate(job_id, "retry", body)
+
+
+@router.post("/suggest-topics")
+def suggest_topics(body: dict[str, Any] | None = Body(None)):
+    payload = body or {}
+    hint = str(payload.get("hint") or payload.get("topic") or "").strip()
+    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+    try:
+        topics = service.suggest_topics(hint=hint, settings=settings)
+        return {"topics": topics}
+    except Exception as exc:
+        raise HTTPException(500, detail={"code": "SUGGEST_FAILED", "message": str(exc)})
+
+
+@router.post("/youtube/rewrite")
+def preview_youtube_rewrite(body: dict[str, Any] = Body(...)):
+    url = str(body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(422, detail={"code": "URL_REQUIRED", "message": _t("Vui lòng nhập link YouTube", "Please enter a YouTube URL")})
+    settings = body.get("settings") if isinstance(body.get("settings"), dict) else None
+    try:
+        return service.preview_youtube_rewrite(url, settings=settings)
+    except Exception as exc:
+        raise HTTPException(500, detail={"code": "YOUTUBE_REWRITE_FAILED", "message": str(exc)})
+

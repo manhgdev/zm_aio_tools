@@ -794,32 +794,10 @@ def api_install_status():
 
 @router.post("/api/system/install/ai_runtime")
 def api_install_ai_runtime():
-    from pipeline.core.system_check import install_ai_runtime, _runtime_venv_fast
+    from pipeline.core.system_check import install_ai_runtime
 
-    if getattr(sys, "frozen", False):
-        ok, detail = _runtime_venv_fast()
-        if ok:
-            # Kiểm tra thêm: model diarization đã download chưa?
-            from pipeline.core.config import DATA
-            diarization_dir = Path(DATA) / "models" / "pyannote"
-            models_ok = (diarization_dir / "model.int8.onnx").is_file()
-            if models_ok:
-                with _install_lock:
-                    _install_state.update(
-                        running=False,
-                        kind="",
-                        error="",
-                        message="Gói AI đã sẵn sàng",
-                        needsRestart=False,
-                        result={"ok": True, "message": "Gói AI đã sẵn sàng", "detail": detail},
-                    )
-                return {
-                    "ok": True,
-                    "running": False,
-                    "message": "Gói AI đã sẵn sàng",
-                    "detail": detail,
-                }
-            # Packages ok nhưng thiếu model → chạy job thực để tải model
+    # Only the background import/CUDA probe can declare a runtime ready.
+    # dist-info files survive broken installs and CPU-only torch upgrades.
     return _start_install_job("ai_runtime", install_ai_runtime)
 
 

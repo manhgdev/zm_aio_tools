@@ -300,6 +300,8 @@ def test_windows_bundle_keeps_pdb_for_external_transformers() -> None:
     assert "'--hidden-import', 'pdb'" in build
     excludes = build.split("for (const mod of [", 1)[1].split("]) args.push", 1)[0]
     assert "'pdb'" not in excludes
+    for module in ("unittest", "profile", "cProfile"):
+        assert f"'{module}'" not in excludes
 
 
 def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
@@ -308,8 +310,8 @@ def test_macos_installer_replaces_legacy_versioned_app_bundles() -> None:
     assert "matrix:" in workflow
     assert "runner: macos-14" in workflow
     assert "arch: arm64" in workflow
-    assert "runner: macos-15-intel" in workflow
-    assert "arch: x64" in workflow
+    assert "runner: macos-15-intel" not in workflow
+    assert "arch: x64" not in workflow
     assert "runs-on: ${{ matrix.runner }}" in workflow
     assert 'payload="$stage/ZM AIO TOOL.app"' in workflow
     assert 'pkgbuild --component "$payload" --scripts "$scripts" --install-location /Applications "$pkg"' in workflow

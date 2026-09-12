@@ -87,14 +87,19 @@ def _runtime_modules_batch_ok(names: list[str]) -> dict[str, tuple[bool, str]]:
         "    m = __import__(n)\n"
         "    if n == 'cv2' and not getattr(m, 'VideoCapture', None):\n"
         "      raise ImportError('cv2 thiếu VideoCapture')\n"
+        "    if n == 'transformers':\n"
+        "      from transformers import PretrainedConfig, PreTrainedModel, Qwen3Model\n"
+        "    if n == 'vieneu':\n"
+        "      from vieneu import Vieneu\n"
+        "      from vieneu._v3_turbo_engine.inference_v3_turbo import VieNeuTTSv3Turbo\n"
         "    out[n] = [True, 'ok']\n"
         "  except Exception as e:\n"
-        "    out[n] = [False, str(e)[:80]]\n"
+        "    out[n] = [False, type(e).__name__ + ': ' + str(e)[-1500:]]\n"
         "print(json.dumps(out))\n"
     )
     try:
         proc = subprocess.run(
-            [str(py), "-c", script, payload],
+            [str(py), "-I", "-c", script, payload],
             capture_output=True,
             text=True,
             timeout=120,
@@ -103,11 +108,14 @@ def _runtime_modules_batch_ok(names: list[str]) -> dict[str, tuple[bool, str]]:
         )
     except subprocess.TimeoutExpired:
         return {n: (False, "timeout") for n in names}
+    except OSError as exc:
+        return {n: (False, str(exc)) for n in names}
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "import fail").strip()[-80:]
+        err = (proc.stderr or proc.stdout or "import fail").strip()[-1500:]
         return {n: (False, err or "import fail") for n in names}
     try:
-        raw = json.loads((proc.stdout or "").strip() or "{}")
+        lines = (proc.stdout or "").strip().splitlines()
+        raw = json.loads(lines[-1] if lines else "{}")
     except json.JSONDecodeError:
         return {n: (False, "probe parse fail") for n in names}
     out: dict[str, tuple[bool, str]] = {}
@@ -166,6 +174,13 @@ def _invalidate_probe_caches() -> None:
     _OCR_CUDA_CACHE = None
     _demucs_cache = None
     _DEMUCS_PY_CACHE = None
+    from pipeline.tts.engines import vieneu_frozen
+    from pipeline.core import accel
+
+    vieneu_frozen._CUDA_READY = None
+    with accel._lock:
+        accel._cache.clear()
+    accel.accel_label.cache_clear()
 
 
 def _torch_cuda_ready_cached() -> bool:
@@ -189,7 +204,9 @@ def _ocr_cuda_check_cached(*, refresh: bool = False) -> tuple[bool, str]:
 
 
 def _nvidia_present() -> bool:
-    return bool(_which("nvidia-smi"))
+    from ..accel import _nvidia_smi
+
+    return _nvidia_smi()
 
 
 def _apple_silicon_runtime() -> bool:

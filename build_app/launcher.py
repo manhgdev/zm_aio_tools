@@ -15,6 +15,22 @@ from pathlib import Path
 APP_DISPLAY_NAME = "ZM AIO TOOL"
 
 
+if len(sys.argv) == 3 and sys.argv[1] == "--runtime-import-check":
+    # Test the *packaged* stdlib before GUI/AI startup. No browser, models or
+    # user profiles are needed; windowed EXEs report through the given file.
+    import importlib
+    import json
+
+    failures = {}
+    for module in ("pdb", "bdb", "cmd", "code", "codeop", "profile", "cProfile", "unittest.mock", "multiprocessing.pool"):
+        try:
+            importlib.import_module(module)
+        except Exception as exc:
+            failures[module] = f"{type(exc).__name__}: {exc}"
+    Path(sys.argv[2]).write_text(json.dumps({"ok": not failures, "errors": failures}), encoding="utf-8")
+    raise SystemExit(1 if failures else 0)
+
+
 def _unblock_zone_identifier(path: Path) -> bool:
     """Xóa MOTW (Zone.Identifier). Zip tải từ internet làm netfx không LoadLibrary DLL."""
     if sys.platform != "win32":
@@ -449,7 +465,11 @@ if sys.platform == "win32":
                             a = (args, *a[1:])
                         else:
                             kw["args"] = args
-                super().__init__(*a, **kw)
+                from pipeline.core.runtime_site import external_process_dll_search
+
+                executable = str(args[0]) if isinstance(args, (list, tuple)) and args else ""
+                with external_process_dll_search(executable):
+                    super().__init__(*a, **kw)
 
         _sp.Popen = _PopenNoWindow  # type: ignore[misc, assignment]
     except Exception:

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 _CUDA_READY: bool | None = None
@@ -31,17 +33,11 @@ def _out(obj):
     sys.stdout.buffer.flush()
 
 def _register():
-    try:
-        from transformers import AutoConfig, AutoModel
-        from vieneu._v3_turbo_engine.configuration_v3_turbo import VieNeuV3TurboConfig
-        from vieneu._v3_turbo_engine.modeling_v3_turbo import VieNeuV3TurboForTTS
-        AutoConfig.register("vieneu_v3", VieNeuV3TurboConfig)
-        try:
-            AutoModel.register(VieNeuV3TurboConfig, VieNeuV3TurboForTTS)
-        except Exception:
-            pass
-    except Exception:
-        pass
+    from transformers import AutoConfig, AutoModel
+    from vieneu._v3_turbo_engine.configuration_v3_turbo import VieNeuV3TurboConfig
+    from vieneu._v3_turbo_engine.modeling_v3_turbo import VieNeuV3TurboForTTS
+    AutoConfig.register("vieneu_v3", VieNeuV3TurboConfig, exist_ok=True)
+    AutoModel.register(VieNeuV3TurboConfig, VieNeuV3TurboForTTS, exist_ok=True)
 
 def _enable_torchaudio_soundfile_fallback():
     import torchaudio
@@ -116,10 +112,19 @@ def main():
                 device = msg.get("device") or "cuda"
                 _enable_torchaudio_soundfile_fallback()
                 _prepare_cuda_weight_load(backend, device)
-                _register()
+                if backend == "pytorch":
+                    _register()
                 from vieneu import Vieneu
                 client = Vieneu(mode="v3turbo", backend=backend, device=device)
-                _out({"ok": True, "backend": str(getattr(client, "backend", backend)), "device": device})
+                actual_backend = str(client.backend)
+                actual_device = str(getattr(client.engine.device, "type", client.engine.device))
+                if actual_backend != backend or actual_device.split(':')[0] != device.split(':')[0]:
+                    raise RuntimeError(f"VIENEU_DEVICE_MISMATCH: requested {backend}/{device}, loaded {actual_backend}/{actual_device}")
+                if actual_backend == "pytorch":
+                    model_device = str(next(client.engine.model.parameters()).device)
+                    if model_device.split(':')[0] != device.split(':')[0]:
+                        raise RuntimeError(f"VIENEU_DEVICE_MISMATCH: model weights on {model_device}, requested {device}")
+                _out({"ok": True, "backend": actual_backend, "device": actual_device})
                 continue
             if op == "ping":
                 _out({"ok": True, "ready": client is not None})
@@ -143,7 +148,7 @@ def main():
             client.save(audio, str(out_wav))
             _out({"ok": True, "backend": str(getattr(client, "backend", backend))})
         except Exception:
-            _out({"ok": False, "error": traceback.format_exc()[-800:]})
+            _out({"ok": False, "error": traceback.format_exc()[-4000:]})
 
 if __name__ == "__main__":
     main()
@@ -169,6 +174,8 @@ class _Worker:
         self.device = device
         self.key = f"{backend}|{device}"
         self._lock = threading.Lock()
+        self._responses: queue.Queue[bytes | None] = queue.Queue()
+        self._stderr: deque[str] = deque(maxlen=30)
         from pipeline.core.runtime_site import subprocess_environment
 
         env = subprocess_environment()
@@ -180,13 +187,26 @@ class _Worker:
         kw: dict = {
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
-            "stderr": subprocess.DEVNULL,  # progress/warning không phá JSON
+            "stderr": subprocess.PIPE,
             "bufsize": 0,
             "env": env,
         }
         if sys.platform == "win32":
             kw["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        self.proc = subprocess.Popen([str(py), "-u", "-c", _WORKER_SCRIPT], **kw)
+        self.proc = subprocess.Popen([str(py), "-I", "-u", "-c", _WORKER_SCRIPT], **kw)
+        def read_stdout():
+            try:
+                for line in self.proc.stdout:
+                    self._responses.put(line)
+            finally:
+                self._responses.put(None)
+
+        def read_stderr():
+            for line in self.proc.stderr:
+                self._stderr.append(line.decode("utf-8", errors="replace")[-1000:])
+
+        threading.Thread(target=read_stdout, daemon=True).start()
+        threading.Thread(target=read_stderr, daemon=True).start()
         # register for cancel-kill
         try:
             from pipeline.core.jobs import register_process, current_job_id
@@ -194,14 +214,18 @@ class _Worker:
             register_process(current_job_id(), self.proc)
         except Exception:
             pass
-        init = self._rpc({"op": "init", "backend": backend, "device": device}, timeout=300)
+        try:
+            init = self._rpc({"op": "init", "backend": backend, "device": device}, timeout=300)
+        except BaseException:
+            self.close()
+            raise
         if not init.get("ok"):
             self.close()
             raise RuntimeError(init.get("error") or "VieNeu worker init failed")
 
     def _rpc(self, msg: dict, *, timeout: float = 600) -> dict:
         if self.proc.poll() is not None:
-            return {"ok": False, "error": "worker dead"}
+            return {"ok": False, "error": f"VieNeu worker exit {self.proc.returncode}: " + "".join(self._stderr)[-4000:]}
         assert self.proc.stdin and self.proc.stdout
         payload = (json.dumps(msg, ensure_ascii=False) + "\n").encode("utf-8")
         with self._lock:
@@ -210,8 +234,8 @@ class _Worker:
                 self.proc.stdin.flush()
             except OSError as e:
                 return {"ok": False, "error": str(e)}
-            deadline = time.time() + timeout
-            while time.time() < deadline:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
                 try:
                     from pipeline.core.jobs import (
                         Cancelled,
@@ -226,17 +250,24 @@ class _Worker:
                 except Exception as e:
                     if e.__class__.__name__ == "Cancelled":
                         raise
-                out = self.proc.stdout.readline()
+                try:
+                    out = self._responses.get(timeout=min(0.25, max(0.001, deadline - time.monotonic())))
+                except queue.Empty:
+                    continue
                 if not out:
-                    return {"ok": False, "error": "worker EOF"}
+                    self.close()
+                    return {"ok": False, "error": "VieNeu worker EOF: " + "".join(self._stderr)[-4000:]}
                 try:
                     text = out.decode("utf-8", errors="replace").strip()
                     if not text:
                         continue
-                    return json.loads(text)
+                    response = json.loads(text)
+                    if isinstance(response, dict) and isinstance(response.get("ok"), bool):
+                        return response
                 except json.JSONDecodeError:
                     continue
-            return {"ok": False, "error": "worker timeout"}
+            self.close()
+            return {"ok": False, "error": f"VieNeu worker timeout ({timeout}s): " + "".join(self._stderr)[-4000:]}
 
     def synth(
         self,
@@ -334,12 +365,10 @@ def shutdown_all_workers() -> None:
 
 def runtime_python() -> Path:
     if getattr(sys, "frozen", False):
-        home = Path(os.environ["VIDEO_CLONE_HOME"])
-        py = home / ".venv-runtime" / (
-            "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
-        )
-        if py.is_file():
-            return py
+        from pipeline.core.system_check.probe import _runtime_python
+
+        # Never launch the desktop EXE with Python's -c arguments on first run.
+        return _runtime_python()
     return Path(sys.executable)
 
 
@@ -352,7 +381,7 @@ def _run_runtime(code: str, *, timeout: float = 45.0) -> subprocess.CompletedPro
     except Exception:
         env = os.environ.copy()
     return subprocess.run(
-        [str(py), "-c", code],
+        [str(py), "-I", "-c", code],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -365,23 +394,21 @@ def runtime_torch_cuda_ready(*, refresh: bool = False) -> bool:
     global _CUDA_READY
     if _CUDA_READY is not None and not refresh:
         return _CUDA_READY
-    try:
-        from pipeline.core.accel import preferred_torch_device
-
-        _CUDA_READY = preferred_torch_device(refresh=refresh) == "cuda"
-        return _CUDA_READY
-    except Exception:
-        pass
     py = runtime_python()
     if not py.is_file():
         _CUDA_READY = False
         return False
     try:
         proc = _run_runtime(
-            "import torch; print(1 if torch.cuda.is_available() else 0)",
+            "import torch\n"
+            "ready = torch.cuda.is_available()\n"
+            "if ready:\n"
+            "    x = torch.ones(1, device='cuda') + 1\n"
+            "    torch.cuda.synchronize()\n"
+            "print(1 if ready else 0)\n",
             timeout=60,
         )
-    except subprocess.TimeoutExpired:
+    except (OSError, subprocess.TimeoutExpired):
         _CUDA_READY = False
         return False
     _CUDA_READY = proc.returncode == 0 and (proc.stdout or "").strip() == "1"
@@ -404,7 +431,7 @@ def probe() -> tuple[bool, str]:
         _release(w)
         return True, f"{backend}/{device}"
     except Exception as e:
-        return False, str(e)[-200:]
+        return False, str(e)[-4000:]
 
 
 def synthesize(

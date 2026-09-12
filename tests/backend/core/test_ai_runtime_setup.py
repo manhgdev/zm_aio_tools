@@ -242,9 +242,7 @@ def test_frozen_runtime_does_not_upgrade_importable_packages(monkeypatch):
 def test_frozen_runtime_scopes_packages_to_missing_module():
     specs = system_check._frozen_runtime_package_specs(["transformers"])
     assert specs == [
-        "huggingface-hub>=0.34",
-        "tokenizers",
-        "transformers>=4.46.0",
+        "transformers==4.57.6",
     ]
 
 

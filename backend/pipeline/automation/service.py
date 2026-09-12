@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import json
 import shutil
+import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -16,6 +18,22 @@ from .store import AutomationStore
 
 
 _TOPIC_PROMPT_VERSION = "audio-first-2d-v2"
+
+
+def clean_subtitle_text(path: Path) -> str:
+    """Extract clean spoken dialogue text from an SRT or VTT file."""
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    clean_lines: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.isdigit():
+            continue
+        if "-->" in line or line.startswith(("WEBVTT", "NOTE", "Kind:", "Language:")):
+            continue
+        line = re.sub(r"<[^>]+>", "", line).strip()
+        if line and (not clean_lines or clean_lines[-1] != line):
+            clean_lines.append(line)
+    return " ".join(clean_lines)
 
 
 class AutomationCancelled(RuntimeError):
@@ -97,7 +115,7 @@ class AutomationService:
 
     def create_job(self, input_mode: str, title: str, settings: dict[str, Any], input_data: dict[str, Any] | None = None) -> dict[str, Any]:
         mode = str(input_mode or "").strip().lower()
-        if mode not in {"topic", "ai_topic", "script", "bundle"}:
+        if mode not in {"topic", "ai_topic", "youtube", "script", "bundle"}:
             raise ValueError("AUTOMATION_INPUT_MODE_INVALID")
         clean_settings = self._public_settings(settings or {})
         # Persist the provider/model decision with the job. This keeps retries
@@ -237,32 +255,152 @@ class AutomationService:
                 self._cancel.pop(job_id, None)
         return {"id": job_id, "deleted": deleted}
 
-    def retry_job(self, job_id: str) -> dict[str, Any]:
+    def retry_job(self, job_id: str, *, from_stage: str | None = None, preview_seconds: float | None = None) -> dict[str, Any]:
         job = self.store.get_job(job_id)
         if not job:
             raise KeyError(job_id)
         if job["status"] not in {"completed", "paused", "failed", "interrupted"}:
             return self.public_job(job_id)
-        # An explicit parent retry also requeues terminal Flow children. This
-        # lets the user reconnect Flow after a reCAPTCHA/login interruption and
-        # continue the same batch without generating duplicate prompts.
+
+        workspace = self.store.workspace(job_id)
+        artifacts = dict(job.get("artifacts") or {})
+        input_data = dict(job.get("input") or {})
+        child_job_ids = list(job.get("child_job_ids") or [])
+        settings = dict(job.get("settings") or {})
+
+        if preview_seconds is not None:
+            compose_cfg = dict(settings.get("compose") or {})
+            compose_cfg["previewSeconds"] = max(0.0, float(preview_seconds))
+            settings["compose"] = compose_cfg
+
+        # Determine effective stage to restart from
+        if from_stage:
+            target_stage = str(from_stage).strip().lower()
+        elif job["status"] == "completed":
+            target_stage = "compose"
+        else:
+            target_stage = str(job.get("stage") or "compose")
+
+        valid_stages = {"script", "tts", "image_prompt", "flow_images", "compose"}
+        if target_stage not in valid_stages:
+            target_stage = "compose"
+
+        # Always clear final video when retrying
+        artifacts.pop("video", None)
         try:
-            from pipeline.flow import service as flow_service
-            snapshot = {str(row.get("id")): row for row in flow_service.jobs()}
-            for child_id in job.get("child_job_ids") or []:
-                child = snapshot.get(str(child_id)) or {}
-                if child.get("status") in {"failed", "action_required"}:
-                    flow_service.retry(str(child_id))
+            (workspace / "output.mp4").unlink(missing_ok=True)
+            shutil.rmtree(workspace / "render-work", ignore_errors=True)
         except Exception:
-            # The Flow module is optional for non-Flow automation jobs.
             pass
-        patch: dict[str, Any] = {"status": "queued", "error": None}
-        if job["status"] == "completed":
-            artifacts = dict(job.get("artifacts") or {})
-            artifacts.pop("video", None)
-            patch["artifacts"] = artifacts
+
+        # Clear artifacts and workspace files backwards from target_stage
+        if target_stage in {"script", "tts", "image_prompt", "flow_images"}:
+            artifacts.pop("images", None)
+            shutil.rmtree(workspace / "images", ignore_errors=True)
+            child_job_ids = []
+
+        if target_stage in {"script", "tts", "image_prompt"}:
+            artifacts.pop("prompts", None)
+            try:
+                (workspace / "image_prompts.txt").unlink(missing_ok=True)
+            except Exception:
+                pass
+            if input_data.get("generatedPrompts"):
+                input_data.pop("prompts", None)
+
+        if target_stage in {"script", "tts"}:
+            for key in ("audio", "srt", "audioMp3"):
+                artifacts.pop(key, None)
+            for fname in ("audio.wav", "subtitles.srt", "audio.mp3"):
+                try:
+                    (workspace / fname).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if input_data.get("generatedAudio"):
+                input_data.pop("audio", None)
+            if input_data.get("generatedSrt"):
+                input_data.pop("srt", None)
+
+        if target_stage == "script":
+            artifacts.pop("script", None)
+            try:
+                (workspace / "script.txt").unlink(missing_ok=True)
+            except Exception:
+                pass
+            if input_data.get("generatedScript"):
+                input_data.pop("script", None)
+
+        # Restore existing workspace artifacts for preserved upstream stages
+        stages_order = ["script", "tts", "image_prompt", "flow_images", "compose"]
+        target_idx = stages_order.index(target_stage) if target_stage in stages_order else len(stages_order) - 1
+
+        if target_idx >= stages_order.index("compose"):
+            image_dir = workspace / "images"
+            if image_dir.is_dir() and any(image_dir.iterdir()):
+                artifacts["images"] = str(image_dir)
+
+        if target_idx >= stages_order.index("flow_images"):
+            prompts_file = workspace / "image_prompts.txt"
+            if prompts_file.is_file():
+                artifacts["prompts"] = str(prompts_file)
+                input_data["prompts"] = str(prompts_file)
+                input_data["generatedPrompts"] = True
+
+        if target_idx >= stages_order.index("image_prompt"):
+            wav_file = workspace / "audio.wav"
+            srt_file = workspace / "subtitles.srt"
+            mp3_file = workspace / "audio.mp3"
+            if wav_file.is_file():
+                artifacts["audio"] = str(wav_file)
+                input_data["audio"] = str(wav_file)
+                input_data["generatedAudio"] = True
+            if srt_file.is_file():
+                artifacts["srt"] = str(srt_file)
+                input_data["srt"] = str(srt_file)
+                input_data["generatedSrt"] = True
+            if mp3_file.is_file():
+                artifacts["audioMp3"] = str(mp3_file)
+
+        if target_idx >= stages_order.index("tts"):
+            script_file = workspace / "script.txt"
+            if script_file.is_file():
+                artifacts["script"] = str(script_file)
+                input_data["script"] = str(script_file)
+                input_data["generatedScript"] = True
+
+        # Re-queue terminal Flow children only if we are continuing flow_images
+        if (target_stage == "compose" or (target_stage == "flow_images" and child_job_ids)):
+            try:
+                from pipeline.flow import service as flow_service
+                snapshot = {str(row.get("id")): row for row in flow_service.jobs()}
+                for child_id in child_job_ids:
+                    child = snapshot.get(str(child_id)) or {}
+                    if child.get("status") in {"failed", "action_required"}:
+                        flow_service.retry(str(child_id))
+            except Exception:
+                # The Flow module is optional for non-Flow automation jobs.
+                pass
+
+        stage_log_messages = {
+            "compose": "Đã đưa lại chặng ghép video vào hàng đợi.",
+            "flow_images": "Đã đưa lại chặng tạo ảnh Flow và ghép video vào hàng đợi.",
+            "image_prompt": "Đã đưa lại chặng prompt ảnh và các chặng tiếp theo vào hàng đợi.",
+            "tts": "Đã đưa lại chặng giọng đọc TTS và các chặng tiếp theo vào hàng đợi.",
+            "script": "Đã đưa lại chặng kịch bản và toàn bộ quy trình vào hàng đợi.",
+        }
+
+        patch: dict[str, Any] = {
+            "status": "queued",
+            "stage": target_stage,
+            "error": None,
+            "artifacts": artifacts,
+            "input": input_data,
+            "child_job_ids": child_job_ids,
+        }
+        if preview_seconds is not None:
+            patch["settings"] = settings
         self.store.update_job(job_id, **patch)
-        self.store.append_log(job_id, "info", "Đã đưa lại chặng ghép video vào hàng đợi.", stage="compose")
+        self.store.append_log(job_id, "info", stage_log_messages.get(target_stage, "Đã đưa lại job vào hàng đợi."), stage=target_stage)
         return self.start_job(job_id)
 
     def update_job_settings(self, job_id: str, *, title: str | None = None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -391,13 +529,20 @@ class AutomationService:
         inputs = dict(job.get("input") or {})
         mode = str(job.get("input_mode") or "topic")
         settings = dict(job.get("settings") or {})
-        self.set_stage(job_id, "input", 3, "Đang chuẩn bị input cho job.")
+        target_stage = str(job.get("stage") or "script")
+        stages_order = ["script", "tts", "image_prompt", "flow_images", "compose"]
+        if target_stage not in stages_order:
+            target_stage = "script"
+        target_idx = stages_order.index(target_stage)
+
+        if target_idx == 0:
+            self.set_stage(job_id, "input", 3, "Đang chuẩn bị input cho job.")
         canonical = self._prepare_inputs(job_id, inputs, workspace)
         self._check_cancel(job_id)
 
         # AI topic mode intentionally pauses after producing choices.
         topic = str(inputs.get("selectedTopic") or inputs.get("topic") or "").strip()
-        if mode == "ai_topic" and not inputs.get("selectedTopic"):
+        if mode == "ai_topic" and not inputs.get("selectedTopic") and target_idx == 0:
             candidates_path = workspace / "topic_candidates.json"
             cached_candidates = None
             if candidates_path.is_file():
@@ -425,76 +570,123 @@ class AutomationService:
             self.store.append_log(job_id, "info", "Đã tạo 5 chủ đề; đang chờ bạn chọn.", stage="topic", details={"candidates": candidates})
             return
 
+        # Stage: script
         script = canonical.get("script")
-        if not script and topic:
-            self.set_stage(job_id, "script", 12, "Đang tạo script sạch bằng provider AI đã chọn.")
-            content, artifact = self._request_chat(job_id, self._script_prompt(topic, settings), [])
+        if not script and (workspace / "script.txt").is_file():
             script = workspace / "script.txt"
-            self._write_text_result(script, artifact, content)
-            self.save_artifact(job_id, "script", script, stage="script")
-            inputs["script"] = str(script); inputs["generatedScript"] = True
-            self.store.update_job(job_id, input=inputs)
             canonical["script"] = script
+        if target_idx <= stages_order.index("script"):
+            if not script and mode == "youtube":
+                youtube_url = str(inputs.get("youtubeUrl") or inputs.get("topic") or topic or "").strip()
+                if not youtube_url:
+                    raise RuntimeError("YOUTUBE_URL_REQUIRED")
+                self.set_stage(job_id, "script", 10, f"Đang tải caption từ YouTube: {youtube_url[:40]}…")
+                yt_title, caption_text, caption_file = self._fetch_youtube_caption_and_title(youtube_url, workspace)
+                if yt_title and (not job.get("title") or job["title"].startswith("http") or job["title"] in {"Job tự động hoá", "Automation job"}):
+                    self.store.update_job(job_id, title=yt_title[:120])
+                if caption_file and caption_file.is_file():
+                    self.save_artifact(job_id, "youtubeCaption", caption_file, stage="input")
+                self.set_stage(job_id, "script", 14, f"Đang phân tích caption & viết lại kịch bản: {yt_title[:40]}…")
+                content, artifact = self._request_chat(job_id, self._youtube_rewrite_prompt(yt_title, caption_text, settings), [])
+                script = workspace / "script.txt"
+                self._write_text_result(script, artifact, content)
+                self.save_artifact(job_id, "script", script, stage="script")
+                inputs["script"] = str(script); inputs["generatedScript"] = True
+                self.store.update_job(job_id, input=inputs)
+                canonical["script"] = script
+            elif not script and topic:
+                self.set_stage(job_id, "script", 12, "Đang tạo script sạch bằng provider AI đã chọn.")
+                content, artifact = self._request_chat(job_id, self._script_prompt(topic, settings), [])
+                script = workspace / "script.txt"
+                self._write_text_result(script, artifact, content)
+                self.save_artifact(job_id, "script", script, stage="script")
+                inputs["script"] = str(script); inputs["generatedScript"] = True
+                self.store.update_job(job_id, input=inputs)
+                canonical["script"] = script
         if script:
-            self.store.update_job(job_id, stage="script", progress=18)
+            self.store.update_job(job_id, stage="script" if target_idx <= 0 else target_stage, progress=18 if target_idx <= 0 else job.get("progress", 18))
 
+        # Stage: tts
         audio = canonical.get("audio")
-        srt = canonical.get("srt")
-        if not audio and script:
-            self.set_stage(job_id, "tts", 24, "Đang tạo audio và SRT bằng TTS.")
-            tts_cfg = settings.get("tts") if isinstance(settings.get("tts"), dict) else {}
-            from pipeline.tts.studio import synth_text_job, ensure_wav, ensure_mp3
-            result = synth_text_job(
-                text=script.read_text(encoding="utf-8-sig", errors="replace"),
-                voice=str(tts_cfg.get("voice") or "system"),
-                lang=str(settings.get("language") or "vi"),
-                speed=float(tts_cfg.get("speed") or 1.0), volume=float(tts_cfg.get("volume") or 1.0),
-                pitch=float(tts_cfg.get("pitch") or 0.0), style=str(tts_cfg.get("style") or "tu_nhien"),
-                match_duration="none", auto_split=True, title=job["title"],
-            )
-            tts_id = str(result.get("id") or "")
-            if not tts_id:
-                raise RuntimeError("AUTOMATION_TTS_EMPTY")
-            from pipeline.tts.voice_store import TTS_OUTPUT
-            source_dir = TTS_OUTPUT / tts_id
+        if not audio and (workspace / "audio.wav").is_file():
             audio = workspace / "audio.wav"
+            canonical["audio"] = audio
+        srt = canonical.get("srt")
+        if not srt and (workspace / "subtitles.srt").is_file():
             srt = workspace / "subtitles.srt"
-            shutil.copy2(ensure_wav(tts_id), audio)
-            shutil.copy2(source_dir / "subs.srt", srt)
-            self.save_artifact(job_id, "audio", audio, stage="tts")
-            self.save_artifact(job_id, "srt", srt, stage="srt")
-            inputs.update({"audio": str(audio), "srt": str(srt), "generatedAudio": True, "generatedSrt": True})
-            self.store.update_job(job_id, input=inputs)
-            # Keep the MP3 beside the job for the user even if composition uses WAV.
-            try:
-                shutil.copy2(ensure_mp3(tts_id), workspace / "audio.mp3")
-                self.save_artifact(job_id, "audioMp3", workspace / "audio.mp3", stage="tts")
-            except Exception:
-                pass
-        if not srt and not canonical.get("prompts"):
+            canonical["srt"] = srt
+
+        if target_idx <= stages_order.index("tts"):
+            if not audio and script:
+                self.set_stage(job_id, "tts", 24, "Đang tạo audio và SRT bằng TTS.")
+                tts_cfg = settings.get("tts") if isinstance(settings.get("tts"), dict) else {}
+                from pipeline.tts.studio import synth_text_job, ensure_wav, ensure_mp3
+                result = synth_text_job(
+                    text=script.read_text(encoding="utf-8-sig", errors="replace"),
+                    voice=str(tts_cfg.get("voice") or "system"),
+                    lang=str(settings.get("language") or "vi"),
+                    speed=float(tts_cfg.get("speed") or 1.0), volume=float(tts_cfg.get("volume") or 1.0),
+                    pitch=float(tts_cfg.get("pitch") or 0.0), style=str(tts_cfg.get("style") or "tu_nhien"),
+                    match_duration="none", auto_split=True, title=job["title"],
+                )
+                tts_id = str(result.get("id") or "")
+                if not tts_id:
+                    raise RuntimeError("AUTOMATION_TTS_EMPTY")
+                from pipeline.tts.voice_store import TTS_OUTPUT
+                source_dir = TTS_OUTPUT / tts_id
+                audio = workspace / "audio.wav"
+                srt = workspace / "subtitles.srt"
+                shutil.copy2(ensure_wav(tts_id), audio)
+                shutil.copy2(source_dir / "subs.srt", srt)
+                self.save_artifact(job_id, "audio", audio, stage="tts")
+                self.save_artifact(job_id, "srt", srt, stage="srt")
+                inputs.update({"audio": str(audio), "srt": str(srt), "generatedAudio": True, "generatedSrt": True})
+                self.store.update_job(job_id, input=inputs)
+                # Keep the MP3 beside the job for the user even if composition uses WAV.
+                try:
+                    shutil.copy2(ensure_mp3(tts_id), workspace / "audio.mp3")
+                    self.save_artifact(job_id, "audioMp3", workspace / "audio.mp3", stage="tts")
+                except Exception:
+                    pass
+        if not srt and not canonical.get("prompts") and not (workspace / "image_prompts.txt").is_file():
             raise RuntimeError("AUTOMATION_SRT_REQUIRED")
 
+        # Stage: image_prompt
         prompts = canonical.get("prompts")
-        if not prompts and (srt or audio):
-            self.set_stage(job_id, "image_prompt", 39, "Đang phân tích SRT và tạo prompt ảnh.")
-            # Prefer SRT (text) for timing and dialogue; chat LLMs do not accept audio attachments.
-            files = [path for path in (srt,) if path] or ([script] if script else [])
-            content, artifact = self._request_chat(job_id, self._image_prompt_request(settings), files)
+        if not prompts and (workspace / "image_prompts.txt").is_file():
             prompts = workspace / "image_prompts.txt"
-            self._write_text_result(prompts, artifact, content)
-            # Format prompt file so each prompt is separated by a blank line
-            clean = self._extract_prompt_lines(prompts.read_text(encoding="utf-8"))
-            if clean:
-                prompts.write_text(clean + "\n", encoding="utf-8")
-            self._validate_prompt_file(prompts)
-            self.save_artifact(job_id, "prompts", prompts, stage="image_prompt")
-            inputs["prompts"] = str(prompts); inputs["generatedPrompts"] = True
-            self.store.update_job(job_id, input=inputs)
             canonical["prompts"] = prompts
+
+        if target_idx <= stages_order.index("image_prompt"):
+            if not prompts and (srt or audio):
+                self.set_stage(job_id, "image_prompt", 39, "Đang phân tích SRT và tạo prompt ảnh.")
+                # Prefer SRT (text) for timing and dialogue; chat LLMs do not accept audio attachments.
+                files = [path for path in (srt,) if path] or ([script] if script else [])
+                content, artifact = self._request_chat(job_id, self._image_prompt_request(settings), files)
+                prompts = workspace / "image_prompts.txt"
+                self._write_text_result(prompts, artifact, content)
+                # Format prompt file so each prompt is separated by a blank line
+                clean = self._extract_prompt_lines(prompts.read_text(encoding="utf-8"))
+                if clean:
+                    prompts.write_text(clean + "\n", encoding="utf-8")
+                self._validate_prompt_file(prompts)
+                self.save_artifact(job_id, "prompts", prompts, stage="image_prompt")
+                inputs["prompts"] = str(prompts); inputs["generatedPrompts"] = True
+                self.store.update_job(job_id, input=inputs)
+                canonical["prompts"] = prompts
         elif prompts:
             self._validate_prompt_file(prompts)
 
-        if prompts:
+        # Stage: flow_images
+        image_dir = workspace / "images"
+        cached_images = sorted(path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".avif"}) if image_dir.is_dir() else []
+
+        if target_idx > stages_order.index("flow_images") and cached_images:
+            # Recomposing only and images already exist on disk
+            images = cached_images
+            self.store.update_job(job_id, artifacts={**(self.store.get_job(job_id).get("artifacts") or {}), "images": str(image_dir)})
+            self.store.append_log(job_id, "info", "Đã dùng lại ảnh Flow từ checkpoint.", stage="compose")
+        elif prompts:
             self.set_stage(job_id, "flow_images", 48, "Đang đưa prompt vào Flow để tạo ảnh.")
             images = self._run_flow_images(job_id, prompts, settings, workspace)
         else:
@@ -502,6 +694,8 @@ class AutomationService:
         self._check_cancel(job_id)
         if not images:
             raise RuntimeError("AUTOMATION_IMAGES_EMPTY")
+
+        # Stage: compose
         self.set_stage(job_id, "compose", 82, "Đang ghép ảnh, audio và SRT thành video.")
         self._compose(job_id, images, audio, srt, prompts, settings, workspace)
         self.set_stage(job_id, "done", 100, "Đã hoàn thành video cuối.")
@@ -517,9 +711,18 @@ class AutomationService:
         for key, filename in mapping.items():
             raw = str(inputs.get(key) or "").strip()
             if not raw:
+                candidates = sorted(workspace.glob(f"{filename}.*"))
+                if candidates:
+                    result[key] = candidates[0]
+                    self.save_artifact(job_id, key, candidates[0], stage="input")
                 continue
             source = Path(raw).expanduser().resolve()
             if not source.is_file():
+                candidates = sorted(workspace.glob(f"{filename}.*"))
+                if candidates:
+                    result[key] = candidates[0]
+                    self.save_artifact(job_id, key, candidates[0], stage="input")
+                    continue
                 raise RuntimeError(f"AUTOMATION_INPUT_MISSING: {key}")
             target = workspace / f"{filename}{source.suffix.lower()}"
             if source != target.resolve():
@@ -572,7 +775,7 @@ class AutomationService:
             "No preamble, no explanation, no filename mention — start immediately with line 001."
             if language == "English" else
             "Đọc file SRT có timecode (hoặc kịch bản) đính kèm, chia visual beat theo ý nghĩa, rồi chỉ xuất ra các dòng prompt ảnh. "
-            "Mỗi prompt theo dạng: 001_[00:00:00.000-00:00:05.000] <mô tả tiếng Anh>. Mỗi prompt cách nhau 1 dòng trống. "
+            "Mỗi prompt theo đúng format GIAI ĐOẠN 6: 001_[00:00:00.000-00:00:05.000] <nội dung prompt tiếng Việt>. Mỗi prompt cách nhau 1 dòng trống. "
             "QUAN TRỌNG: phải phủ kín toàn bộ thời lượng video — không được dừng sớm, không được bỏ sót đoạn nào. "
             "Không mở đầu, không giải thích, không nhắc tên file — bắt đầu ngay bằng dòng 001."
         )
@@ -607,6 +810,202 @@ class AutomationService:
                 continue
             values.append(clean)
         return list(dict.fromkeys(values))[:5]
+
+    def _request_ephemeral_chat(self, prompt: str, settings: dict[str, Any], conversation_title: str = "Ephemeral Chat") -> str:
+        from api.routes.chat import service as chat_service
+        selected_provider = str(settings.get("textProvider") or "").strip().lower()
+        selected_model = str(settings.get("textModel") or settings.get("chatModel") or "").strip()
+        if not selected_provider:
+            providers_list = chat_service.providers()
+            ready_api = [p for p in providers_list if p.get("configured") and p.get("status") == "ready"]
+            if ready_api:
+                selected_provider = ready_api[0]["id"]
+                selected_model = selected_model or (ready_api[0].get("models") or [{}])[0].get("id", "")
+            else:
+                account = chat_service.primary_account()
+                if account and account.get("status") == "connected":
+                    selected_provider = "chatgpt_web"
+                else:
+                    selected_provider = chat_service.DEFAULT_API_PROVIDER
+        if selected_provider == "chatgpt_web":
+            account = chat_service.primary_account()
+            if not account or account.get("status") != "connected":
+                raise RuntimeError("CHATGPT_LOGIN_REQUIRED")
+            stored_provider = account["id"]
+            selected_model = selected_model or str(account.get("last_model") or chat_service.DEFAULT_MODEL)
+        else:
+            stored_provider = selected_provider
+            selected_model = selected_model or (chat_service.DEFAULT_API_MODEL if selected_provider == "openrouter" else "")
+            chat_service.resolve_provider(selected_provider, selected_model)
+        conversation = chat_service.store.create_conversation(
+            conversation_title,
+            stored_provider,
+            selected_model,
+            provider_id=selected_provider,
+        )
+        content = ""
+        try:
+            with self._chat_gate:
+                for raw in chat_service.stream_message(
+                    conversation["id"],
+                    {"content": prompt, "attachmentIds": [], "mode": "chat", "provider": selected_provider, "model": selected_model},
+                ):
+                    for block in str(raw).split("\n\n"):
+                        data = ""
+                        for line in block.splitlines():
+                            if line.startswith("data: "):
+                                data = line[6:].strip()
+                        if not data:
+                            continue
+                        try:
+                            payload = json.loads(data)
+                        except ValueError:
+                            continue
+                        if payload.get("delta"):
+                            content += str(payload.get("delta") or "")
+                        elif payload.get("content") is not None:
+                            content = str(payload.get("content") or content)
+        finally:
+            try:
+                chat_service.store.delete_conversation(conversation["id"])
+            except Exception:
+                pass
+        return content
+
+    def suggest_topics(self, hint: str = "", settings: dict[str, Any] | None = None) -> list[str]:
+        """Generate 5 suggested video topics using the selected chat provider."""
+        cfg = settings or {}
+        prompt = self._topic_prompt(hint, cfg)
+        try:
+            content = self._request_ephemeral_chat(prompt, cfg, "Topic Suggestions")
+        except Exception:
+            content = ""
+        return self._topic_candidates(content)
+
+    @staticmethod
+    def _fetch_youtube_caption_and_title(url: str, workspace: Path) -> tuple[str, str, Path | None]:
+        """Fetch video title and subtitle/caption text from a YouTube URL using yt-dlp."""
+        from pipeline.download.ytdlp_jobs import ytdlp_command
+        bin_ = ytdlp_command() or ["yt-dlp"]
+        raw_url = str(url or "").strip()
+        if not raw_url:
+            raise ValueError("YOUTUBE_URL_REQUIRED")
+
+        # 1. Fetch metadata (title and description)
+        cmd_meta = [*bin_, "--no-playlist", "--skip-download", "--print", "%(title)s", "--print", "%(description)s", raw_url]
+        try:
+            meta_res = subprocess.run(cmd_meta, capture_output=True, text=True, timeout=25)
+            lines = meta_res.stdout.splitlines() if meta_res.returncode == 0 else []
+            title = lines[0].strip() if lines else ""
+            description = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+        except (subprocess.TimeoutExpired, OSError):
+            title = ""
+            description = ""
+
+        # 2. Extract subtitle / captions without downloading video
+        caption_file: Path | None = None
+        caption_text = ""
+        out_template = str(workspace / "%(id)s")
+
+        # Try native manual subtitles first
+        cmd_sub = [
+            *bin_,
+            "--no-playlist",
+            "--skip-download",
+            "--write-subs",
+            "--sub-langs", "vi,en,all",
+            "--convert-subs", "srt",
+            "-o", out_template,
+            raw_url,
+        ]
+        try:
+            subprocess.run(cmd_sub, capture_output=True, text=True, timeout=35)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+        candidates = sorted(workspace.glob("*.srt")) + sorted(workspace.glob("*.vtt"))
+        if not candidates:
+            # Fallback to auto-generated subtitles
+            cmd_auto = [
+                *bin_,
+                "--no-playlist",
+                "--skip-download",
+                "--write-auto-subs",
+                "--sub-langs", "vi,en,all",
+                "--convert-subs", "srt",
+                "-o", out_template,
+                raw_url,
+            ]
+            try:
+                subprocess.run(cmd_auto, capture_output=True, text=True, timeout=35)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            candidates = sorted(workspace.glob("*.srt")) + sorted(workspace.glob("*.vtt"))
+
+        if candidates:
+            preferred = ["vi", "en", "es", "fr", "de", "pt", "id", "tr", "it", "nl", "ko", "ja"]
+            chosen = None
+            for code in preferred:
+                match = [c for c in candidates if f".{code}." in c.name or c.name.endswith(f".{code}.srt") or c.name.endswith(f".{code}.vtt")]
+                if match:
+                    chosen = match[0]
+                    break
+            caption_file = chosen or candidates[0]
+            caption_text = clean_subtitle_text(caption_file)
+
+        if not caption_text and description:
+            caption_text = description
+
+        if not title:
+            title = "YouTube Video"
+        return title, caption_text, caption_file
+
+    def _youtube_rewrite_prompt(self, video_title: str, caption_text: str, settings: dict[str, Any]) -> str:
+        language = "English" if str(settings.get("language") or "vi").lower() == "en" else "Vietnamese"
+        if language == "English":
+            return (
+                "You are an expert YouTube storyteller and video scriptwriter.\n"
+                "Your task is to analyze the source transcript/captions from a YouTube video and REWRITE it into a fresh, captivating, well-structured narration script for a 1-3 minute video.\n\n"
+                f"SOURCE VIDEO TITLE: {video_title}\n\n"
+                f"SOURCE TRANSCRIPT / CAPTION:\n{caption_text[:12000]}\n\n"
+                "STRICT RULES:\n"
+                "1. OUTPUT LANGUAGE: MUST be 100% English. Even if the source video or caption is in another language, write the script entirely in natural, engaging English.\n"
+                "2. Narrative Arc: Write an engaging story with a high-retention hook in the first 5-10 seconds, compelling narrative pacing, and a punchy outro.\n"
+                "3. Length: Around 300 to 600 words (concise, high energy). Do NOT write an overly long essay and NEVER repeat words in a loop.\n"
+                "4. Clean Content: Remove all sponsor shoutouts, like/subscribe begging, chatter, and subtitle errors.\n"
+                "5. Spoken Voiceover Pacing: Short, rhythmic sentences optimized for TTS voiceover reading.\n"
+                "6. Output Format: Output ONLY the spoken narration text. Absolutely NO markdown, NO bold, NO headers (Hook:, Body:, etc.), NO stage directions, NO timecodes, NO AI commentary.\n\n"
+                "Begin immediately with the first word of the narration."
+            )
+        return (
+            "Bạn là một biên kịch chuyên nghiệp và chuyên gia kể chuyện video YouTube hàng đầu.\n"
+            "Nhiệm vụ của bạn là phân tích nội dung phụ đề/bản ghi âm từ video YouTube và VIẾT LẠI thành một kịch bản lời đọc (voiceover narration) hoàn toàn mới, hấp dẫn, nhịp điệu nhanh và lôi cuốn cho video dài khoảng 1-3 phút.\n\n"
+            f"TIÊU ĐỀ VIDEO GỐC: {video_title}\n\n"
+            f"NỘI DUNG CAPTION / TRANSCRIPT GỐC:\n{caption_text[:12000]}\n\n"
+            "QUY TẮC BẮT BUỘC:\n"
+            "1. NGÔN NGỮ ĐẦU RA: Bắt buộc viết hoàn toàn 100% bằng TIẾNG VIỆT tự nhiên, sinh động, dễ hiểu. Tuyệt đối KHÔNG viết bằng tiếng Anh hay bất kỳ ngôn ngữ nào khác (dù video gốc hoặc phụ đề gốc có là tiếng nước ngoài).\n"
+            "2. Cấu trúc & Giữ chân người xem: Bắt đầu ngay bằng một câu hook gây tò mò, giật gân trong 5-10 giây đầu. Phát triển câu chuyện hài hước, kịch tính theo sát tình huống chính và kết thúc bất ngờ.\n"
+            "3. Độ dài kịch bản: Khoảng 300 đến 600 từ (súc tích, dồn dập, dễ đọc). Tuyệt đối KHÔNG viết lan man, KHÔNG lặp từ hay lặp cụm từ thành vòng lặp vô tận.\n"
+            "4. Lọc sạch tạp âm: Loại bỏ toàn bộ phần chào hỏi rườm rà, quảng cáo nhà tài trợ, kêu gọi like/sub, lời nói đệm và các lỗi dịch vô nghĩa.\n"
+            "5. Tối ưu cho giọng đọc AI (TTS): Câu văn gãy gọn, tự nhiên, nhịp điệu sinh động, dễ ngắt nghỉ.\n"
+            "6. Định dạng đầu ra: CHỈ XUẤT RA DUY NHẤT nội dung văn bản lời đọc thuyết minh bằng tiếng Việt. Tuyệt đối KHÔNG có markdown, KHÔNG in đậm, KHÔNG chia tiêu đề mục (như Mở đầu:, Thân bài:), KHÔNG ghi chú đạo diễn/sân khấu, KHÔNG có timecode, KHÔNG có lời mở đầu hay kết thúc của AI.\n\n"
+            "Bắt đầu ngay bằng từ tiếng Việt đầu tiên của lời thuyết minh."
+        )
+
+    def preview_youtube_rewrite(self, url: str, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        cfg = settings or {}
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            yt_title, caption_text, caption_file = self._fetch_youtube_caption_and_title(url, tmp)
+            prompt = self._youtube_rewrite_prompt(yt_title, caption_text, cfg)
+            content = self._request_ephemeral_chat(prompt, cfg, f"YT Rewrite: {yt_title[:30]}")
+            clean_script = self._strip_ai_meta(content).strip()
+            return {
+                "title": yt_title,
+                "caption": caption_text[:3000],
+                "captionExcerpt": caption_text[:500] if caption_text else "",
+                "script": clean_script,
+            }
 
     @staticmethod
     def _strip_ai_meta(text: str) -> str:
@@ -804,6 +1203,7 @@ class AutomationService:
             # Resuming a failed parent must observe the already queued Flow
             # children instead of creating a second batch for the same scenes.
             child_ids = existing_child_ids
+            self.store.update_job(job_id, artifacts={**(self.store.get_job(job_id).get("artifacts") or {}), "images": str(image_dir)})
         else:
             jobs = flow_service.enqueue({
                 "prompts": prompt_lines,
@@ -811,7 +1211,7 @@ class AutomationService:
                 "settings": {"model": str(flow_cfg.get("model") or "Nano Banana 2"), "ratio": str(flow_cfg.get("ratio") or "16:9"), "resolution": str(flow_cfg.get("resolution") or "1K"), "count": int(flow_cfg.get("count") or 1), "concurrency": str(flow_cfg.get("concurrency") or "3"), "outputDir": f"automation_{job_id}"},
             })
             child_ids = [str(item["id"]) for item in jobs]
-            self.store.update_job(job_id, child_job_ids=child_ids)
+            self.store.update_job(job_id, child_job_ids=child_ids, artifacts={**(self.store.get_job(job_id).get("artifacts") or {}), "images": str(image_dir)})
         outputs: list[Path] = []
         pending = set(child_ids)
         retried_children: set[str] = set()

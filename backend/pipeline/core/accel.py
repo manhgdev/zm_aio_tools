@@ -30,19 +30,24 @@ def _safe_subprocess_env() -> dict[str, str]:
         return os.environ.copy()
 
 
+def nvidia_smi_executable() -> str:
+    found = shutil.which("nvidia-smi")
+    if found:
+        return found
+    if sys.platform == "win32":
+        for candidate in (
+            r"C:\Windows\System32\nvidia-smi.exe",
+            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+        ):
+            if os.path.isfile(candidate):
+                return candidate
+    return "nvidia-smi"
+
+
 def _nvidia_smi() -> bool:
     try:
-        cmd = "nvidia-smi"
-        if not shutil.which("nvidia-smi") and sys.platform == "win32":
-            for cand in (
-                r"C:\Windows\System32\nvidia-smi.exe",
-                r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
-            ):
-                if os.path.isfile(cand):
-                    cmd = cand
-                    break
         r = subprocess.run(
-            [cmd, "-L"],
+            [nvidia_smi_executable(), "-L"],
             capture_output=True,
             text=True,
             timeout=8,
@@ -81,7 +86,7 @@ def _probe_torch_device_in(python: str) -> TorchDevice:
     )
     try:
         r = subprocess.run(
-            [python, "-c", code],
+            [python, "-I", "-c", code],
             capture_output=True,
             text=True,
             timeout=90,
@@ -90,7 +95,7 @@ def _probe_torch_device_in(python: str) -> TorchDevice:
         )
         out = (r.stdout or "").strip().splitlines()
         d = (out[-1] if out else "cpu").strip().lower()
-        if d in ("cuda", "mps", "cpu"):
+        if r.returncode == 0 and d in ("cuda", "mps", "cpu"):
             return d  # type: ignore[return-value]
     except Exception:
         pass
@@ -98,7 +103,7 @@ def _probe_torch_device_in(python: str) -> TorchDevice:
 
 
 def preferred_torch_device(*, refresh: bool = False) -> TorchDevice:
-    """Best *working* torch device for this machine right now."""
+    """Preferred target; use a runtime compute probe to determine CUDA readiness."""
     with _lock:
         if not refresh and "torch_device" in _cache and _cache["torch_device"] in ("cuda", "mps"):
             return _cache["torch_device"]  # type: ignore[return-value]

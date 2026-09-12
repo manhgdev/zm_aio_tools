@@ -176,6 +176,12 @@ def test_automation_http_queue_and_artifact_download(tmp_path, monkeypatch):
     assert download.status_code == 200
     assert download.content == b"hello"
 
+    local_service.store.update_job(job["id"], status="completed")
+    retry_resp = client.post(f"/api/automation/jobs/{job['id']}/retry", json={"from_stage": "compose", "previewSeconds": 20})
+    assert retry_resp.status_code == 200
+    retried_data = retry_resp.json()
+    assert retried_data["settings"]["compose"]["previewSeconds"] == 20.0
+
 
 def test_empty_topic_starts_ai_topic_suggestions(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
@@ -624,3 +630,194 @@ def test_audio_first_engine_supports_custom_prompt(tmp_path):
     script_template = service._script_prompt("Chủ đề thử nghiệm", settings_template)
     assert "ZMTOOL AUDIO-FIRST VIDEO PRODUCTION ENGINE V1.0" in script_template
     assert "EXTRA SYSTEM INSTRUCTION" not in script_template
+
+
+def test_retry_job_from_stage_and_preview_seconds(tmp_path):
+    store = AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs")
+    service = AutomationService(store=store, runner=lambda _job_id: None)
+    job = service.create_job("topic", "Test Retry", {"compose": {"previewSeconds": 0}})
+    job_id = job["id"]
+    ws = store.workspace(job_id)
+    ws.mkdir(parents=True, exist_ok=True)
+    img_dir = ws / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    (img_dir / "001.png").write_text("fake_png")
+    (ws / "output.mp4").write_text("fake_mp4")
+    (ws / "image_prompts.txt").write_text("prompt 1\n")
+
+    store.update_job(
+        job_id,
+        status="completed",
+        stage="done",
+        artifacts={"video": str(ws / "output.mp4"), "images": str(img_dir), "prompts": str(ws / "image_prompts.txt")},
+        child_job_ids=["flow_123", "flow_456"],
+        input={"prompts": str(ws / "image_prompts.txt"), "generatedPrompts": True},
+    )
+
+    # Retry only compose with previewSeconds=25
+    retried = service.retry_job(job_id, from_stage="compose", preview_seconds=25)
+    assert retried["status"] in {"queued", "running", "completed"}
+    assert retried["stage"] in {"compose", "done"}
+    assert "video" not in retried["artifacts"]
+    assert "images" in retried["artifacts"]
+    assert retried["settings"]["compose"]["previewSeconds"] == 25.0
+    assert not (ws / "output.mp4").exists()
+    assert (img_dir / "001.png").exists()
+
+    service.wait_for_idle(timeout=2)
+    store.update_job(job_id, status="completed")
+
+    # Retry from flow_images
+    retried_flow = service.retry_job(job_id, from_stage="flow_images")
+    assert retried_flow["status"] in {"queued", "running", "completed"}
+    assert "images" not in retried_flow["artifacts"]
+    assert retried_flow["child_job_ids"] == []
+    assert not img_dir.exists()
+    # image_prompts.txt is kept because flow_images reuses prompts
+    assert (ws / "image_prompts.txt").exists()
+
+    service.wait_for_idle(timeout=2)
+    store.update_job(job_id, status="completed")
+
+    # Retry from image_prompt
+    retried_prompt = service.retry_job(job_id, from_stage="image_prompt")
+    assert retried_prompt["status"] in {"queued", "running", "completed"}
+    assert "prompts" not in retried_prompt["artifacts"]
+    assert not (ws / "image_prompts.txt").exists()
+
+
+def test_run_pipeline_skips_upstream_when_recomposing(tmp_path, monkeypatch):
+    store = AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs")
+    service = AutomationService(store=store, runner=None)
+    job = service.create_job("topic", "Recompose Skip Test", {"compose": {"previewSeconds": 0}})
+    job_id = job["id"]
+    ws = store.workspace(job_id)
+    ws.mkdir(parents=True, exist_ok=True)
+    img_dir = ws / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    (img_dir / "001.png").write_bytes(b"image")
+    (ws / "audio.wav").write_bytes(b"wav")
+    (ws / "subtitles.srt").write_text("1\n00:00:00,000 --> 00:00:05,000\nHello\n", encoding="utf-8")
+    (ws / "script.txt").write_text("Hello", encoding="utf-8")
+    (ws / "image_prompts.txt").write_text("001_[00:00:00.000-00:00:05.000] Prompt 1\n", encoding="utf-8")
+
+    # If script or tts or prompt chat is called, fail the test
+    def fail_chat(*args, **kwargs):
+        raise AssertionError("Chat LLM should not be called when recomposing!")
+
+    monkeypatch.setattr(service, "_request_chat", fail_chat)
+
+    composed_called = []
+    def fake_compose(job_id, images, audio, srt, prompts, settings, workspace):
+        composed_called.append((images, audio, srt, prompts))
+
+    monkeypatch.setattr(service, "_compose", fake_compose)
+
+    store.update_job(job_id, stage="compose", status="queued")
+    service._run_pipeline(job_id)
+
+    assert len(composed_called) == 1
+    assert len(composed_called[0][0]) == 1  # 1 image
+    assert composed_called[0][1] == ws / "audio.wav"
+    assert composed_called[0][2] == ws / "subtitles.srt"
+    assert composed_called[0][3] == ws / "image_prompts.txt"
+    final_job = store.get_job(job_id)
+    assert final_job["stage"] == "done"
+    assert final_job["status"] == "running" or final_job["status"] == "completed"
+
+
+def test_suggest_topics_returns_five_topics(tmp_path, monkeypatch):
+    store = AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs")
+    service = AutomationService(store=store, runner=None)
+
+    def fake_ephemeral(prompt, settings, conversation_title="Ephemeral Chat"):
+        return (
+            "1. Bí ẩn kim tự tháp Giza\n"
+            "2. Hố đen vũ trụ lớn nhất\n"
+            "3. Nguồn gốc của thời gian\n"
+            "4. Cuộc thám hiểm vực Mariana\n"
+            "5. Nền văn minh Maya biến mất"
+        )
+
+    monkeypatch.setattr(service, "_request_ephemeral_chat", fake_ephemeral)
+    topics = service.suggest_topics(hint="khoa học vũ trụ", settings={})
+    assert len(topics) == 5
+    assert "Bí ẩn kim tự tháp Giza" in topics[0]
+    assert "Nền văn minh Maya biến mất" in topics[4]
+
+
+def test_preview_youtube_rewrite(tmp_path, monkeypatch):
+    store = AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs")
+    service = AutomationService(store=store, runner=None)
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_youtube_caption_and_title",
+        lambda url, ws: ("Video Khám Phá Vũ Trụ", "Chào các bạn, hôm nay chúng ta sẽ tìm hiểu về vũ trụ bao la.", None)
+    )
+    monkeypatch.setattr(
+        service,
+        "_request_ephemeral_chat",
+        lambda prompt, settings, conversation_title="Ephemeral Chat": "Kịch bản 2D viết lại hoàn chỉnh."
+    )
+
+    result = service.preview_youtube_rewrite("https://www.youtube.com/watch?v=demo123", settings={})
+    assert result["title"] == "Video Khám Phá Vũ Trụ"
+    assert result["script"] == "Kịch bản 2D viết lại hoàn chỉnh."
+    assert "vũ trụ bao la" in result["captionExcerpt"]
+
+
+def test_youtube_job_pipeline_executes_rewrite_and_completes(tmp_path, monkeypatch):
+    store = AutomationStore(tmp_path / "automation.sqlite3", tmp_path / "jobs")
+    service = AutomationService(store=store, runner=None)
+    job = service.create_job("youtube", "YouTube Test", {}, {"topic": "https://www.youtube.com/watch?v=demo", "youtubeUrl": "https://www.youtube.com/watch?v=demo"})
+    job_id = job["id"]
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_youtube_caption_and_title",
+        lambda url, ws: ("Thế Giới Động Vật", "Hôm nay chúng ta tìm hiểu về loài báo săn.", None)
+    )
+    monkeypatch.setattr(
+        service,
+        "_request_chat",
+        lambda job_id, prompt, files: (
+            "001_[00:00:00.000-00:00:05.000] Báo săn châu Phi đang chạy trên đồng cỏ"
+            if "001_" in prompt or "SRT" in prompt
+            else "Báo săn là loài động vật chạy nhanh nhất trên cạn.",
+            None,
+        )
+    )
+
+    import pipeline.tts.studio as tts_studio
+    monkeypatch.setattr(tts_studio, "synth_text_job", lambda **kwargs: {"id": "fake_tts_123"})
+    fake_wav = tmp_path / "fake_audio.wav"
+    fake_wav.write_bytes(b"RIFFdummy")
+    monkeypatch.setattr(tts_studio, "ensure_wav", lambda tts_id: fake_wav)
+    monkeypatch.setattr(tts_studio, "ensure_mp3", lambda tts_id: fake_wav)
+
+    import pipeline.tts.voice_store as voice_store
+    tts_out = voice_store.TTS_OUTPUT / "fake_tts_123"
+    tts_out.mkdir(parents=True, exist_ok=True)
+    (tts_out / "subs.srt").write_text("1\n00:00:00,000 --> 00:00:05,000\nBáo săn là loài động vật chạy nhanh nhất trên cạn.\n", encoding="utf-8")
+
+    def fake_flow_images(job_id, prompts, settings, workspace):
+        img_dir = workspace / "images"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        img = img_dir / "001.png"
+        img.write_bytes(b"png")
+        return [img]
+
+    monkeypatch.setattr(service, "_run_flow_images", fake_flow_images)
+    monkeypatch.setattr(service, "_compose", lambda *args, **kwargs: None)
+
+    service._run_pipeline(job_id)
+
+    ws = store.workspace(job_id)
+    assert (ws / "script.txt").is_file()
+    assert "Báo săn" in (ws / "script.txt").read_text(encoding="utf-8")
+    final_job = store.get_job(job_id)
+    assert final_job["stage"] == "done"
+
+
+

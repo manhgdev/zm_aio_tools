@@ -46,6 +46,8 @@ def _ai_runtime_detail(*, torch_cuda: bool | None = None) -> str:
     if _nvidia_present():
         cuda = torch_cuda if torch_cuda is not None else _torch_cuda_ready_cached()
         if cuda:
+            if getattr(sys, "frozen", False):
+                return f"{base} · VieNeu CUDA (runtime)"
             try:
                 import torch
 
@@ -288,13 +290,11 @@ def _system_checks_uncached(*, fast: bool = True) -> dict[str, Any]:
             )
             torch_cuda_ok = fut_cuda.result() if fut_cuda else True
 
-        runtime_missing = [
-            mid
-            for mid in _AI_RUNTIME_MODULES
-            if not _runtime_modules_batch_ok(list(_AI_RUNTIME_MODULES)).get(mid, (False, ""))[0]
-        ] if getattr(sys, "frozen", False) else [
-            mid for mid in _AI_RUNTIME_MODULES if not _mod_ok(mid, dist_map=dist)[0]
-        ]
+        if getattr(sys, "frozen", False):
+            runtime_status = _runtime_modules_batch_ok(list(_AI_RUNTIME_MODULES))
+            runtime_missing = [mid for mid in _AI_RUNTIME_MODULES if not runtime_status.get(mid, (False, ""))[0]]
+        else:
+            runtime_missing = [mid for mid in _AI_RUNTIME_MODULES if not _mod_ok(mid, dist_map=dist)[0]]
         runtime_torch_cuda = _nvidia_present() and not torch_cuda_ok
         runtime_detail = (
             _ai_runtime_detail(torch_cuda=torch_cuda_ok)
@@ -380,9 +380,9 @@ def _system_checks_uncached(*, fast: bool = True) -> dict[str, Any]:
     )
 
     # Nhóm 3 — zmAI + VieNeu
-    _vieneu_mods = ("transformers", "vieneu")
+    _vieneu_mods = ("torch", "torchaudio", "transformers", "vieneu", "soundfile")
     _vieneu_missing = [m for m in _vieneu_mods if m in runtime_missing]
-    _vieneu_torch_bad = runtime_torch_cuda if not getattr(sys, "frozen", False) else False
+    _vieneu_torch_bad = runtime_torch_cuda
     items.append(
         _item(
             id="ai_runtime_vieneu",

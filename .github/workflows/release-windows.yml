@@ -56,20 +56,57 @@ jobs:
           $env:PYTHONPATH = "$PWD/backend"
           backend/.venv/Scripts/python.exe -m pytest `
             tests/backend/core/test_runtime_site.py `
+            tests/backend/core/test_windows_ai_runtime.py `
+            tests/backend/core/test_gpu_backend_selection.py `
             tests/backend/core/test_ai_runtime_setup.py `
             tests/backend/core/test_desktop_update.py `
             tests/backend/core/test_audit_regressions.py `
             tests/backend/core/test_cuda_dll_overlay.py `
             tests/backend/ocr/test_ocr_cuda_frozen_probe.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           backend/.venv/Scripts/python.exe -m pytest tests/test_chat.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           backend/.venv/Scripts/python.exe -m pytest tests/test_chat_providers.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           backend/.venv/Scripts/python.exe -m pytest tests/test_automation.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test --test-name-pattern="English catalog covers Configuration labels|English catalog has no empty entries|Chat tab is bilingual|Automation queue UI" tests/i18n.catalog.test.mjs
 
       - name: Build EXE
         shell: pwsh
         run: npm run build:app
 
+      - name: Smoke test packaged Python standard library
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem build_app/release -Directory -Filter 'ZM_AIO_TOOL_v*' |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $package) { throw 'Built app not found' }
+          $exe = Join-Path $package.FullName 'ZM AIO TOOL.exe'
+          $report = Join-Path $env:RUNNER_TEMP 'frozen-import-check.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--runtime-import-check', "`"$report`"") -PassThru
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Frozen import check timed out' }
+          if (-not (Test-Path $report)) { throw 'Frozen import report missing' }
+          Get-Content $report
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          if ($process.ExitCode -ne 0 -or -not $result.ok) { throw 'Frozen standard library imports failed' }
+
+      - name: Smoke test isolated Windows AI imports (no model downloads)
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP 'AI runtime with spaces'
+          python -m venv "$runtime"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $py = Join-Path $runtime 'Scripts/python.exe'
+          & $py -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $py -m pip install 'transformers==4.57.6' 'librosa>=0.11.0' 'sea-g2p==0.8.4' 'perth>=0.2.0' 'onnxruntime>=1.20' soundfile soxr pyyaml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $py -m pip install --no-deps 'vieneu>=3.2.0'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PYTHONPATH = "$PWD/backend"
+          & $py -c "import json; from pipeline.core.system_check.probe import _runtime_modules_batch_ok; r = _runtime_modules_batch_ok(['torch', 'torchaudio', 'transformers', 'vieneu', 'soundfile']); print(json.dumps(r, indent=2)); assert all(ok for ok, detail in r.values()), r"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Create release package
         id: package

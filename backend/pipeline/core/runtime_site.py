@@ -9,13 +9,47 @@ from __future__ import annotations
 import ntpath
 import os
 import sys
+import threading
 from collections.abc import Mapping, MutableMapping
+from contextlib import contextmanager
 from importlib.machinery import PathFinder
 from importlib.util import module_from_spec
 from pathlib import Path
 
 # add_dll_directory() trả handle — phải giữ sống hoặc GC sẽ xóa dir khỏi DLL search path!
 _dll_handles: dict[str, object] = {}
+_dll_search_lock = threading.RLock()
+
+
+@contextmanager
+def external_process_dll_search(executable: str):
+    """Do not let an external Python inherit PyInstaller's DLL directory.
+
+    The bootloader calls SetDllDirectory(_MEIPASS). That setting is inherited
+    by child processes and can bind Torch to the bundle's incompatible DLLs.
+    Serialize the temporary process-global reset around Popen, then restore.
+    """
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        yield
+        return
+    with _dll_search_lock:
+        if _windows_path_key(executable) == _windows_path_key(sys.executable):
+            yield
+            return
+        import ctypes
+
+        kernel = ctypes.windll.kernel32
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = kernel.GetDllDirectoryW(len(buffer), buffer)
+        if length >= len(buffer):
+            raise OSError("GetDllDirectoryW buffer too small")
+        previous = buffer.value
+        if not kernel.SetDllDirectoryW(None):
+            raise ctypes.WinError()
+        try:
+            yield
+        finally:
+            kernel.SetDllDirectoryW(previous or None)
 
 # Windows environment blocks are limited to 32,767 characters. Keep margin
 # for process-spawn wrappers and preserve both app/runtime and system entries
@@ -157,6 +191,12 @@ def subprocess_environment(
 ) -> dict[str, str]:
     """Copy the process environment and bound Windows PATH before spawning."""
     env = dict(sanitize_process_environment(os.environ.copy()))
+    if getattr(sys, "frozen", False) or env.get("VIDEO_CLONE_MEIPASS"):
+        # External Python owns its stdlib/site-packages, not the launcher's
+        # Python installation. Preserve app paths explicitly added by workers.
+        for name in ("PYTHONHOME", "PYTHONUSERBASE", "PYTHONSTARTUP"):
+            env.pop(name, None)
+        env["PYTHONNOUSERSITE"] = "1"
     for name, value in (overrides or {}).items():
         if value is None:
             env.pop(name, None)
@@ -416,7 +456,11 @@ def bootstrap_ai_runtime(site: Path | None = None) -> None:
 
 
 def verify_transformers_ok() -> tuple[bool, str]:
-    """True when transformers loads PretrainedConfig (VieNeu v3 — pin 4.57.x)."""
+    """Exercise lazy model imports in the interpreter that actually runs AI."""
+    if getattr(sys, "frozen", False):
+        from .system_check.probe import _runtime_mod_ok
+
+        return _runtime_mod_ok("transformers")
     try:
         install_runtime_meta_path()
         ensure_runtime_import("torch")
@@ -424,6 +468,7 @@ def verify_transformers_ok() -> tuple[bool, str]:
         import importlib
 
         import transformers
+        from transformers import PreTrainedModel, Qwen3Model  # noqa: F401
 
         cfg = importlib.import_module("transformers.configuration_utils")
         if not (getattr(cfg, "PretrainedConfig", None) or getattr(cfg, "PreTrainedConfig", None)):

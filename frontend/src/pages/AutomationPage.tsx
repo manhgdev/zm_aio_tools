@@ -6,7 +6,7 @@ import { MediaPreviewModal, type MediaPreviewAction, type MediaPreviewItem } fro
 import { OutputFolderField } from '@/shared/components/OutputFolderField'
 import './AutomationPage.css'
 
-type InputMode = 'topic' | 'ai_topic' | 'script' | 'bundle'
+type InputMode = 'topic' | 'youtube' | 'ai_topic' | 'script' | 'bundle'
 type AutomationSettingsTab = 'text' | 'tts' | 'flow' | 'compose'
 type JobStatus = 'queued' | 'running' | 'awaiting_topic' | 'paused' | 'interrupted' | 'completed' | 'cancelled' | 'failed'
 type AutomationJob = {
@@ -16,7 +16,8 @@ type AutomationJob = {
   status: JobStatus
   stage: string
   progress: number
-  input?: { topic?: string; selectedTopic?: string; topicCandidates?: string[]; script?: string; audio?: string; srt?: string; prompts?: string }
+  child_job_ids?: string[]
+  input?: { topic?: string; youtubeUrl?: string; selectedTopic?: string; topicCandidates?: string[]; script?: string; audio?: string; srt?: string; prompts?: string }
   settings?: Partial<AutomationSettings>
   artifacts?: Record<string, { available?: boolean; filename?: string }>
   error?: { code?: string; message?: string } | null
@@ -81,10 +82,11 @@ const DEFAULT_SETTINGS: AutomationSettings = {
 
 const modeLabel = (mode: InputMode, t: (vi: string, en: string) => string) => ({
   topic: t('Chủ đề', 'Topic'),
+  youtube: t('Link YouTube', 'YouTube URL'),
   ai_topic: t('AI đề xuất chủ đề', 'AI topic ideas'),
   script: t('Đã có script', 'Existing script'),
   bundle: t('Đã có bộ file', 'Existing bundle'),
-}[mode])
+}[mode] || mode)
 
 const stageLabel = (stage: string, t: (vi: string, en: string) => string) => ({
   input: t('Chuẩn bị đầu vào', 'Preparing input'), topic: t('Chọn chủ đề', 'Choose topic'), script: t('Tạo script', 'Creating script'),
@@ -185,6 +187,9 @@ export default function AutomationPage() {
   const [mode, setMode] = useState<InputMode>('topic')
   const [title, setTitle] = useState('')
   const [topic, setTopic] = useState('')
+  const [youtubeUrls, setYoutubeUrls] = useState('')
+  const [suggestingTopics, setSuggestingTopics] = useState(false)
+  const [previewingYoutube, setPreviewingYoutube] = useState(false)
   const [settings, setSettings] = useState<AutomationSettings>(DEFAULT_SETTINGS)
   const [chatProviders, setChatProviders] = useState<ChatProviderOption[]>([])
   const [chatModelsLoading, setChatModelsLoading] = useState(true)
@@ -199,6 +204,7 @@ export default function AutomationPage() {
   const [error, setError] = useState('')
   const [editingJobId, setEditingJobId] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<AutomationJob | null>(null)
+  const [recomposeJob, setRecomposeJob] = useState<AutomationJob | null>(null)
   const [videoPreview, setVideoPreview] = useState<MediaPreviewItem | null>(null)
   const [textPreview, setTextPreview] = useState<string | null>(null)
   const [textPreviewSaving, setTextPreviewSaving] = useState(false)
@@ -325,10 +331,43 @@ export default function AutomationPage() {
     return () => window.clearInterval(timer)
   }, [jobs, refresh])
 
+  const openFlowQueue = () => {
+    try {
+      localStorage.setItem('zm-flow-veo:active-panel:v1', 'queue')
+    } catch {}
+    window.history.pushState({ appMode: 'flow' }, '', '/flow-veo?p=queue')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }
+
+  const hasReachedFlow = (job: AutomationJob) =>
+    ['flow_images', 'compose', 'done'].includes(job.stage) ||
+    Boolean(job.artifacts?.images?.available) ||
+    Boolean(job.child_job_ids?.length)
+
+  const handleRecompose = async (jobId: string, fromStage: string, previewSec: number) => {
+    setError('')
+    try {
+      const response = await fetch(`${API}/jobs/${encodeURIComponent(jobId)}/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_stage: fromStage, previewSeconds: previewSec }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { detail?: { message?: string } }
+        throw new Error(data.detail?.message || t('Không chạy lại được job.', 'Could not restart job.'))
+      }
+      setRecomposeJob(null)
+      await refresh()
+      setNotice(t('Đã đưa job vào hàng đợi ghép lại.', 'Job queued for recomposition.'))
+      window.setTimeout(() => setNotice(''), 3000)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('Không chạy lại được job.', 'Could not restart job.'))
+    }
+  }
+
   const previewArtifact = (key: string, href: string, label: string) => {
     if (key === 'images') {
-      window.history.pushState({ appMode: 'flow' }, '', '/flow-veo?p=queue')
-      window.dispatchEvent(new PopStateEvent('popstate'))
+      openFlowQueue()
       return
     }
     if (key === 'audio' || key === 'audioMp3') {
@@ -382,20 +421,100 @@ export default function AutomationPage() {
     }
   }
 
+  const handleSuggestTopics = async () => {
+    setSuggestingTopics(true)
+    setError('')
+    try {
+      const response = await fetch(`${API}/suggest-topics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hint: topic.trim(), settings }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { detail?: { message?: string } }
+        throw new Error(data.detail?.message || t('Không tạo được gợi ý chủ đề.', 'Could not generate topic suggestions.'))
+      }
+      const data = await response.json() as { topics?: string[] }
+      const list = Array.isArray(data.topics) ? data.topics.map(s => String(s).trim()).filter(Boolean) : []
+      if (!list.length) {
+        throw new Error(t('AI không trả về chủ đề nào.', 'AI returned no topics.'))
+      }
+      setTopic(list.join('\n'))
+      setNotice(t('Đã nạp 5 chủ đề do AI đề xuất (mỗi dòng 1 chủ đề). Bạn có thể chỉnh sửa trước khi chạy.', 'Loaded 5 AI-suggested topics (one per line). You can edit before running.'))
+      window.setTimeout(() => setNotice(''), 5000)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('Không tạo được gợi ý chủ đề.', 'Could not generate topic suggestions.'))
+    } finally {
+      setSuggestingTopics(false)
+    }
+  }
+
+  const handlePreviewYoutubeRewrite = async () => {
+    const urls = youtubeUrls.split('\n').map(s => s.trim()).filter(Boolean)
+    const targetUrl = urls[0]
+    if (!targetUrl) {
+      setError(t('Vui lòng nhập link YouTube để xem trước.', 'Please enter a YouTube URL to preview.'))
+      return
+    }
+    setPreviewingYoutube(true)
+    setError('')
+    try {
+      const response = await fetch(`${API}/youtube/rewrite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl, settings }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { detail?: { message?: string } }
+        throw new Error(data.detail?.message || t('Không phân tích được caption YouTube.', 'Could not analyze YouTube captions.'))
+      }
+      const data = await response.json() as { title?: string; script?: string; captionExcerpt?: string }
+      setTextPreview(data.script || '')
+      setVideoPreview({
+        title: data.title ? `${t('Kịch bản viết lại:', 'Rewritten script:')} ${data.title}` : t('Xem trước kịch bản YouTube', 'YouTube script preview'),
+        src: '',
+        type: 'srt',
+      })
+      setNotice(t('Đã phân tích caption và tạo bản nháp kịch bản.', 'Analyzed caption and generated script draft.'))
+      window.setTimeout(() => setNotice(''), 4000)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('Không phân tích được YouTube.', 'Could not analyze YouTube.'))
+    } finally {
+      setPreviewingYoutube(false)
+    }
+  }
+
   const submit = async () => {
     setSubmitting(true); setError(''); setEditingJobId('')
-    // Split topics by newline for multi-job creation (only in topic mode)
-    const topicLines = mode === 'topic'
+    const isTopic = mode === 'topic'
+    const isYoutube = mode === 'youtube'
+    const lines = isTopic
       ? topic.split('\n').map(s => s.trim()).filter(Boolean)
-      : [topic.trim()]
-    const multiTopic = topicLines.length > 1
+      : isYoutube
+        ? youtubeUrls.split('\n').map(s => s.trim()).filter(Boolean)
+        : [topic.trim()]
+
+    if (isYoutube && !lines.length) {
+      setError(t('Vui lòng nhập ít nhất một link YouTube.', 'Please enter at least one YouTube URL.'))
+      setSubmitting(false)
+      return
+    }
+
+    const multi = lines.length > 1
     try {
       let created = 0
-      for (const t_ of (topicLines.length ? topicLines : [''])) {
+      const items = lines.length ? lines : ['']
+      for (const item of items) {
         const body = new FormData()
         body.set('inputMode', mode)
-        body.set('title', multiTopic ? t_.slice(0, 80) : (title.trim() || t_.slice(0, 80) || t('Job tự động hoá', 'Automation job')))
-        body.set('topic', t_)
+        if (isYoutube) {
+          body.set('youtubeUrl', item)
+          body.set('topic', item)
+          body.set('title', multi ? item : (title.trim() || item))
+        } else {
+          body.set('topic', item)
+          body.set('title', multi ? item.slice(0, 80) : (title.trim() || item.slice(0, 80) || t('Job tự động hoá', 'Automation job')))
+        }
         body.set('settings', JSON.stringify(settings))
         body.set('startNow', 'true')
         for (const [key, file] of Object.entries(files)) if (file) body.append(key, file)
@@ -404,12 +523,20 @@ export default function AutomationPage() {
         if (!response.ok) throw new Error(data.detail?.message || t('Không tạo được job.', 'Could not create job.'))
         created++
       }
-      setTitle(''); setTopic(''); setFiles({ script: null, audio: null, srt: null, prompts: null, watermark: null }); await refresh()
-      setNotice(mode === 'ai_topic'
-        ? t('Đã tạo job. AI sẽ đề xuất đúng 5 chủ đề; chọn một chủ đề để chạy tiếp.', 'Job created. AI will suggest exactly 5 topics; choose one to continue.')
-        : multiTopic
-          ? t(`Đã tạo ${created} job vào hàng đợi.`, `Added ${created} jobs to the queue.`)
-          : t('Đã thêm job vào hàng đợi.', 'Job added to the queue.'))
+      if (isYoutube) setYoutubeUrls('')
+      else setTopic('')
+      setTitle('')
+      setFiles({ script: null, audio: null, srt: null, prompts: null, watermark: null })
+      await refresh()
+      setNotice(isYoutube
+        ? (multi
+          ? t(`Đã thêm ${created} job YouTube vào hàng đợi (tự động phân tích caption & viết lại kịch bản).`, `Added ${created} YouTube jobs to queue (auto caption extraction & rewrite).`)
+          : t('Đã thêm job YouTube vào hàng đợi. Hệ thống sẽ tự phân tích caption và viết lại kịch bản.', 'Added YouTube job to queue. System will analyze caption and rewrite script.'))
+        : mode === 'ai_topic'
+          ? t('Đã tạo job. AI sẽ đề xuất đúng 5 chủ đề; chọn một chủ đề để chạy tiếp.', 'Job created. AI will suggest exactly 5 topics; choose one to continue.')
+          : multi
+            ? t(`Đã tạo ${created} job vào hàng đợi.`, `Added ${created} jobs to the queue.`)
+            : t('Đã thêm job vào hàng đợi.', 'Job added to the queue.'))
       window.setTimeout(() => setNotice(''), 5000)
     } catch (cause) { setError(cause instanceof Error ? cause.message : t('Không tạo được job.', 'Could not create job.')) }
     finally { setSubmitting(false) }
@@ -456,7 +583,13 @@ export default function AutomationPage() {
   }
 
   const editJob = async (job: AutomationJob) => {
-    setMode(job.input_mode); setTitle(job.title); setTopic(job.input?.topic || job.input?.selectedTopic || ''); setEditingJobId(job.id)
+    setMode(job.input_mode); setTitle(job.title)
+    if (job.input_mode === 'youtube') {
+      setYoutubeUrls(job.input?.youtubeUrl || job.input?.topic || '')
+    } else {
+      setTopic(job.input?.topic || job.input?.selectedTopic || '')
+    }
+    setEditingJobId(job.id)
     const nextSettings = mergeSettings(job.settings || {})
     setSettings(nextSettings)
     if (job.input) setNotice(t('Đã nạp thông tin job vào form; chọn file mới nếu cần rồi lưu cài đặt trước khi chạy lại.', 'Job details loaded into the form; choose replacement files if needed, then save settings before retrying.'))
@@ -508,9 +641,85 @@ export default function AutomationPage() {
       <section className="automation-builder" aria-labelledby="automation-title">
       <div className="automation-heading"><div><h1 id="automation-title">{t('Tự động hoá video', 'Video automation')}</h1><p>{t('Chạy nhiều job từ ý tưởng đến MP4, mỗi job có checkpoint và log riêng.', 'Run multiple jobs from idea to MP4, each with its own checkpoint and logs.')}</p></div><button type="button" className="automation-refresh" onClick={() => void refresh()} aria-label={t('Làm mới job', 'Refresh jobs')}>↻</button></div>
       <div className="automation-mode-grid" role="radiogroup" aria-label={t('Loại đầu vào', 'Input type')}>
-        {(['topic', 'ai_topic'] as InputMode[]).map(item => <button key={item} type="button" role="radio" aria-checked={mode === item} className={mode === item ? 'selected' : ''} onClick={() => setMode(item)}><strong>{modeLabel(item, t)}</strong><small>{item === 'topic' ? t('Mỗi dòng = 1 job riêng', 'Each line = a separate job') : t('AI đưa 5 lựa chọn rồi chờ bạn chọn', 'AI suggests 5 choices, then waits')}</small></button>)}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={mode === 'topic'}
+          className={mode === 'topic' ? 'selected' : ''}
+          onClick={() => setMode('topic')}
+        >
+          <strong>{t('Chủ đề', 'Topic')}</strong>
+          <small>{t('Mỗi dòng = 1 job riêng · AI gợi ý', 'Each line = a separate job · AI suggestions')}</small>
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={mode === 'youtube'}
+          className={mode === 'youtube' ? 'selected' : ''}
+          onClick={() => setMode('youtube')}
+        >
+          <strong>{t('Link YouTube', 'YouTube URL')}</strong>
+          <small>{t('Phân tích caption & viết lại', 'Analyze captions & rewrite')}</small>
+        </button>
       </div>
-      {(mode === 'topic' || mode === 'ai_topic') && <label className="automation-field"><span>{t('Chủ đề (không bắt buộc)', 'Topic (optional)')}</span><textarea value={topic} onChange={event => setTopic(event.target.value)} placeholder={mode === 'topic' ? t('Mỗi dòng là 1 chủ đề → tạo nhiều job song song. Để trống để AI tự đề xuất…', 'One topic per line → creates multiple jobs. Leave empty for AI-generated topics…') : t('Để trống để AI tự đề xuất chủ đề…', 'Leave empty for AI-generated topic ideas…')} rows={3} /></label>}
+      {mode === 'topic' && (
+        <div className="automation-field">
+          <div className="automation-field-header">
+            <span>{t('Chủ đề (Mỗi dòng = 1 job riêng · AI gợi ý)', 'Topic (Each line = 1 separate job · AI suggestions)')}</span>
+            <button
+              type="button"
+              className="automation-suggest-topics-btn"
+              disabled={suggestingTopics}
+              onClick={() => void handleSuggestTopics()}
+              title={t('AI tự động điền 5 chủ đề vào ô bên dưới', 'AI automatically fills 5 topics below')}
+            >
+              {suggestingTopics ? t('✨ Đang gợi ý 5 chủ đề…', '✨ Suggesting 5 topics…') : t('✨ AI đề xuất 5 chủ đề', '✨ AI suggest 5 topics')}
+            </button>
+          </div>
+          <textarea
+            value={topic}
+            onChange={event => setTopic(event.target.value)}
+            placeholder={t('Mỗi dòng là 1 chủ đề → tạo nhiều job song song.\nHoặc bấm "✨ AI đề xuất 5 chủ đề" ở trên để AI tự điền…', 'One topic per line → creates multiple jobs.\nOr click "✨ AI suggest 5 topics" above to auto-fill…')}
+            rows={4}
+          />
+        </div>
+      )}
+      {mode === 'youtube' && (
+        <div className="automation-field">
+          <div className="automation-field-header">
+            <span>{t('Link video YouTube (Mỗi dòng = 1 job riêng)', 'YouTube video link (Each line = 1 separate job)')}</span>
+            <button
+              type="button"
+              className="automation-suggest-topics-btn"
+              disabled={previewingYoutube || !youtubeUrls.trim()}
+              onClick={() => void handlePreviewYoutubeRewrite()}
+              title={t('Tải caption và xem trước bản viết lại của link đầu tiên', 'Extract captions and preview script rewrite for the first link')}
+            >
+              {previewingYoutube ? t('Đang phân tích…', 'Analyzing…') : t('👁 Xem trước viết lại', '👁 Preview rewrite')}
+            </button>
+          </div>
+          <textarea
+            value={youtubeUrls}
+            onChange={event => setYoutubeUrls(event.target.value)}
+            placeholder={t('https://www.youtube.com/watch?v=...\nMỗi dòng là 1 link YouTube → tự động phân tích caption, viết lại kịch bản 2D và chạy tạo video.', 'https://www.youtube.com/watch?v=...\nEach line is 1 YouTube URL → auto extracts captions, rewrites 2D script, and generates video.')}
+            rows={4}
+          />
+          <small className="automation-setting-hint">
+            {t('Hệ thống sẽ dùng yt-dlp trích xuất phụ đề (caption), dùng AI viết lại thành kịch bản 2D chuẩn, rồi tiếp tục quy trình TTS → Prompt → Flow → Video.', 'System will use yt-dlp to extract subtitles/captions, rewrite them with AI into a 2D script, then run TTS → Prompt → Flow → Video.')}
+          </small>
+        </div>
+      )}
+      {mode === 'ai_topic' && (
+        <label className="automation-field">
+          <span>{t('Gợi ý chủ đề', 'Topic hint')}</span>
+          <textarea
+            value={topic}
+            onChange={event => setTopic(event.target.value)}
+            placeholder={t('Để trống để AI tự đề xuất chủ đề…', 'Leave empty for AI-generated topic ideas…')}
+            rows={3}
+          />
+        </label>
+      )}
       <label className="automation-field"><span>{t('Tên job (tuỳ chọn)', 'Job name (optional)')}</span><input value={title} onChange={event => setTitle(event.target.value)} placeholder={t('Tự đặt theo chủ đề nếu bỏ trống', 'Generated from the topic if empty')} /></label>
       <details className="automation-settings" open={settingsOpen} onToggle={(event) => {
         const next = event.currentTarget.open
@@ -617,11 +826,19 @@ export default function AutomationPage() {
         </div>
       </div> : null}</div></div></details>
       {notice && <p className="automation-notice" role="status">{notice}</p>}{error && <p className="automation-error" role="alert">{error}</p>}
-      <button type="button" className="automation-submit" onClick={() => void submit()} disabled={submitting}>{submitting ? t('Đang thêm job…', 'Adding job…') : mode === 'ai_topic' ? t('✦ Tạo 5 chủ đề', '✦ Generate 5 topics') : t('▶ Chạy job', '▶ Run job')}</button>
+      <button type="button" className="automation-submit" onClick={() => void submit()} disabled={submitting}>
+        {submitting
+          ? t('Đang thêm job…', 'Adding job…')
+          : mode === 'youtube'
+            ? t('▶ Phân tích & Chạy job YouTube', '▶ Analyze & Run YouTube job')
+            : mode === 'ai_topic'
+              ? t('✦ Tạo 5 chủ đề', '✦ Generate 5 topics')
+              : t('▶ Chạy job', '▶ Run job')}
+      </button>
     </section>
       <div className="automation-resizer" role="separator" aria-orientation="vertical" aria-label={t('Kéo để đổi độ rộng panel', 'Drag to resize panel')} onPointerDown={(event) => { event.preventDefault(); panelDrag.current = { startX: event.clientX, startWidth: builderWidth }; document.body.classList.add('automation-resizing') }} />
-      <section className="automation-queue" aria-labelledby="automation-queue-title"><div className="automation-queue-heading"><div><p className="automation-eyebrow">QUEUE</p><h2 id="automation-queue-title">{t('Các job đang chạy', 'Job queue')}</h2></div><span>{jobs.length} {t('job', 'jobs')}</span></div>{loading ? <p className="automation-empty">{t('Đang tải…', 'Loading…')}</p> : !jobs.length ? <p className="automation-empty">{t('Chưa có job. Tạo job đầu tiên ở bên trái.', 'No jobs yet. Create the first job on the left.')}</p> : <div className="automation-job-list">{jobs.map(job => { const jobProvider = String(job.settings?.textProvider || ''); const jobModel = String(job.settings?.textModel || job.settings?.chatModel || ''); return <article className={`automation-job automation-job--${job.status}`} key={job.id}><div className="automation-job-head"><div><h3>{job.title}</h3><p>{modeLabel(job.input_mode, t)} · {stageLabel(job.stage, t)}{jobProvider ? ` · ${providerName(jobProvider)}` : ''}{jobModel ? ` · ${jobModel}` : ''}</p></div><span className="automation-status">{statusLabel(job.status, t)}</span></div><div className="automation-progress-row"><div className="automation-progress"><i style={{ width: `${Math.max(0, Math.min(100, job.progress || 0))}%` }} /></div><strong>{Math.round(job.progress || 0)}%</strong></div>{job.error ? <p className="automation-job-error"><strong>{job.error.code || t('Lỗi', 'Error')}</strong> {job.error.message}</p> : null}{job.status === 'awaiting_topic' && <div className="automation-topic-choices">{(job.input?.topicCandidates || []).map(candidate => <button type="button" key={candidate} onClick={() => void chooseTopic(job, candidate)}>{candidate}</button>)}</div>}<div className="automation-job-actions">{job.status === 'running' || job.status === 'queued' ? <button type="button" onClick={() => void mutate(job.id, 'pause')}>{t('Tạm dừng', 'Pause')}</button> : null}{job.status === 'paused' || job.status === 'interrupted' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button><button type="button" onClick={() => void mutate(job.id, 'retry')}>{t('Chạy lại chặng lỗi', 'Retry failed stage')}</button></> : null}{job.status === 'cancelled' ? <><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button></> : null}{job.status === 'failed' || job.status === 'completed' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => void mutate(job.id, 'retry')}>{t('Ghép lại', 'Recompose')}</button></> : null}{!['completed', 'cancelled', 'failed'].includes(job.status) ? <button type="button" className="danger" onClick={() => void mutate(job.id, 'cancel')}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => removeJob(job)}>{t('Xoá job', 'Delete job')}</button>{(job.status === 'completed' || Object.keys(job.artifacts || {}).length > 0) ? <button type="button" onClick={() => void openFolder(job)}>{t('Mở thư mục', 'Open folder')}</button> : null}{job.artifacts && Object.entries(job.artifacts).map(([key, artifact]) => {
-                        if (!artifact?.available) return null
+      <section className="automation-queue" aria-labelledby="automation-queue-title"><div className="automation-queue-heading"><div><p className="automation-eyebrow">QUEUE</p><h2 id="automation-queue-title">{t('Các job đang chạy', 'Job queue')}</h2></div><span>{jobs.length} {t('job', 'jobs')}</span></div>{loading ? <p className="automation-empty">{t('Đang tải…', 'Loading…')}</p> : !jobs.length ? <p className="automation-empty">{t('Chưa có job. Tạo job đầu tiên ở bên trái.', 'No jobs yet. Create the first job on the left.')}</p> : <div className="automation-job-list">{jobs.map(job => { const jobProvider = String(job.settings?.textProvider || ''); const jobModel = String(job.settings?.textModel || job.settings?.chatModel || ''); return <article className={`automation-job automation-job--${job.status}`} key={job.id}><div className="automation-job-head"><div><h3>{job.title}</h3><p>{modeLabel(job.input_mode, t)} · {stageLabel(job.stage, t)}{jobProvider ? ` · ${providerName(jobProvider)}` : ''}{jobModel ? ` · ${jobModel}` : ''}</p></div><span className="automation-status">{statusLabel(job.status, t)}</span></div><div className="automation-progress-row"><div className="automation-progress"><i style={{ width: `${Math.max(0, Math.min(100, job.progress || 0))}%` }} /></div><strong>{Math.round(job.progress || 0)}%</strong></div>{job.error ? <p className="automation-job-error"><strong>{job.error.code || t('Lỗi', 'Error')}</strong> {job.error.message}</p> : null}{job.status === 'awaiting_topic' && <div className="automation-topic-choices">{(job.input?.topicCandidates || []).map(candidate => <button type="button" key={candidate} onClick={() => void chooseTopic(job, candidate)}>{candidate}</button>)}</div>}<div className="automation-job-actions">{job.status === 'running' || job.status === 'queued' ? <button type="button" onClick={() => void mutate(job.id, 'pause')}>{t('Tạm dừng', 'Pause')}</button> : null}{job.status === 'paused' || job.status === 'interrupted' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button><button type="button" onClick={() => void mutate(job.id, 'retry')}>{t('Chạy lại chặng lỗi', 'Retry failed stage')}</button><button type="button" onClick={() => setRecomposeJob(job)}>{t('Ghép lại', 'Recompose')}</button></> : null}{job.status === 'cancelled' ? <><button type="button" onClick={() => void mutate(job.id, 'resume')}>{t('Tiếp tục', 'Continue')}</button><button type="button" onClick={() => setRecomposeJob(job)}>{t('Ghép lại', 'Recompose')}</button></> : null}{job.status === 'failed' || job.status === 'completed' ? <><button type="button" onClick={() => void editJob(job)}>{t('Sửa cài đặt', 'Edit settings')}</button><button type="button" onClick={() => setRecomposeJob(job)}>{t('Ghép lại', 'Recompose')}</button></> : null}{hasReachedFlow(job) ? <button type="button" className="automation-flow-queue-btn" onClick={openFlowQueue}>{t('Hàng đợi Flow', 'Flow queue')}</button> : null}{!['completed', 'cancelled', 'failed'].includes(job.status) ? <button type="button" className="danger" onClick={() => void mutate(job.id, 'cancel')}>{t('Hủy', 'Cancel')}</button> : null}<button type="button" className="danger" onClick={() => removeJob(job)}>{t('Xoá job', 'Delete job')}</button>{(job.status === 'completed' || Object.keys(job.artifacts || {}).length > 0) ? <button type="button" onClick={() => void openFolder(job)}>{t('Mở thư mục', 'Open folder')}</button> : null}{job.artifacts && Object.entries(job.artifacts).map(([key, artifact]) => {
+                        if (!artifact?.available || key === 'images') return null
                         const href = `${API}/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(key)}`
                         const label = artifact.filename || key
                         if (key === 'video') return (
@@ -630,7 +847,6 @@ export default function AutomationPage() {
                             <a href={href} download={artifact.filename || 'output.mp4'}>{t('Tải xuống', 'Download')}</a>
                           </Fragment>
                         )
-                        if (key === 'images') return <button key={key} type="button" onClick={() => previewArtifact(key, href, label)}>{t('Hàng đợi Flow', 'Flow queue')}</button>
                         return <a key={key} href={href} onClick={event => { event.preventDefault(); previewArtifact(key, href, label) }}>{label}</a>
                       })}</div>{job.logs?.length ? <details className="automation-logs"><summary>{t('Xem log', 'View logs')} ({job.logs.length})</summary><div>{job.logs.slice(-12).map((log, index) => <p key={`${log.id || index}-${log.message}`}><time>{log.stage}</time> {log.message}</p>)}</div></details> : null}</article> })}</div>}</section>
       <MediaPreviewModal
@@ -644,5 +860,191 @@ export default function AutomationPage() {
         {videoPreview?.type === 'srt' && textPreview !== null ? <textarea value={textPreview} onChange={event => setTextPreview(event.target.value)} spellCheck={false} style={{ width: '100%', minHeight: '60vh', resize: 'vertical', margin: 0, padding: 20, whiteSpace: 'pre-wrap', textAlign: 'left', color: 'white', background: 'rgba(0,0,0,.25)', border: 0, outline: 'none', font: 'inherit' }} /> : undefined}
       </MediaPreviewModal>
       <ConfirmDialog open={Boolean(deleteTarget)} title={t('Xác nhận xoá job', 'Confirm job deletion')} message={deleteTarget ? t(`Xoá job “${deleteTarget.title}”, log, file đầu vào, MP4 đã xuất và ảnh Flow liên quan?`, `Delete job “${deleteTarget.title}”, its logs, input files, exported MP4, and related Flow images?`) : ''} cancelLabel={t('Quay lại', 'Go back')} confirmLabel={t('Xoá toàn bộ', 'Delete everything')} onCancel={() => setDeleteTarget(null)} onConfirm={() => void confirmRemoveJob()} danger />
+      <RecomposeModal
+        job={recomposeJob}
+        onClose={() => setRecomposeJob(null)}
+        onConfirm={handleRecompose}
+        t={t}
+      />
   </main>
+}
+
+type RecomposeModalProps = {
+  job: AutomationJob | null
+  onClose: () => void
+  onConfirm: (jobId: string, fromStage: string, previewSeconds: number) => Promise<void>
+  t: (vi: string, en: string) => string
+}
+
+function RecomposeModal({ job, onClose, onConfirm, t }: RecomposeModalProps) {
+  if (!job) return null
+  const [stage, setStage] = useState<string>('compose')
+  const [rangeMode, setRangeMode] = useState<'full' | 'preview'>('full')
+  const [previewSeconds, setPreviewSeconds] = useState<number>(() => {
+    const prev = Number(job.settings?.compose?.previewSeconds)
+    return prev > 0 ? prev : 30
+  })
+  const [submitting, setSubmitting] = useState(false)
+
+  const canScript = job.input_mode === 'topic' || job.input_mode === 'ai_topic' || job.input_mode === 'youtube'
+  const canTts = canScript || job.input_mode === 'script' || Boolean(job.artifacts?.script?.available)
+  const canPrompt = canTts || Boolean(job.artifacts?.audio?.available) || Boolean(job.artifacts?.srt?.available)
+  const canFlow = canPrompt || Boolean(job.artifacts?.prompts?.available)
+
+  const stages = [
+    {
+      id: 'compose',
+      label: t('Chỉ ghép lại video (MP4)', 'Only recompose video (MP4)'),
+      desc: t('Giữ nguyên ảnh Flow, audio và SRT; chỉ chạy lại bước ghép MP4 cuối.', 'Keep Flow images, audio, and SRT; only re-render final MP4.'),
+      icon: '🎬',
+      enabled: true,
+    },
+    {
+      id: 'flow_images',
+      label: t('Tạo lại ảnh Flow rồi ghép lại', 'Regenerate Flow images then recompose'),
+      desc: t('Giữ prompt ảnh; đưa lại vào hàng đợi Flow để sinh bộ ảnh mới rồi ghép video.', 'Keep image prompts; resend to Flow queue to create new images then compose.'),
+      icon: '🖼',
+      enabled: canFlow,
+    },
+    {
+      id: 'image_prompt',
+      label: t('Tạo lại Prompt ảnh & Flow rồi ghép', 'Rewrite image prompts, Flow & recompose'),
+      desc: t('Giữ audio/SRT; viết lại prompt ảnh bằng AI, tạo ảnh Flow mới và ghép video.', 'Keep audio/SRT; generate new image prompts with AI, generate Flow images and compose.'),
+      icon: '✍️',
+      enabled: canPrompt,
+    },
+    {
+      id: 'tts',
+      label: t('Tạo lại Giọng đọc TTS & SRT rồi ghép', 'Regenerate TTS voice & SRT then recompose'),
+      desc: t('Giữ kịch bản; đọc lại bằng TTS, tạo phụ đề mới, prompt mới, ảnh mới và ghép video.', 'Keep script; re-synthesize TTS, generate new subtitles, prompts, images, and compose.'),
+      icon: '🎙',
+      enabled: canTts,
+    },
+    {
+      id: 'script',
+      label: t('Tạo lại Kịch bản từ đầu', 'Regenerate Script from scratch'),
+      desc: t('Chạy lại toàn bộ quy trình từ chủ đề ban đầu.', 'Restart the entire pipeline from the original topic.'),
+      icon: '📝',
+      enabled: canScript,
+    },
+  ]
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setSubmitting(true)
+    try {
+      const sec = (stage === 'compose' || stage === 'flow_images') && rangeMode === 'preview' ? previewSeconds : 0
+      await onConfirm(job.id, stage, sec)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="automation-recompose-modal" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="automation-recompose-title">
+      <div className="automation-recompose-dialog" onClick={event => event.stopPropagation()}>
+        <header className="automation-recompose-header">
+          <div>
+            <h2 id="automation-recompose-title">{t('Ghép lại / Chọn đoạn chạy lại', 'Recompose / Select restart stage')}</h2>
+            <p className="automation-recompose-subtitle">{job.title}</p>
+          </div>
+          <button type="button" className="automation-recompose-close" onClick={onClose} aria-label={t('Đóng', 'Close')}>✕</button>
+        </header>
+
+        <form onSubmit={event => void handleSubmit(event)} className="automation-recompose-body">
+          <div className="automation-recompose-section">
+            <span className="automation-recompose-label">{t('Chọn chặng bắt đầu chạy lại:', 'Select restart stage:')}</span>
+            <div className="automation-recompose-stages">
+              {stages.filter(s => s.enabled).map(item => (
+                <label key={item.id} className={`automation-recompose-stage ${stage === item.id ? 'active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="recompose-stage"
+                    value={item.id}
+                    checked={stage === item.id}
+                    onChange={() => setStage(item.id)}
+                  />
+                  <div className="automation-recompose-stage-text">
+                    <strong>{item.icon} {item.label}</strong>
+                    <small>{item.desc}</small>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {(stage === 'compose' || stage === 'flow_images') && (
+            <div className="automation-recompose-section">
+              <span className="automation-recompose-label">{t('Phạm vi ghép video:', 'Video composition range:')}</span>
+              <div className="automation-recompose-range-modes">
+                <label className={`automation-recompose-range-mode ${rangeMode === 'full' ? 'active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="recompose-range"
+                    value="full"
+                    checked={rangeMode === 'full'}
+                    onChange={() => setRangeMode('full')}
+                  />
+                  <div>
+                    <strong>{t('Toàn bộ video', 'Entire video')}</strong>
+                    <small>{t('Ghép toàn bộ nội dung theo phụ đề / audio.', 'Compose the full duration according to audio/SRT.')}</small>
+                  </div>
+                </label>
+                <label className={`automation-recompose-range-mode ${rangeMode === 'preview' ? 'active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="recompose-range"
+                    value="preview"
+                    checked={rangeMode === 'preview'}
+                    onChange={() => setRangeMode('preview')}
+                  />
+                  <div>
+                    <strong>{t('Chỉ ghép đoạn xem trước (Preview)', 'Preview segment only')}</strong>
+                    <small>{t('Ghép nhanh đoạn đầu tiên để kiểm tra trước khi xuất toàn bộ.', 'Quickly render first segment to preview before full export.')}</small>
+                  </div>
+                </label>
+              </div>
+
+              {rangeMode === 'preview' && (
+                <div className="automation-recompose-preview-controls">
+                  <span className="automation-recompose-preview-label">{t('Số giây đầu tiên:', 'First N seconds:')}</span>
+                  <div className="automation-recompose-chips">
+                    {[15, 30, 60].map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        className={previewSeconds === s ? 'active' : ''}
+                        onClick={() => setPreviewSeconds(s)}
+                      >
+                        {s}s
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="number"
+                    min="5"
+                    max="180"
+                    step="5"
+                    value={previewSeconds}
+                    onChange={event => setPreviewSeconds(Math.max(5, Number(event.target.value) || 5))}
+                    className="automation-recompose-preview-input"
+                  />
+                  <small className="automation-setting-hint">{t('giây', 'seconds')}</small>
+                </div>
+              )}
+            </div>
+          )}
+
+          <footer className="automation-recompose-footer">
+            <button type="button" onClick={onClose} disabled={submitting}>
+              {t('Huỷ', 'Cancel')}
+            </button>
+            <button type="submit" className="is-primary" disabled={submitting}>
+              {submitting ? t('Đang bắt đầu…', 'Starting…') : t('▶ Bắt đầu ghép lại', '▶ Start recomposing')}
+            </button>
+          </footer>
+        </form>
+      </div>
+    </div>
+  )
 }

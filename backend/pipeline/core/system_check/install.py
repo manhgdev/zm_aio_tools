@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from .probe import (
     _torch_cuda_ready_cached,
     _torch_dll_locked,
     _video_clone_home,
+    _venv_site_packages,
     _which,
 )
 
@@ -95,8 +97,18 @@ def _pip_stream(cmd: list[str], *, timeout: float = 1800) -> subprocess.Complete
         assert proc.stdout
         t = threading.Thread(target=_reader, args=(proc.stdout,), daemon=True)
         t.start()
+        deadline = time.monotonic() + timeout
         while True:
-            line = q.get()
+            remaining = deadline - time.monotonic()
+            try:
+                if remaining <= 0:
+                    raise _queue.Empty
+                line = q.get(timeout=remaining)
+            except _queue.Empty:
+                from ..jobs import kill_process_tree
+
+                kill_process_tree(proc)
+                raise subprocess.TimeoutExpired(cmd, timeout, output="".join(buf))
             if line is None:
                 break
             buf.append(line)
@@ -106,7 +118,13 @@ def _pip_stream(cmd: list[str], *, timeout: float = 1800) -> subprocess.Complete
                 except Exception:
                     pass
         t.join(timeout=5)
-        proc.wait(timeout=timeout)
+        try:
+            proc.wait(timeout=max(0.01, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            from ..jobs import kill_process_tree
+
+            kill_process_tree(proc)
+            raise
     return subprocess.CompletedProcess(cmd, proc.returncode, "".join(buf), "")
 
 
@@ -144,7 +162,7 @@ _TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 _TORCH_ROCM_INDEX = "https://download.pytorch.org/whl/rocm6.2"
 # onnxruntime-gpu cho CUDA 12.x (torch cu124) — bản 1.27+ yêu cầu CUDA 13
 _ORT_GPU_CUDA12_INDEX = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/"
-_ORT_GPU_PKG = "onnxruntime-gpu==1.19.2"
+_ORT_GPU_PKG = "onnxruntime-gpu==1.20.1"  # CUDA 12/cuDNN 9; meets VieNeu's >=1.20 floor
 _ORT_DIRECTML_PKG = "onnxruntime-directml"
 _SHERPA_CUDA_SPEC = "sherpa-onnx==1.13.5+cuda12.cudnn9"
 _SHERPA_CUDA_INDEX = "https://k2-fsa.github.io/sherpa/onnx/cuda.html"
@@ -185,7 +203,38 @@ def _frozen_runtime_package_specs(missing: list[str]) -> list[str]:
         for package, modules in _FROZEN_PACKAGE_MODULES.items()
         if any(module in missing for module in modules)
     }
-    return [package for package in _AI_RUNTIME_PACKAGES if package in wanted]
+    packages = [package for package in _AI_RUNTIME_PACKAGES if package in wanted]
+    if "transformers" in missing or "vieneu" in missing:
+        # VieNeu SDK recommends 4.57.6. Resolve its declared hub/tokenizers
+        # dependencies together; --no-deps was hiding incompatible installs.
+        packages = [p for p in packages if not p.startswith(("transformers", "huggingface-hub", "tokenizers"))]
+        packages += ["transformers==4.57.6"]
+    if "vieneu" in missing:
+        # Inference dependencies omitted by our intentional --no-deps SDK
+        # install (which avoids pulling the upstream Gradio/legacy UI stack).
+        packages += ["librosa>=0.11.0", "safetensors>=0.4.3"]
+    return packages
+
+
+def _verify_frozen_runtime_install() -> None:
+    """Fail installation on broken imports or unusable CUDA, never a green badge."""
+    _invalidate_checks_cache()
+    statuses = _runtime_modules_batch_ok(list(_AI_RUNTIME_MODULES))
+    errors = [f"{name}: {detail}" for name, (ok, detail) in statuses.items() if not ok]
+    if errors:
+        detail = "\n".join(errors)
+        if "WinError 126" in detail or "WinError 127" in detail:
+            detail += (
+                "\nKiểm tra Microsoft Visual C++ Redistributable x64 và driver NVIDIA. / "
+                "Check Microsoft Visual C++ Redistributable x64 and the NVIDIA driver."
+            )
+        raise RuntimeError("AI_RUNTIME_IMPORT_FAILED: Kiểm tra import thất bại / Import check failed:\n" + detail)
+    if _nvidia_present() and not _torch_cuda_ready():
+        raise RuntimeError(
+            "AI_RUNTIME_CUDA_UNAVAILABLE: Đã cài Torch nhưng CUDA chưa chạy được. "
+            "Kiểm tra driver NVIDIA và GPU được cấp cho máy ảo; không tự hạ xuống CPU. / "
+            "Torch is installed but CUDA cannot run. Check the NVIDIA driver and VM GPU passthrough; no silent CPU fallback."
+        )
 
 
 def _sherpa_cuda_ready(python: Path | str = sys.executable) -> bool:
@@ -322,7 +371,7 @@ def _runtime_pip_uninstall_cmd(*packages: str) -> list[str]:
                    else "Chạy: curl -LsSf https://astral.sh/uv/install.sh | sh")
             )
         py = _ensure_frozen_runtime_venv(uv, venv)
-        return [uv, "pip", "uninstall", "--python", str(py), "-y", *packages]
+        return [uv, "pip", "uninstall", "--python", str(py), *packages]
     return [sys.executable, "-m", "pip", "uninstall", "-y", *packages]
 
 
@@ -345,17 +394,20 @@ def _install_runtime_torch(*, accel: str | None = None) -> None:
     """PyTorch khớp GPU — VieNeu auto chỉ dùng CUDA khi torch.cuda sẵn sàng."""
     wanted = accel or _runtime_torch_accel()
     if wanted == "cuda":
-        subprocess.run(
+        index_url = _runtime_torch_cuda_index()
+        removed = subprocess.run(
             _runtime_pip_uninstall_cmd("torch", "torchaudio", "torchvision"),
             capture_output=True,
             text=True,
             timeout=300,
             env=_runtime_subprocess_env(),
         )
+        if removed.returncode:
+            raise RuntimeError((removed.stderr or removed.stdout)[-2000:])
         _runtime_pip_install(
             "torch",
             "torchaudio",
-            index_url=_TORCH_CUDA_INDEX,
+            index_url=index_url,
             timeout=2400,
         )
         return
@@ -369,6 +421,23 @@ def _install_runtime_torch(*, accel: str | None = None) -> None:
         return
     idx = None if sys.platform == "darwin" else _TORCH_CPU_INDEX
     _runtime_pip_install("torch", "torchaudio", index_url=idx, timeout=1200)
+
+
+def _runtime_torch_cuda_index() -> str:
+    """Blackwell needs CUDA 12.8 wheels; cu124 has no sm_100/sm_120 kernels."""
+    from ..accel import nvidia_smi_executable
+
+    try:
+        proc = subprocess.run(
+            [nvidia_smi_executable(), "--query-gpu=compute_cap", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=8, env=_runtime_subprocess_env(),
+            creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if sys.platform == "win32" else 0,
+        )
+        if proc.returncode == 0 and any(float(cap.strip()) >= 10 for cap in proc.stdout.splitlines()):
+            return "https://download.pytorch.org/whl/cu128"
+    except (ValueError, OSError, subprocess.SubprocessError):
+        pass
+    return _TORCH_CUDA_INDEX
 
 
 _torch_warm_done = False  # once per process — không spam pip / log
@@ -389,14 +458,13 @@ def ensure_runtime_torch() -> None:
     if _torch_warm_done:
         return
     if getattr(sys, "frozen", False):
-        from ..runtime_site import ensure_runtime_import, install_runtime_meta_path
-
-        install_runtime_meta_path()
-        try:
-            ensure_runtime_import("torch")
-            ensure_runtime_import("torchaudio")
-        except Exception:
-            pass
+        if _runtime_torch_needs_install():
+            _install_runtime_torch()
+            _invalidate_checks_cache()
+            if _runtime_torch_needs_install():
+                raise RuntimeError("AI_RUNTIME_TORCH_FAILED: Torch/CUDA chưa sẵn sàng / Torch/CUDA is not ready")
+        _torch_warm_done = True
+        return
     if not _runtime_torch_needs_install():
         _torch_warm_done = True
         return
@@ -426,11 +494,6 @@ def ensure_runtime_torch() -> None:
         return
     if not before_cuda:
         _clear_torch_modules()
-    if getattr(sys, "frozen", False):
-        from ..runtime_site import bootstrap_ai_runtime, install_runtime_meta_path
-
-        install_runtime_meta_path()
-        bootstrap_ai_runtime()
     _torch_warm_done = True
 
 
@@ -445,7 +508,8 @@ def ensure_runtime_transformers() -> None:
         _purge_external_modules,
     )
 
-    bootstrap_ai_runtime()
+    if not getattr(sys, "frozen", False):
+        bootstrap_ai_runtime()
     ok, _detail = verify_transformers_ok()
     if ok:
         return
@@ -454,17 +518,22 @@ def ensure_runtime_transformers() -> None:
             "PATH Windows quá dài nên không thể nạp transformers. "
             "App đã loại đường dẫn trùng; không cần cài lại gói AI."
         )
-    _runtime_pip_install(
-        "transformers>=4.46.0",
-        "huggingface-hub>=0.34",  # bỏ <1.0 — không downgrade hf-hub 1.x đang có
-        "safetensors",
-        timeout=1200,
+    if "No module named" in _detail and any(f"'{name}'" in _detail for name in sys.stdlib_module_names):
+        raise RuntimeError(
+            f"AI_RUNTIME_STDLIB_MISSING: {_detail}. "
+            "Thiếu thư viện Python chuẩn; cập nhật APP/runtime, cài lại transformers không sửa được. / "
+            "Python standard library is missing; update the app/runtime instead of reinstalling transformers."
+        )
+    packages = ("transformers==4.57.6", "safetensors") if getattr(sys, "frozen", False) else (
+        "transformers>=4.46.0", "huggingface-hub>=0.34", "safetensors",
     )
-    root = runtime_site_packages()
-    if root:
-        _purge_external_modules(root)
-    install_runtime_meta_path()
-    bootstrap_ai_runtime()
+    _runtime_pip_install(*packages, timeout=1200)
+    if not getattr(sys, "frozen", False):
+        root = runtime_site_packages()
+        if root:
+            _purge_external_modules(root)
+        install_runtime_meta_path()
+        bootstrap_ai_runtime()
     ok, detail = verify_transformers_ok()
     if not ok:
         if is_windows_path_too_long_error(detail):
@@ -489,6 +558,7 @@ def install_ai_runtime() -> dict[str, Any]:
 
     ensure_diarization_models(DATA / "models" / "pyannote", log=_install_log_fn)
     if getattr(sys, "frozen", False):
+        _invalidate_checks_cache()
         ok, detail = _runtime_venv_fast()
         # Filesystem metadata is only a fast hint; import every runtime module
         # before declaring success so a broken wheel is repaired on demand.
@@ -539,6 +609,15 @@ def install_ai_runtime() -> dict[str, Any]:
             raise RuntimeError("Bản ứng dụng thiếu uv để cài gói AI")
         py = _ensure_frozen_runtime_venv(uv, venv)
 
+        from pipeline.tts.engines import vieneu_frozen
+
+        # Do not replace DLLs underneath an active synthesis or cached model.
+        with vieneu_frozen._pool_lock:
+            idle = [worker for workers in vieneu_frozen._idle.values() for worker in workers]
+            if any(worker.alive() and worker not in idle for worker in vieneu_frozen._all_workers):
+                raise RuntimeError("AI_RUNTIME_BUSY: Dừng job TTS trước khi cài / Stop TTS jobs before installing")
+        vieneu_frozen.shutdown_all_workers()
+
         # Windows: cv2.pyd bị lock khi đã preload → không thể xoá/thay thế.
         # Bỏ opencv khỏi danh sách cài nếu cv2 đã load trong process hiện tại.
         _cv2_locked = sys.platform == "win32" and "cv2" in sys.modules
@@ -552,7 +631,7 @@ def install_ai_runtime() -> dict[str, Any]:
             opencv_remove = ["opencv-python"] + ([] if cv2_ok else ["opencv-python-headless"])
             try:
                 subprocess.run(
-                    [uv, "pip", "uninstall", "--python", str(py), "-y", *opencv_remove],
+                    [uv, "pip", "uninstall", "--python", str(py), *opencv_remove],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -568,13 +647,12 @@ def install_ai_runtime() -> dict[str, Any]:
                 p for p in packages
                 if not p.startswith("opencv-python")
             ]
-        base_cmd = [uv, "pip", "install", "--python", str(py), "--upgrade", *packages]
         ort_accel = _runtime_ort_accel()
         if ort_accel == "cuda":
-            base_cmd.append(_ORT_GPU_PKG)
-            base_cmd += ["--extra-index-url", _ORT_GPU_CUDA12_INDEX]
+            packages += [_ORT_GPU_PKG, "--extra-index-url", _ORT_GPU_CUDA12_INDEX]
         elif ort_accel == "directml":
-            base_cmd.append(_ORT_DIRECTML_PKG)
+            packages.append(_ORT_DIRECTML_PKG)
+        base_cmd = [uv, "pip", "install", "--python", str(py), "--upgrade", *packages] if packages else []
         vieneu_cmd = [
             uv, "pip", "install", "--python", str(py), "--upgrade", "--no-deps", _VIENEU_PACKAGE
         ]
@@ -687,12 +765,14 @@ def install_ai_runtime() -> dict[str, Any]:
         if not base_cmd:
             pass  # tất cả gói cần thiết đều đã có, bỏ qua
         else:
-            _clean_corrupted_dists()  # dọn ~orch / ~okenizers trước pip
+            _clean_corrupted_dists(_venv_site_packages(venv))
             proc = _pip_stream(base_cmd)
             if proc.returncode:
                 raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
             if getattr(sys, "frozen", False) and ort_accel in ("cuda", "directml"):
-                _pip_stream([uv, "pip", "uninstall", "--python", str(py), "-y", "onnxruntime"])
+                removed = _pip_stream([uv, "pip", "uninstall", "--python", str(py), "onnxruntime"])
+                if removed.returncode:
+                    raise RuntimeError((removed.stderr or removed.stdout)[-2000:])
                 provider_pkg = _ORT_GPU_PKG if ort_accel == "cuda" else _ORT_DIRECTML_PKG
                 provider_cmd = [uv, "pip", "install", "--python", str(py), "--force-reinstall", provider_pkg]
                 if ort_accel == "cuda":
@@ -702,14 +782,6 @@ def install_ai_runtime() -> dict[str, Any]:
                     raise RuntimeError((proc_provider.stderr or proc_provider.stdout)[-3000:])
             if getattr(sys, "frozen", False):
                 _install_sherpa_cuda(py, uv)
-            # transformers cài riêng --no-deps — tránh conflict tokenizers (không có version nào
-            # hỗ trợ tokenizers>=0.23.1; --no-deps bỏ qua dep resolution hoàn toàn).
-            if "transformers" in missing:
-                proc2 = _pip_stream(
-                    _runtime_pip_cmd("--no-deps", "transformers>=4.46.0")
-                )
-                if proc2.returncode:
-                    raise RuntimeError((proc2.stderr or proc2.stdout)[-3000:])
     if "vieneu" in missing or not _mod_ok("vieneu")[0]:
         proc = _pip_stream(vieneu_cmd)
         if proc.returncode:
@@ -740,6 +812,8 @@ def install_ai_runtime() -> dict[str, Any]:
             _install_runtime_torch()
             _clear_torch_modules()
     _invalidate_checks_cache()
+    if getattr(sys, "frozen", False):
+        _verify_frozen_runtime_install()
     return {
         "ok": True,
         "message": "Đã cài gói AI",
@@ -749,10 +823,6 @@ def install_ai_runtime() -> dict[str, Any]:
 
 def install_ocr_cuda() -> dict[str, Any]:
     """Install the OCR GPU runtime into the Python running this API."""
-    if getattr(sys, "frozen", False):
-        ok, detail = _ocr_venv_fast()
-        if ok:
-            return {"ok": True, "message": "GPU tăng tốc đã được cài", "detail": detail}
     ok, detail = _ocr_cuda_check()
     if ok:
         return {"ok": True, "message": "GPU tăng tốc đã được cài", "detail": detail}

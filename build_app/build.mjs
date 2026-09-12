@@ -232,6 +232,13 @@ const args = [
   // Transformers is loaded from the external runtime venv at app runtime;
   // it still imports this stdlib debugger module from the frozen parent.
   '--hidden-import', 'pdb',
+  '--hidden-import', 'bdb',
+  '--hidden-import', 'cmd',
+  '--hidden-import', 'code',
+  '--hidden-import', 'codeop',
+  '--hidden-import', 'profile',
+  '--hidden-import', 'cProfile',
+  '--hidden-import', 'unittest.mock',
   '--hidden-import', 'httpx',
   '--hidden-import', 'setuptools',
   '--hidden-import', 'pkg_resources',
@@ -244,7 +251,7 @@ for (const mod of [
   'rapidocr_onnxruntime', 'onnxruntime', 'cv2', 'PIL', 'numpy',
   'torch', 'torchaudio', 'transformers', 'datasets', 'accelerate',
   'pandas', 'scipy', 'sklearn', 'tensorflow', 'soundfile', 'librosa',
-  'pytest', 'unittest', 'doctest', 'profile', 'cProfile',
+  'pytest',
   'lxml', 'pyarrow', 'matplotlib', 'sympy', 'numba', 'llvmlite',
   'vieneu', 'perth', 'sea_g2p', 'soxr',
   'webview.platforms.android', 'pycparser.lextab', 'pycparser.yacctab',
