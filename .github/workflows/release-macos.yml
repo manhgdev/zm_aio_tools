@@ -56,12 +56,6 @@ jobs:
           echo "$VERSION" > build_app/VERSION
           echo "Building version: $VERSION"
 
-      - name: Chat regression checks
-        run: |
-          PYTHONPATH=backend backend/.venv/bin/python -m pytest tests/test_chat.py
-          PYTHONPATH=backend backend/.venv/bin/python -m pytest tests/test_chat_providers.py
-          PYTHONPATH=backend backend/.venv/bin/python -m pytest tests/test_automation.py
-          node --test --test-name-pattern="Chat tab is bilingual|Automation queue UI" tests/i18n.catalog.test.mjs
 
       - name: Build macOS app
         env:

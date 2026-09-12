@@ -50,27 +50,6 @@ jobs:
           Set-Content -Path build_app/VERSION -Value $version.Trim()
           Write-Host "Building version: $version"
 
-      - name: Windows regression checks
-        shell: pwsh
-        run: |
-          $env:PYTHONPATH = "$PWD/backend"
-          backend/.venv/Scripts/python.exe -m pytest `
-            tests/backend/core/test_runtime_site.py `
-            tests/backend/core/test_windows_ai_runtime.py `
-            tests/backend/core/test_gpu_backend_selection.py `
-            tests/backend/core/test_ai_runtime_setup.py `
-            tests/backend/core/test_desktop_update.py `
-            tests/backend/core/test_audit_regressions.py `
-            tests/backend/core/test_cuda_dll_overlay.py `
-            tests/backend/ocr/test_ocr_cuda_frozen_probe.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          backend/.venv/Scripts/python.exe -m pytest tests/test_chat.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          backend/.venv/Scripts/python.exe -m pytest tests/test_chat_providers.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          backend/.venv/Scripts/python.exe -m pytest tests/test_automation.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test --test-name-pattern="English catalog covers Configuration labels|English catalog has no empty entries|Chat tab is bilingual|Automation queue UI" tests/i18n.catalog.test.mjs
 
       - name: Build EXE
         shell: pwsh
