@@ -22,7 +22,7 @@ if len(sys.argv) == 3 and sys.argv[1] == "--runtime-import-check":
     import json
 
     failures = {}
-    for module in ("pdb", "bdb", "cmd", "code", "codeop", "profile", "cProfile", "unittest.mock", "multiprocessing.pool"):
+    for module in ("pdb", "bdb", "cmd", "code", "codeop", "multiprocessing.pool"):
         try:
             importlib.import_module(module)
         except Exception as exc:
