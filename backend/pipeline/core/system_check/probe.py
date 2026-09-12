@@ -99,7 +99,7 @@ def _runtime_modules_batch_ok(names: list[str]) -> dict[str, tuple[bool, str]]:
     )
     try:
         proc = subprocess.run(
-            [str(py), "-I", "-c", script, payload],
+            [str(py), "-c", script, payload],
             capture_output=True,
             text=True,
             timeout=120,

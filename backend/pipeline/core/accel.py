@@ -86,7 +86,7 @@ def _probe_torch_device_in(python: str) -> TorchDevice:
     )
     try:
         r = subprocess.run(
-            [python, "-I", "-c", code],
+            [python, "-c", code],
             capture_output=True,
             text=True,
             timeout=90,

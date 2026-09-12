@@ -193,7 +193,7 @@ class _Worker:
         }
         if sys.platform == "win32":
             kw["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        self.proc = subprocess.Popen([str(py), "-I", "-u", "-c", _WORKER_SCRIPT], **kw)
+        self.proc = subprocess.Popen([str(py), "-u", "-c", _WORKER_SCRIPT], **kw)
         def read_stdout():
             try:
                 for line in self.proc.stdout:
@@ -381,7 +381,7 @@ def _run_runtime(code: str, *, timeout: float = 45.0) -> subprocess.CompletedPro
     except Exception:
         env = os.environ.copy()
     return subprocess.run(
-        [str(py), "-I", "-c", code],
+        [str(py), "-c", code],
         capture_output=True,
         text=True,
         timeout=timeout,
