@@ -100,13 +100,14 @@ jobs:
           $py = Join-Path $runtime 'Scripts/python.exe'
           & $py -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $py -m pip install 'transformers==4.57.6' 'librosa>=0.11.0' 'sea-g2p==0.8.4' 'perth>=0.2.0' 'onnxruntime>=1.20' soundfile soxr pyyaml
+          & $py -m pip install 'transformers==4.57.6' 'librosa>=0.11.0' 'sea-g2p==0.8.4' 'perth>=0.2.0' 'onnxruntime>=1.20' soundfile soxr pyyaml httpx
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $py -m pip install --no-deps 'vieneu>=3.2.0'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:PYTHONPATH = "$PWD/backend"
           & $py -c "import json; from pipeline.core.system_check.probe import _runtime_modules_batch_ok; r = _runtime_modules_batch_ok(['torch', 'torchaudio', 'transformers', 'vieneu', 'soundfile']); print(json.dumps(r, indent=2)); assert all(ok for ok, detail in r.values()), r"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 
       - name: Create release package
         id: package
